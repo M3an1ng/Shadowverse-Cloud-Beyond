@@ -58,6 +58,8 @@ namespace ShadowverseBeyond.Server.Domain.Constants
         EarthSigil = 24,
         [Description("免疫其他卡牌能力")]
         EffectImmune = 25,
+        [Description("证据")]
+        Evidence = 26,
     }
 
     public enum AbilityKeyword

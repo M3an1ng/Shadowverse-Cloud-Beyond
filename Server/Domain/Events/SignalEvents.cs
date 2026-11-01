@@ -490,7 +490,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     /// 原子事实事件：当卡牌或玩家的计数器发生变化时触发。
     /// </summary>
     [GameEventMetadata("计数器变化", "当卡牌或玩家的计数器发生变化时触发的事件。", EventType.CounterChanged)]
-    public class CounterChangedEvent : GameEventBase
+    public class CounterChangedEvent : GameEventBase, ICommittableEvent
     {
         [GameEventParameter("被更新的玩家", "计数器被更新的玩家。", Scope = GameEventParameterScope.Input, DslDisplayTypeName = "事件源")]
         public PlayerState? SourcePlayer => Source?.Player;
@@ -521,6 +521,19 @@ namespace ShadowverseBeyond.Server.Domain.Events
             CounterName = counterName ?? string.Empty;
             OldValue = oldValue;
             NewValue = newValue;
+        }
+
+        public DomainOperationResult Commit(GameContext context)
+        {
+            var result = new DomainOperationResult { Success = true };
+            var card = TargetCard;
+            // Apply this invariant to every counter-modification path, including DSL variable effects.
+            if (string.Equals(CounterName, CardInstance.EvidenceCounterKey, StringComparison.OrdinalIgnoreCase)
+                && NewValue <= 0 && card != null && card.Evidence <= 0
+                && card.CurrentZone == CardZone.Field && card.CardType == CardType.Amulet
+                && card.HasKeyword(CardKeyword.Evidence))
+                result.GeneratedEvents.Add(new LeaveFieldEvent(card, LeaveFieldKind.Destroy, EventReasonSource.System, card));
+            return result;
         }
     }
 

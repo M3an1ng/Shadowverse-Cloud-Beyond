@@ -28,6 +28,15 @@ export default defineConfig({
       // Prevent frequent full reloads caused by backend/log file writes under the monorepo root.
       ignored: [
         '**/*.log',
+        '**/Server/**',
+        '**/tests/**',
+        '**/*.db',
+        '**/*.db-wal',
+        '**/*.db-shm',
+        '**/*.tmp',
+        '**/.local-run/**',
+        '**/tests/**/bin/**',
+        '**/tests/**/obj/**',
         '**/Server/Logs/**',
         '**/Server/bin/**',
         '**/Server/obj/**',

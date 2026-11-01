@@ -1,4 +1,10 @@
-﻿// src/main.js - 主入口模块
+import { createRevealPresentationGate } from "./revealPresentationGate.js";
+import { formatRoomHandshake } from "./multiplayerRoomPresentation.js";
+import "./styles/mini-feature-theme.css";
+﻿import { initializeTakeTwo,tryJoinTakeTwo } from './takeTwo.js';
+import { confirmDialog } from './siteDialog.js';
+import { showAlert } from './siteDialog.js';
+// src/main.js - 主入口模块
 //
 // 相关文档:
 // - 前端组件结构: 文档/03-前端架构/01-组件结构.md
@@ -6,9 +12,12 @@
 // - 状态管理: 文档/03-前端架构/02-状态管理.md
 //
 // 导入核心模块
+import { installOperationSettingsButton } from './operationSettings.js';
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installOperationSettingsButton, { once: true });
+else installOperationSettingsButton();
 import * as signalR from "@microsoft/signalr";
 import { router, initializeRouter } from './router.js';
-import { BATTLE_EXIT_CONFIRM_MESSAGE, shouldConfirmBattleExit } from './battleExitConfirmPolicy.js';
+import { battleExitConfirmMessage, isSpectatorBattle, shouldConfirmBattleExit } from './battleExitConfirmPolicy.js';
 import { getDeckOwnerPayload, getDeckOwnerQuery, getUserSession, USER_SESSION_CHANGED_EVENT } from './userSession.js';
 import {
     gameState, bindGameView, initializeGame, initializeSpectator, clearGameSession, setSignalRConnection, setGuestSignalRConnection, updateFullGameState, endTurnRequest,
@@ -32,7 +41,7 @@ import {
     refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets,
     showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState,
     updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi,
-    refreshCardActionControls, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast,
+    refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast,
     replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard,
     appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual
 } from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
@@ -66,7 +75,7 @@ import { setupDailyQuestUI } from './dailyQuestMenu.js';
 import { setupUserInfoUI } from './userMenu.js';
 // 在页面初始化前接入真实 console；面板首次打开时才创建 DOM。
 bindGameView({
-    renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual
+    renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual
 });
 initDevConsole();
 // import { endTurn } from './turnManager.js'; // Keep commented out
@@ -706,7 +715,10 @@ function cacheHandshake(handshake) {
     lobbyHandshake = handshake;
     pendingHandshake = handshake;
     const serialized = JSON.stringify(handshake);
-    const didStore = setStoredValue(LOBBY_HANDSHAKE_STORAGE_KEY, serialized);
+    const localDraft = new URLSearchParams(window.location.search).has('localDraftRoom');
+    const didStore = localDraft
+        ? (sessionStorage.setItem(LOBBY_HANDSHAKE_STORAGE_KEY, serialized), true)
+        : setStoredValue(LOBBY_HANDSHAKE_STORAGE_KEY, serialized);
     if (!didStore) {
         console.warn("Failed to cache handshake: no writable storage backend");
     }
@@ -715,7 +727,9 @@ function cacheHandshake(handshake) {
 function loadCachedHandshake() {
     if (lobbyHandshake) return lobbyHandshake;
     try {
-        const raw = getStoredValue(LOBBY_HANDSHAKE_STORAGE_KEY);
+        const raw = new URLSearchParams(window.location.search).has('localDraftRoom')
+            ? sessionStorage.getItem(LOBBY_HANDSHAKE_STORAGE_KEY)
+            : getStoredValue(LOBBY_HANDSHAKE_STORAGE_KEY);
         if (raw) {
             const parsed = JSON.parse(raw);
             if (parsed.gameId && parsed.playerId && parsed.token) {
@@ -734,7 +748,9 @@ function clearCachedHandshake() {
     pendingHandshake = null;
     deckSelectionState.multiplayerFormat = null;
     clearPendingRoomExitDecision();
-    const removed = removeStoredValue(LOBBY_HANDSHAKE_STORAGE_KEY);
+    const removed = new URLSearchParams(window.location.search).has('localDraftRoom')
+        ? (sessionStorage.removeItem(LOBBY_HANDSHAKE_STORAGE_KEY), true)
+        : removeStoredValue(LOBBY_HANDSHAKE_STORAGE_KEY);
     if (!removed) {
         console.warn("Failed to clear cached handshake from storage backends");
     }
@@ -806,6 +822,7 @@ function clearPendingRoomExitDecision() {
 function getActiveNonAiRoomHandshake() {
     const handshake = getReconnectHandshake();
     if (!handshake) return null;
+    if (isSpectatorBattle(gameState, handshake)) return null;
     if (handshake.useAiFallback === true) return null;
     if (!handshake.gameId || !handshake.playerId || !handshake.token) return null;
     return handshake;
@@ -907,8 +924,8 @@ function registerRoomExitDecisionRouteHooks() {
             }
         }
 
-        if (shouldConfirmBattleExit(oldRoute, newRoute, routeButton, gameState)) {
-            if (!window.confirm(BATTLE_EXIT_CONFIRM_MESSAGE)) return false;
+        if (shouldConfirmBattleExit(oldRoute, newRoute, routeButton, gameState, getReconnectHandshake())) {
+            if (!await confirmDialog(battleExitConfirmMessage(gameState, getReconnectHandshake()))) return false;
             if (!await handleConfirmedBattleExit()) return false;
         }
         pendingRouteTransition = {
@@ -965,9 +982,13 @@ function shouldWarnBeforeUnload() {
 }
 
 async function handleConfirmedBattleExit() {
+    if (isSpectatorBattle(gameState, getReconnectHandshake())) {
+        clearCachedHandshake();
+        return true;
+    }
     const result = await surrenderGame();
     if (!result?.ok) {
-        alert(`投降失败：${result?.error || '未知错误'}`);
+        showAlert(`投降失败：${result?.error || '未知错误'}`);
         return false;
     }
 
@@ -1044,7 +1065,7 @@ async function leaveMatch(gameId, playerId, token) {
 
 async function leaveCurrentPvpRoom(reasonForLog) {
     const handshake = pendingHandshake || lobbyHandshake || loadCachedHandshake();
-    if (!handshake || handshake.useAiFallback === true) {
+    if (!handshake || handshake.useAiFallback === true || isSpectatorBattle(gameState, handshake)) {
         clearCachedHandshake();
         return;
     }
@@ -1112,7 +1133,7 @@ async function setupSignalRConnection(gameId, playerId, token, initialStateGate,
         return conn;
     } catch (err) {
         console.error("MAIN: SignalR Connection Failed: ", err);
-        alert(`连接游戏服务器失败: ${err.message || 'Unknown error'}`); // Use alert instead of displayError
+        showAlert(`连接游戏服务器失败: ${err.message || 'Unknown error'}`); // Use alert instead of displayError
         if (connection === conn) {
             connection = null;
             setSignalRConnection(null);
@@ -1207,7 +1228,7 @@ function registerActionSignalREventHandlers(conn) {
 
         if (message.startsWith("ROOM_CLOSED:")) {
             const reason = message.slice("ROOM_CLOSED:".length).trim() || "房间已关闭。";
-            alert(reason);
+            showAlert(reason);
             clearCachedHandshake();
             void router.navigateTo('navigation').catch(error => {
                 console.error('MAIN: 退出已关闭房间失败。', error);
@@ -1215,7 +1236,7 @@ function registerActionSignalREventHandlers(conn) {
             return;
         }
 
-        alert(`操作失败: ${message}`);
+        showAlert(`操作失败: ${message}`);
     });
 }
 
@@ -1285,7 +1306,7 @@ async function setupSpectatorSignalRConnection(gameId, initialStateGate, options
         return conn;
     } catch (err) {
         console.error("MAIN: SignalR Connection Failed (spectate): ", err);
-        alert(`连接游戏服务器失败: ${err.message || 'Unknown error'}`);
+        showAlert(`连接游戏服务器失败: ${err.message || 'Unknown error'}`);
         if (connection === conn) {
             connection = null;
             setSignalRConnection(null);
@@ -1299,8 +1320,9 @@ async function setupSpectatorSignalRConnection(gameId, initialStateGate, options
  * @param {signalR.HubConnection} conn - The SignalR connection instance.
  */
 function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolver as parameter
+    const presentationGate=createRevealPresentationGate(()=>connection===conn);
     const onCurrentEvent = (eventName, handler) => conn.on(eventName, (...args) => {
-        if (connection === conn) handler(...args);
+        presentationGate.dispatch(eventName,()=>handler(...args));
     });
     const connectionId = getConnectionDebugId(conn, 'game');
     const EVENT_STREAM_NAMES = [
@@ -1385,7 +1407,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
                 appendGameLog(eventName, payloadForLog);
                 return;
             }
-            handler(eventData);
+            return handler(eventData);
         });
     };
 
@@ -1432,12 +1454,12 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
             } catch (error) { // Catch for outer try (Line 98)
                 console.error("MAIN: Error calling updateFullGameState for subsequent update:", error);
                 void handleStateHydrationFailure('重连失败').catch(error => console.error('MAIN: 状态同步失败后的连接清理失败。', error));
-                alert("处理游戏状态更新时出错！");
+                showAlert("处理游戏状态更新时出错！");
             } // Closes outer catch
         } else {
             // This case should ideally not happen if setupSignalRConnection is always called with a resolver during init
             console.error("MAIN Error: Received game state but initialization seems incomplete or resolver missing!");
-            alert("内部错误：无法正确处理游戏状态！");
+            showAlert("内部错误：无法正确处理游戏状态！");
         }
     });
     // --- END M6 MODIFICATION ---
@@ -1517,7 +1539,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
 
         if (message.startsWith("ROOM_CLOSED:")) {
             const reason = message.slice("ROOM_CLOSED:".length).trim() || "房间已关闭。";
-            alert(reason);
+            showAlert(reason);
             clearCachedHandshake();
             void router.navigateTo('navigation').catch(error => {
                 console.error('MAIN: 退出已关闭房间失败。', error);
@@ -1531,7 +1553,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
             setConnectionStatus('disconnected', '连接失败，请点击重连');
         }
 
-        alert(`操作失败: ${message}`); // Use alert instead of displayError
+        showAlert(`操作失败: ${message}`); // Use alert instead of displayError
     });
 
     onCurrentEvent("PlayerConnectionStatusUpdated", (eventData) => {
@@ -1562,7 +1584,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
             error: error ? { message: error.message, name: error.name } : null
         });
         console.error(`MAIN: SignalR Connection Closed. Error: "${error}". State: ${conn.state}.`);
-        alert("与服务器连接已断开。" + (error ? ` 原因: ${error.message}` : "")); // Use alert instead of displayError
+        showAlert("与服务器连接已断开。" + (error ? ` 原因: ${error.message}` : "")); // Use alert instead of displayError
         // Automatic reconnect is enabled, but we might want to disable UI elements here.
         connection = null; // Clear the connection variable
         reconnectInProgress = false;
@@ -1579,7 +1601,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
             error: error ? { message: error.message, name: error.name } : null
         });
         console.warn("MAIN: SignalR Connection Reconnecting...", error);
-        alert("连接中断，正在尝试重新连接服务器..."); // Use alert instead of displayInfo
+        showAlert("连接中断，正在尝试重新连接服务器..."); // Use alert instead of displayInfo
         // Disable UI interactions while reconnecting?
         reconnectInProgress = true;
         setConnectionStatus('reconnecting', '连接中断，正在重连...');
@@ -1592,7 +1614,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
             transportConnectionId: connectionId,
             state: conn.state
         });
-        alert("已重新连接到服务器。"); // Use alert instead of displayInfo
+        showAlert("已重新连接到服务器。"); // Use alert instead of displayInfo
         forceFullStateOnNextReceive = true;
         reconnectInProgress = false;
         setSignalRConnection(conn);
@@ -1633,7 +1655,7 @@ async function requestFullStateSync(reason) {
 export async function respondToTargetSelection(requestId, selectedIds) {
     if (!connection || connection.state !== signalR.HubConnectionState.Connected) {
         console.error("MAIN: SignalR connection not available for RespondToTargetSelection");
-        alert("连接已断开，无法响应目标选择。"); // Use alert instead of displayError
+        showAlert("连接已断开，无法响应目标选择。"); // Use alert instead of displayError
         return;
     }
     const responseDto = {
@@ -1644,7 +1666,7 @@ export async function respondToTargetSelection(requestId, selectedIds) {
         await connection.invoke("RespondToTargetSelection", responseDto); // Assuming Hub method exists
     } catch (err) {
         console.error("MAIN: RespondToTargetSelection invocation failed:", err);
-        alert(`发送目标选择失败: ${err.message}`); // Use alert instead of displayError
+        showAlert(`发送目标选择失败: ${err.message}`); // Use alert instead of displayError
     }
 }
 
@@ -1706,7 +1728,7 @@ async function performManualReconnect() {
 
     const handshake = getReconnectHandshake();
     if (!handshake || !handshake.gameId) {
-        alert("没有可用的对战信息，无法重连。");
+        showAlert("没有可用的对战信息，无法重连。");
         setConnectionStatus('disconnected', '连接已断开');
         return;
     }
@@ -1757,7 +1779,7 @@ async function performManualReconnect() {
         }
         console.error("MAIN: Manual reconnect failed:", err);
         setConnectionStatus('disconnected', '重连失败，请重试');
-        alert(`重连失败：${err?.message || '未知错误'}`);
+        showAlert(`重连失败：${err?.message || '未知错误'}`);
     } finally {
         if (pageSession === gamePageSession) reconnectInProgress = false;
     }
@@ -1885,7 +1907,7 @@ async function initializeApp() {
             }
             console.error("MAIN: Error during M6 coordination (Promise.all failed):", error);
             // Handle errors from loadCards, setupSignalRConnection, or state reception issues
-            alert(`游戏初始化失败：${error.message || '未知错误'} 请刷新页面重试。`);
+            showAlert(`游戏初始化失败：${error.message || '未知错误'} 请刷新页面重试。`);
             // Optionally disable UI or show persistent error
             await handleStateHydrationFailure('连接失败，请点击重连');
             return false; // Stop initialization on error
@@ -1903,7 +1925,7 @@ async function initializeApp() {
         if (connection === null || connection.state === signalR.HubConnectionState.Disconnected) {
             // alert might have already been called in setupSignalRConnection
         } else {
-            alert(`游戏初始化失败: ${error.message || '未知错误'}`); // Use alert instead of displayError
+            showAlert(`游戏初始化失败: ${error.message || '未知错误'}`); // Use alert instead of displayError
         }
         return false;
     } finally {
@@ -1948,24 +1970,7 @@ function stopMultiplayerPolling() {
 }
 
 function formatHandshakeOutput(handshake) {
-    const wrapCopy = (label, value) => {
-        if (!value) return null;
-        const safeValue = String(value);
-        const copiedClass = mpLastCopied?.value === safeValue ? ' copied' : '';
-        return `${label}: <span class="mp-copy${copiedClass}" role="button" tabindex="0" title="点击复制" data-copy="${safeValue}"><strong>${safeValue}</strong></span>`;
-    };
-
-    const parts = [
-        wrapCopy('GameId', handshake.gameId),
-        wrapCopy('PlayerId', handshake.playerId),
-    ].filter(Boolean);
-    if (handshake.joinCode) {
-        parts.push(wrapCopy('JoinCode', handshake.joinCode));
-    }
-    if (handshake.role) {
-        parts.push(`Role: ${handshake.role}`);
-    }
-    return parts.join('<br>');
+    return formatRoomHandshake(handshake, {copiedValue:mpLastCopied?.value});
 }
 
 function setPendingHandshake(handshake) {
@@ -2036,7 +2041,7 @@ function setupMultiplayerUI() {
             const text = target?.dataset?.copy;
             const ok = await copyTextToClipboard(text);
             if (!ok) {
-                alert('复制失败，请手动选择复制。');
+                showAlert('复制失败，请手动选择复制。');
                 return;
             }
             mpLastCopied = { value: String(text ?? ''), at: Date.now() };
@@ -2121,6 +2126,7 @@ function setupMultiplayerUI() {
             parts.push(`第 ${room.round} 局`);
         }
         parts.push(room.hasGuest || room.useAiFallback ? '对手已就位' : '等待对手');
+        if (room.isTakeTwo) { parts.push("双选"); return parts.join(" · "); }
         if (room.requiredEnvironment) {
             parts.push(getDeckEnvironmentLabel(room.requiredEnvironment));
         }
@@ -2445,6 +2451,7 @@ function setupMultiplayerUI() {
         }
 
         try {
+            if(await tryJoinTakeTwo(gameId,joinCode))return;
             await ensureDecksLoaded();
             const selectedDeckId = normalizeDeckId(deckSelectionState.selected.multiplayer);
             if (!selectedDeckId) {
@@ -2547,7 +2554,7 @@ function setupMultiplayerUI() {
     bindButton(btnGoGame, () => {
         const handshake = pendingHandshake || loadCachedHandshake();
         if (!handshake) {
-            alert('请先创建或加入房间。');
+            showAlert('请先创建或加入房间。');
             return;
         }
         if (handshake.useAiFallback) {
@@ -2560,12 +2567,12 @@ function setupMultiplayerUI() {
             try {
                 const deckId = await getSelectedMultiplayerDeckId();
                 if (!deckId) {
-                    alert('请先选择卡组。');
+                    showAlert('请先选择卡组。');
                     return;
                 }
                 const selection = await submitDeckSelection(handshake, { deckId });
                 if (!selection.ok) {
-                    alert(selection.message || "无法选择卡组。");
+                    showAlert(selection.message || "无法选择卡组。");
                     return;
                 }
                 markRoomDeckSynced(handshake, deckId);
@@ -2583,17 +2590,17 @@ function setupMultiplayerUI() {
                 if (room2.status === "Closed") {
                     const reason = room2.closedReason || "房间已关闭。";
                     clearCachedHandshake();
-                    alert(`无法进入对战：${reason}`);
+                    showAlert(`无法进入对战：${reason}`);
                     return;
                 }
                 if (room2.status !== "Started") {
-                    alert('房间未开始，请等待对手加入并准备。');
+                    showAlert('房间未开始，请等待对手加入并准备。');
                     return;
                 }
                 suppressMultiplayerLeaveOnce = true;
                 router.navigateTo('game');
             } catch (err) {
-                alert(`无法进入对战：${err.message}`);
+                showAlert(`无法进入对战：${err.message}`);
             }
         })();
     });
@@ -3620,3 +3627,6 @@ if (document.readyState === 'loading') {
 } else {
     startRouter();
 }
+
+ document.addEventListener("svb:take-two-start",async event=>{stopMultiplayerPolling();setPendingHandshake(event.detail);suppressMultiplayerLeaveOnce=true;await router.navigateTo("game");});
+if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",initializeTakeTwo,{once:true});else initializeTakeTwo();

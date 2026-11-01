@@ -165,6 +165,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         [DslExposable("Earthsigil", Description = "earthsigil counter value.")]
         public int Earthsigil => Get(CardInstance.EarthsigilCounterKey);
 
+        [DslExposable("证据数", Description = "证据护符的证据数")]
+        public int Evidence => Get(CardInstance.EvidenceCounterKey);
+
         public int this[string key] => Get(key);
 
         public IEnumerable<string> Keys => _values.Keys;

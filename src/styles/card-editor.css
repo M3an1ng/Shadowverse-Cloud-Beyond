@@ -1868,6 +1868,7 @@
 .stat-mini.health { color: var(--accent-red); text-shadow: 0 0 8px rgba(255, 51, 51, 0.4); }
 .stat-mini.countdown { color: var(--accent-gold); text-shadow: 0 0 8px var(--accent-gold-dim); }
 .stat-mini.earthsigil { color: #f59e0b; text-shadow: 0 0 8px rgba(245, 158, 11, 0.35); }
+.stat-mini.evidence { color: #60a5fa; text-shadow: 0 0 8px rgba(96, 165, 250, 0.35); }
 .stat-mini .stat-icon.earthsigil-icon {
     width: 14px;
     height: 14px;

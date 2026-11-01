@@ -1,4 +1,4 @@
-using ShadowverseBeyond.Server.Domain.Entities;
+﻿using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Domain.Constants; // For CardKeyword enum
 using System;
@@ -23,20 +23,23 @@ namespace ShadowverseBeyond.Server.Mappings
         {
             var definition = source.CurrentDefinition;
             var maxHealth = source.GetMaxHealth(context);
+            var appearance = ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.Resolve(source.OwnerPlayerId, source.CurrentDefinitionId);
+            var artAppearance=appearance ?? (source.AlternateArtDefinitionId is int parentId ? ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.Resolve(source.OwnerPlayerId,parentId) : null);
             return new CardInstanceDto
             {
                 InstanceId = source.InstanceId,
                 CardId = source.CurrentDefinitionId,
-                Name = source.Name,
+                Name = appearance?.Name ?? source.Name,
                 CardNames = source.CardNames,
-                Description = source.Description,
-                ArtPreview = definition?.ArtPreview,
-                ArtDetail = definition?.ArtDetail,
+                Description = appearance?.Description ?? source.Description,
+                ArtPreview = artAppearance?.ArtPreview ?? (source.AlternateArtDefinitionId is int artId ? GameDataProvider.Instance.GetCardDefinition(artId) : definition)?.ArtPreview,
+                ArtDetail = artAppearance?.ArtDetail ?? (source.AlternateArtDefinitionId is int detailArtId ? GameDataProvider.Instance.GetCardDefinition(detailArtId) : definition)?.ArtDetail,
                 Rarity = source.Rarity,
                 Type = source.CardType,
                 Class = source.Class,
                 Tribe = source.Tribe,
                 Earthsigil = source.Earthsigil,
+                Evidence = source.Evidence,
                 Counters = BuildCounterSnapshot(source),
                 CounterDisplayNames = BuildCounterDisplayNameSnapshot(source),
                 CounterSummaryEntries = BuildCounterSummaryEntries(source),
@@ -65,6 +68,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 OwnerPlayerId = source.OwnerPlayerId,
                 Keywords = source.GetKeywords(context).ToList(),
                 BuffSummaries = BuildBuffSummaries(source, context),
+                AlternatePlayReferences = BuildAlternatePlayReferences(source, context),
                 BuffStatSummary = BuildBuffStatSummary(source, context),
                 CanEvolve = source.CanEvolve(),
                 ZoneIndex = source.ZoneIndex,
@@ -254,6 +258,74 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ToList();
         }
 
+        private static List<AlternatePlayReferenceDto> BuildAlternatePlayReferences(CardInstance card, GameContext? context)
+        {
+            var abilities = context != null
+                ? context.AbilityManager.GetEffectiveAbilitiesForCard(card.InstanceId, context)
+                    .Where(ability => ability.HasKeyword(AbilityKeyword.Accelerate) || ability.HasKeyword(AbilityKeyword.Crystalize))
+                    .Select(ability => (Config: ability.AlternatePlay, Label: ability.HasKeyword(AbilityKeyword.Accelerate) ? "激奏" : "结晶"))
+                : GameDataProvider.Instance.GetAbilityConfigs(card.CurrentDefinitionId)
+                    .Where(ability => ability.HasKeyword(AbilityKeyword.Accelerate) || ability.HasKeyword(AbilityKeyword.Crystalize))
+                    .Select(ability => (Config: ability.AlternatePlay, Label: ability.HasKeyword(AbilityKeyword.Accelerate) ? "激奏" : "结晶"));
+            return abilities.Where(item => item.Config?.PlayAsCardDefinitionId > 0)
+                .Select(item => (Definition: GameDataProvider.Instance.GetCardDefinition(item.Config!.PlayAsCardDefinitionId), item.Label))
+                .Where(item => item.Definition != null)
+                .DistinctBy(item => item.Definition!.Id)
+                .Select(item => new AlternatePlayReferenceDto {
+                    Id = item.Definition!.Id, Label = item.Label, Name = item.Definition.Name,
+                    Description = item.Definition.Description, Cost = item.Definition.Cost,
+                    Attack = item.Definition.Attack, Health = item.Definition.Health,
+                    ArtPreview = GameDataProvider.Instance.GetCardDefinition(card.AlternateArtDefinitionId ?? card.CurrentDefinitionId)?.ArtPreview ?? string.Empty
+                }).ToList();
+        }
+
+        private static IEnumerable<AttachedNumericEffectDto> BuildNumericEffects(Buff buff, GameContext context)
+        {
+            // These are already-applied buffs. Their originating ability's trigger/target IDs
+            // do not change applicability; group by the buff's actual remaining lifetime instead.
+            var policy = global::System.Text.Json.JsonSerializer.Serialize(new {
+                buff.DurationType, buff.DurationParameter, buff.RemoveAfterUse,
+                AppliedTurn = buff.DurationType == DurationType.Permanent ? 0 : buff.AppliedTurn,
+                RemovalExpression = buff.RemovalCondition?.Expression,
+                RemovalEnabled = buff.RemovalCondition?.IsEnabled,
+                buff.RemovalTrigger,
+                RemovalSource = buff.RemovalCondition != null ? buff.SourceCardInstanceId : null
+            });
+            var key = Convert.ToHexString(global::System.Security.Cryptography.SHA256.HashData(global::System.Text.Encoding.UTF8.GetBytes(policy)));
+            var texts = DescribeBuff(buff).ToList();
+            var index = 0;
+            foreach (var stat in buff.GetStatModifications())
+                yield return new AttachedNumericEffectDto { Field = stat.Stat.ToString(), Layer = stat.Layer.ToString(), Value = stat.Value, PolicyKey = key, RemoveAfterUse = buff.RemoveAfterUse, Duration = buff.DurationType.ToString(), DisplayText = texts[index++] };
+            foreach (var effect in buff.Effects.OfType<AbilityKeywordBuffEffect>())
+                foreach (var modifier in effect.Modifications)
+                    yield return new AttachedNumericEffectDto { Field = modifier.Keyword.ToString(), Layer = modifier.Layer.ToString(), Value = modifier.Value, PolicyKey = key, RemoveAfterUse = buff.RemoveAfterUse, Duration = buff.DurationType.ToString(), DisplayText = texts[index++] };
+        }
+
+        private static IEnumerable<string> DescribeBuff(Buff buff)
+        {
+            static string Number(double value, ModifierLayer layer) => layer switch
+            {
+                ModifierLayer.Set => $"变为 {value:0.##}",
+                ModifierLayer.Base => $"基础值 {value:0.##}",
+                ModifierLayer.Multiplicative => $"×{value:0.##}",
+                _ => value >= 0 ? $"+{value:0.##}" : $"{value:0.##}"
+            };
+            var duration = buff.DurationType switch
+            {
+                DurationType.Permanent => "",
+                DurationType.ConditionalRemoval => " · ConditionalRemoval",
+                _ => $" · {buff.DurationType}（{Math.Max(1, buff.DurationParameter ?? 1)}次）"
+            };
+            foreach (var stat in buff.GetStatModifications())
+                yield return $"{stat.Stat} {Number(stat.Value, stat.Layer)}{duration}";
+            foreach (var effect in buff.Effects.OfType<AbilityKeywordBuffEffect>())
+                foreach (var modifier in effect.Modifications)
+                    yield return $"{modifier.Keyword} {Number(modifier.Value, modifier.Layer)}{duration}";
+            foreach (var keyword in buff.GetGrantedKeywords()) yield return $"获得 {keyword}{duration}";
+            foreach (var granted in buff.GetGrantedAbilityConfigs()) yield return $"{(string.IsNullOrWhiteSpace(granted.Description) ? granted.Name : granted.Description)}{duration}";
+            foreach (var tribe in buff.GetAddedTribes()) yield return $"种类：{tribe}{duration}";
+        }
+
         private static List<BuffSummaryDto> BuildBuffSummaries(CardInstance cardInstance, GameContext? context)
         {
             if (context == null)
@@ -386,7 +458,9 @@ namespace ShadowverseBeyond.Server.Mappings
                     sourceCardArtPreview = gameState.FindCardInstance(cachedArtSourceCardId)?.CurrentDefinition?.ArtPreview;
                 }
 
-                var sourceAbilityName = ability?.Name ?? abilitySnapshot?.AbilityName ?? sample.SourceAbilityName;
+                var sourceAbilityName = abilityManager.GetAbilityByRuntimeId(sample.SourceAbilityId)?.Name ?? sample.SourceAbilityName ?? ability?.Name ?? abilitySnapshot?.AbilityName;
+                if (string.IsNullOrWhiteSpace(sourceCardName)) sourceCardName = "附加效果";
+                if (string.IsNullOrWhiteSpace(sourceAbilityName)) sourceAbilityName = "附加效果";
 
                 if (string.IsNullOrWhiteSpace(sourceCardName) || string.IsNullOrWhiteSpace(sourceAbilityName))
                 {
@@ -406,9 +480,14 @@ namespace ShadowverseBeyond.Server.Mappings
                 summaries.Add(new BuffSummaryDto
                 {
                     EffectKey = group.Key,
+                    SourceCardDefinitionId = (ability?.SourceCard ?? gameState.FindCardInstance(sample.SourceCardInstanceId ?? Guid.Empty))?.CurrentDefinition.Id,
                     SourceCardName = sourceCardName,
                     SourceCardArtPreview = sourceCardArtPreview ?? string.Empty,
-                    SourceAbilityName = sourceAbilityName
+                    SourceAbilityName = sourceAbilityName,
+                    GrantedAbilities = group.SelectMany(buff => buff.GetGrantedAbilityConfigs()).Where(config => config.IsEnabled).Select(config => new GrantedAbilityDetailDto { Name = config.Name ?? "", Description = config.Description ?? "" }).ToList(),
+                    Description = (ability as Ability)?.Description ?? string.Empty,
+                    Details = group.SelectMany(buff => DescribeBuff(buff)).ToList(),
+                    NumericEffects = group.SelectMany(buff => BuildNumericEffects(buff, context)).ToList()
                 });
 
                 logger?.LogDebug(
@@ -484,7 +563,7 @@ namespace ShadowverseBeyond.Server.Mappings
             }
 
             return buffs
-                .Where(buff => ShouldDisplayBuff(buff, context))
+                .Where(buff => buff.IsActive && ShouldDisplayBuff(buff, context))
                 .ToList();
         }
 

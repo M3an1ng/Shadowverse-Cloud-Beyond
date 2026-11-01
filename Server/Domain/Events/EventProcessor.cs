@@ -604,7 +604,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             return new CardInstanceUpdatedEventDto(
                 e.TransformingCard.OwnerPlayerId,
-                new List<CardInstanceDto> { transformedCardDto });
+                new List<CardInstanceDto> { transformedCardDto })
+            {
+                ReplacedCardInstanceIds = e.TransformingCardSnapshot != null
+                    && e.TransformingCardSnapshot.InstanceId != e.TransformingCard.InstanceId
+                    ? new Dictionary<Guid, Guid> { [e.TransformingCardSnapshot.InstanceId] = e.TransformingCard.InstanceId }
+                    : new Dictionary<Guid, Guid>()
+            };
         }
 
         private GameEventDto? ConvertPpUpdateEvent(IGameEvent gameEvent)
@@ -893,7 +899,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 sourcePlayerId: revealingPlayerId.Value,
                 revealingPlayerId: revealingPlayerId.Value,
                 revealedCardInstanceId: card.InstanceId,
-                revealedCard: cardDto);
+                revealedCard: cardDto) { HandIndex = context.CurrentGameState.GetPlayerState(card.OwnerPlayerId)?.Hand.IndexOf(card) ?? -1 };
         }
 
         private static GameEventDto? ConvertGameEndEvent(IGameEvent gameEvent)

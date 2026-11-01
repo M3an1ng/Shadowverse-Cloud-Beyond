@@ -1,0 +1,1243 @@
+.take-two-screen {
+  --profession-rgb: 113, 177, 198;
+  position: relative;
+  width: calc(100% - 32px);
+  margin: 16px auto;
+  padding: 22px clamp(16px, 2vw, 40px);
+  color: #d5d9df;
+  background:
+    radial-gradient(ellipse at 50% 48%, rgba(var(--profession-rgb), 0.08), transparent 62%),
+    linear-gradient(145deg, #101923f2, #06090df5);
+  border: 1px solid #323d4b;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+}
+.take-two-screen[data-profession='精灵'] {
+  --profession-rgb: 115, 187, 143;
+}
+.take-two-screen[data-profession='皇家护卫'] {
+  --profession-rgb: 202, 178, 103;
+}
+.take-two-screen[data-profession='巫师'] {
+  --profession-rgb: 150, 133, 204;
+}
+.take-two-screen[data-profession='龙族'] {
+  --profession-rgb: 191, 119, 91;
+}
+.take-two-screen[data-profession='梦魇'] {
+  --profession-rgb: 187, 115, 164;
+}
+.take-two-screen[data-profession='主教'] {
+  --profession-rgb: 204, 192, 143;
+}
+.take-two-screen[data-profession='复仇者'] {
+  --profession-rgb: 113, 166, 205;
+}
+.app.in-battle > .take-two-screen {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.take-two-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 1px solid #ffffff14;
+  padding-bottom: 16px;
+  flex-shrink: 0;
+}
+.take-two-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.take-two-heading > .take-two-emblem {
+  width: 48px;
+  height: 48px;
+}
+.take-two-header h1 {
+  font-size: 26px;
+  margin: 4px 0;
+  color: #e8e5dd;
+}
+.take-two-header p,
+.take-two-round p,
+.take-two-core-caption {
+  color: #929eae;
+  font-size: 13px;
+  margin: 5px 0;
+}
+.take-two-progress {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 14px;
+}
+.take-two-progress strong {
+  color: #a4d7df;
+  font-variant-numeric: tabular-nums;
+}
+.take-two-opponent-progress {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 6px;
+  row-gap: 8px;
+}
+.take-two-opponent-progress > i {
+  height: 3px;
+  background: #ffffff10;
+  border-radius: 4px;
+  grid-column: 1/-1;
+  overflow: hidden;
+}
+.take-two-opponent-progress > i > i {
+  height: 100%;
+  display: block;
+  background: #78aab4;
+  transition: width 0.2s;
+}
+.take-two-deck-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  background: linear-gradient(#1b2732, #101923);
+  border-color: #43505c;
+}
+.take-two-emblem {
+  display: inline-block;
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  flex-shrink: 0;
+  filter: drop-shadow(0 2px 4px #0007);
+}
+.take-two-class-layout {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  flex: 1;
+  min-height: max-content;
+  padding: 14px 0 0;
+}
+.take-two-professions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  padding: 6px;
+  flex-shrink: 0;
+}
+.take-two-professions button {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 8px;
+  border-radius: 50%;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    transform 0.15s;
+}
+.take-two-professions button:hover {
+  background: #ffffff08;
+  transform: translateY(-2px);
+}
+.take-two-professions button[aria-pressed='true'] {
+  border-color: rgba(var(--profession-rgb), 0.65);
+  background: radial-gradient(rgba(var(--profession-rgb), 0.2), transparent);
+  box-shadow: 0 0 16px rgba(var(--profession-rgb), 0.12);
+}
+.take-two-carousel {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: grid;
+  align-items: center;
+  padding: 16px 0;
+  flex: 1;
+  min-height: max-content;
+}
+.take-two-core {
+  position: relative;
+  z-index: 2;
+  grid-area: 1/1;
+  width: min(64%, 1100px);
+  margin: auto;
+  text-align: center;
+  padding: 18px 20px 22px;
+  border: 1px solid rgba(var(--profession-rgb), 0.4);
+  border-radius: 8px;
+  background:
+    radial-gradient(ellipse at 50% 0, rgba(var(--profession-rgb), 0.1), transparent 60%), #0a111bf5;
+  box-shadow:
+    0 12px 44px #0006,
+    inset 0 1px 0 #ffffff12;
+}
+.take-two-core-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0 16px;
+}
+.take-two-core-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 24px;
+  margin: 0;
+  font-weight: 500;
+}
+.take-two-core-heading > span {
+  font-size: 13px;
+  color: #a5afba;
+}
+.take-two-core-heading b {
+  color: #dec997;
+}
+.take-two-core-caption {
+  margin: 14px 0 12px;
+}
+.take-two-neighbor {
+  position: absolute;
+  z-index: 0;
+  left: 50%;
+  width: min(64%, 1100px);
+  padding: 20px 22px 48px;
+  border: 1px solid #66717f55;
+  border-radius: 8px;
+  background: linear-gradient(#182330dd, #0b111bdd);
+  opacity: 0.46;
+  overflow: hidden;
+  text-align: center;
+  transition: opacity 0.18s;
+}
+.take-two-neighbor:hover {
+  opacity: 0.7;
+}
+.take-two-neighbor.previous {
+  transform: translateX(calc(-150% - 26px)) scale(0.93);
+  transform-origin: right center;
+}
+.take-two-neighbor.next {
+  transform: translateX(calc(50% + 26px)) scale(0.93);
+  transform-origin: left center;
+}
+.take-two-neighbor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-size: 21px;
+  margin-bottom: 18px;
+}
+.take-two-neighbor .take-two-card {
+  pointer-events: none;
+}
+.take-two-neighbor.previous .take-two-pair {
+  justify-content: flex-end;
+}
+.take-two-neighbor.next .take-two-pair {
+  justify-content: flex-start;
+}
+.take-two-carousel-arrow {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 64px;
+  padding: 0;
+  font-size: 34px;
+  color: #dfdfdb;
+  background: #080d16c9;
+  border: 1px solid #67788a66;
+  box-shadow: 0 4px 16px #0008;
+}
+.take-two-carousel-arrow.previous {
+  left: 12px;
+}
+.take-two-carousel-arrow.next {
+  right: 12px;
+}
+.take-two-pair {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  align-items: flex-start;
+  min-width: 0;
+}
+.take-two-screen .take-two-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: clamp(120px, min(20vw, 30dvh), 360px);
+  min-width: 0;
+  flex-shrink: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+  aspect-ratio: auto;
+  text-align: center;
+  container-type: inline-size;
+}
+.take-two-screen .take-two-card-frame {
+  /* Neutralize pool-card padding/min-height so narrow screens preserve the same 5:7 art as the detail preview. */
+  min-height: 0;
+  height: auto;
+  padding: 0;
+  gap: 0;
+  flex: none;
+  box-sizing: border-box;
+  border-width: 2px;
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 5/7;
+  isolation: isolate;
+  border-radius: 6px;
+  overflow: visible;
+  background-color: #080b10;
+}
+.take-two-card-art {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  border-radius: 4px;
+}
+.take-two-card-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.take-two-card .card-badge {
+  position: absolute;
+  z-index: 3;
+  width: 18%;
+  height: auto;
+  font-size: 10.8cqw;
+  pointer-events: none;
+}
+.take-two-card .card-badge-cost {
+  left: 0;
+  top: 0;
+  width: 16%;
+  font-size: 9.7cqw;
+}
+.take-two-card .card-badge-attack {
+  left: 0;
+  bottom: 0;
+}
+.take-two-card .card-badge-health {
+  right: 0;
+  bottom: 0;
+}
+.take-two-screen .take-two-card > .take-two-card-name {
+  position: static;
+  margin: 18px 0 0;
+  padding: 0 2px;
+  display: block;
+  box-sizing: border-box;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-height: 2.7em;
+  width: 100%;
+  background: none;
+  font-size: clamp(14px, 1.3vw, 24px);
+  line-height: 1.35;
+  font-weight: 500;
+  color: #e4e5e5;
+  text-shadow: 0 2px 4px #0009;
+}
+.take-two-card:focus-visible {
+  outline: 2px solid #99d9e7;
+  outline-offset: 7px;
+  border-radius: 6px;
+}
+.take-two-primary {
+  position: relative;
+  color: #eadbb2;
+  border: 1px solid #a08b596b;
+  border-top-color: #c5b17b9c;
+  border-radius: 5px;
+  background: linear-gradient(180deg, #3d3628, #29251e 48%, #221f1b);
+  box-shadow:
+    inset 0 1px 0 #fff2,
+    inset 0 -1px 0 #0008,
+    0 4px 10px #0003;
+  padding: 12px 32px;
+  min-width: 200px;
+  letter-spacing: 0.22em;
+  transition:
+    filter 0.16s,
+    box-shadow 0.16s,
+    transform 0.16s;
+}
+.take-two-primary:enabled:hover {
+  filter: brightness(1.13);
+  box-shadow:
+    inset 0 1px 0 #fff3,
+    0 5px 18px #0005;
+  transform: translateY(-1px);
+}
+.take-two-primary:enabled:active {
+  transform: translateY(1px);
+  filter: brightness(0.95);
+}
+.take-two-primary:disabled {
+  opacity: 0.45;
+}
+.take-two-offers {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(190px, 18vw, 260px) minmax(0, 1fr);
+  gap: clamp(14px, 2vw, 36px);
+  align-items: center;
+  flex: 1;
+  padding: 26px 0;
+}
+.take-two-option {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 28px;
+  min-width: 0;
+  padding: 20px 12px;
+}
+.take-two-option[data-side='0'] {
+  grid-column: 1;
+  grid-row: 1;
+}
+.take-two-option[data-side='1'] {
+  grid-column: 3;
+  grid-row: 1;
+}
+.take-two-option .take-two-pair {
+  width: 100%;
+  gap: clamp(8px, 1.2vw, 22px);
+}
+.take-two-option .take-two-card {
+  width: clamp(100px, min(17vw, 32dvh), 340px);
+}
+.take-two-draft-summary {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 24px 18px;
+  border: 1px solid rgba(var(--profession-rgb), 0.3);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(var(--profession-rgb), 0.08), #080c14bb);
+  box-shadow: inset 0 1px 0 #ffffff0d;
+}
+.take-two-round {
+  text-align: center;
+  border-bottom: 1px solid #ffffff14;
+  padding-bottom: 12px;
+}
+.take-two-round h2 {
+  margin: 0 0 7px;
+  font:
+    500 25px Georgia,
+    'SimSun',
+    serif;
+  color: #e1ded5;
+}
+.take-two-summary-profession {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #c6cbd2;
+}
+.take-two-draft-summary .deck-summary {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 18px;
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: 0;
+  align-items: stretch;
+}
+.take-two-draft-summary .deck-curve {
+  min-width: 0;
+  width: 100%;
+  height: 78px;
+  gap: 3px;
+  align-items: end;
+}
+.take-two-draft-summary .deck-curve > div {
+  flex: 1;
+  min-width: 0;
+}
+.take-two-draft-summary .deck-curve b {
+  font-size: 11px;
+}
+.take-two-draft-summary .deck-curve small {
+  font-size: 10px;
+}
+.take-two-draft-summary .deck-summary-count {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.take-two-draft-summary .deck-summary-count > strong {
+  font:
+    32px Georgia,
+    serif;
+  color: #e1ddd5;
+}
+.take-two-draft-summary .deck-summary-count > small {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.take-two-summary-preview {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+}
+.take-two-redraw-hint {
+  text-align: center;
+  color: #758291;
+  font-size: 11px;
+}
+.take-two-wait {
+  text-align: center;
+  padding: 60px 12px;
+  margin: auto;
+}
+.take-two-wait > button {
+  margin: 12px;
+}
+.take-two-class-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin: 22px 0;
+}
+.take-two-class-tabs button[aria-pressed='true'] {
+  color: #9bd8ee;
+  border-color: #608ca2;
+  background: #1b3442;
+}
+.draft-deck-preview .deck-preview-actions {
+  grid-column: 3;
+}
+@media (prefers-reduced-motion: reduce) {
+  .take-two-screen button,
+  .take-two-opponent-progress > i > i {
+    transition: none;
+  }
+}
+.take-two-pool-body {
+  padding: 0 26px 24px;
+}
+.take-two-packs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.take-two-packs label {
+  padding: 12px;
+  background: #141c27;
+  border: 1px solid #303b49;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.take-two-pack-actions {
+  display: flex;
+  gap: 8px;
+}
+.take-two-redraw-settings {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.take-two-redraw-settings label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.take-two-redraw-settings input {
+  width: 68px;
+}
+.take-two-pool summary {
+  cursor: pointer;
+  color: #8fc9dc;
+}
+.entry-create-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.entry-format-switch {
+  display: flex;
+  border: 1px solid #394653;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.entry-format-switch button {
+  font-size: 12px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 0;
+}
+.entry-format-switch button[aria-pressed='true'] {
+  background: #203e4a;
+  color: #98e0e5;
+}
+
+@media (max-width: 1100px) {
+  .take-two-screen {
+    width: calc(100% - 20px);
+    margin: 10px auto;
+    padding: 16px;
+  }
+  .take-two-core {
+    width: 72%;
+    padding: 16px 14px;
+  }
+  .take-two-neighbor {
+    width: 72%;
+  }
+  .take-two-pair {
+    gap: 12px;
+  }
+  .take-two-option {
+    padding: 12px 0;
+    gap: 22px;
+  }
+  .take-two-draft-summary {
+    padding: 18px 12px;
+    gap: 12px;
+  }
+  .take-two-primary {
+    min-width: 150px;
+    padding: 11px 24px;
+  }
+}
+@media (min-width: 701px) and (max-height: 850px) {
+  .take-two-class-layout {
+    padding-top: 8px;
+    gap: 0;
+  }
+  .take-two-professions {
+    padding: 0;
+    gap: 8px;
+  }
+  .take-two-professions button {
+    width: 44px;
+    height: 44px;
+    padding: 5px;
+  }
+  .take-two-carousel {
+    padding: 8px 0;
+  }
+  .take-two-core {
+    padding: 12px 14px;
+  }
+  .take-two-core-heading {
+    padding-bottom: 10px;
+  }
+  .take-two-core-heading h2 {
+    font-size: 20px;
+  }
+  .take-two-core .take-two-card,
+  .take-two-neighbor .take-two-card {
+    width: clamp(110px, min(20vw, 25dvh), 250px);
+  }
+  .take-two-core-caption {
+    margin: 10px 0;
+    font-size: 12px;
+  }
+  .take-two-core > .take-two-primary {
+    padding: 10px 24px;
+  }
+}
+@media (max-width: 700px) {
+  .take-two-screen {
+    width: calc(100% - 16px);
+    margin: 8px auto;
+    padding: 14px 10px;
+  }
+  .take-two-header {
+    gap: 12px;
+    flex-wrap: wrap;
+    padding-bottom: 12px;
+  }
+  .take-two-heading > .take-two-emblem {
+    width: 36px;
+    height: 36px;
+  }
+  .take-two-header h1 {
+    font-size: 22px;
+  }
+  .take-two-progress {
+    font-size: 12px;
+    gap: 14px;
+    width: 100%;
+    justify-content: space-between;
+  }
+  .take-two-deck-button {
+    padding: 9px 10px;
+    font-size: 12px;
+    gap: 6px;
+  }
+  .take-two-professions {
+    gap: 6px;
+    padding: 0;
+  }
+  .take-two-professions button {
+    width: 36px;
+    height: 36px;
+    padding: 5px;
+  }
+  .take-two-professions .take-two-emblem {
+    width: 26px;
+    height: 26px;
+  }
+  .take-two-class-layout {
+    gap: 4px;
+    padding-top: 12px;
+  }
+  .take-two-carousel {
+    padding: 14px 0;
+  }
+  .take-two-core {
+    width: 80%;
+    padding: 13px 10px 16px;
+  }
+  .take-two-neighbor {
+    width: 80%;
+    padding: 15px 10px 38px;
+  }
+  .take-two-neighbor.previous {
+    transform: translateX(calc(-150% - 8px)) scale(0.93);
+  }
+  .take-two-neighbor.next {
+    transform: translateX(calc(50% + 8px)) scale(0.93);
+  }
+  .take-two-core-heading {
+    padding-bottom: 12px;
+    gap: 5px;
+  }
+  .take-two-core-heading h2 {
+    font-size: 18px;
+    gap: 5px;
+  }
+  .take-two-core-heading .take-two-emblem {
+    width: 26px;
+    height: 26px;
+  }
+  .take-two-core-heading > span {
+    font-size: 10px;
+  }
+  .take-two-pair {
+    gap: 7px;
+  }
+  .take-two-screen .take-two-card {
+    width: clamp(80px, 28vw, 190px);
+  }
+  .take-two-card > strong {
+    font-size: 11px;
+    padding: 18px 3px 5px;
+  }
+  .take-two-card > small {
+    font-size: 10px;
+    padding-bottom: 5px;
+  }
+  .take-two-core-caption {
+    font-size: 10px;
+    margin: 10px 0;
+  }
+  .take-two-carousel-arrow {
+    width: 26px;
+    height: 46px;
+    font-size: 27px;
+  }
+  .take-two-carousel-arrow.previous {
+    left: 0;
+  }
+  .take-two-carousel-arrow.next {
+    right: 0;
+  }
+  .take-two-primary {
+    min-width: 110px;
+    padding: 10px 18px;
+    letter-spacing: 0.15em;
+  }
+  .take-two-offers {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 10px;
+    padding: 14px 0;
+    align-items: start;
+  }
+  .take-two-draft-summary {
+    grid-column: 1/-1;
+    grid-row: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 14px;
+    padding: 14px;
+    align-items: center;
+  }
+  .take-two-round {
+    border: 0;
+    padding: 0;
+    text-align: left;
+  }
+  .take-two-round h2 {
+    font-size: 21px;
+  }
+  .take-two-round p {
+    font-size: 11px;
+  }
+  .take-two-summary-profession {
+    justify-content: flex-end;
+    font-size: 13px;
+  }
+  .take-two-draft-summary .deck-summary {
+    grid-column: 1/-1;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+  }
+  .take-two-draft-summary .deck-curve {
+    flex: 1;
+    height: 70px;
+  }
+  .take-two-draft-summary .deck-summary-count {
+    flex: 0 0 105px;
+    gap: 5px;
+  }
+  .take-two-draft-summary .deck-summary-count > strong {
+    font-size: 27px;
+  }
+  .take-two-draft-summary .deck-summary-count > small {
+    gap: 5px;
+    font-size: 10px;
+  }
+  .take-two-draft-summary > button {
+    font-size: 11px;
+    padding: 9px 5px;
+  }
+  .take-two-redraw-hint {
+    display: none;
+  }
+  .take-two-option[data-side='0'] {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .take-two-option[data-side='1'] {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .take-two-option {
+    gap: 15px;
+    padding: 8px 0;
+  }
+  .take-two-option .take-two-pair {
+    gap: 5px;
+  }
+  .take-two-option .take-two-card {
+    width: calc((100% - 5px) / 2);
+  }
+  .take-two-packs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .draft-deck-preview .reference-deck-preview-heading {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+  .draft-deck-preview .deck-preview-actions {
+    grid-column: 2;
+  }
+  .draft-deck-preview .deck-curve {
+    min-width: 0;
+    width: 60%;
+  }
+  .draft-deck-preview .deck-preview-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .draft-deck-preview .pool-card > strong {
+    font-size: 11px;
+    bottom: 22px;
+  }
+  .draft-deck-preview .pool-card > .preview-card-type {
+    font-size: 10px;
+    bottom: 4px;
+  }
+  .draft-deck-preview .pool-card .cost-orb {
+    transform: scale(0.72);
+    transform-origin: top left;
+  }
+}
+
+/* A measured scene fits the available rectangle; no content is clipped to hide a scrollbar. */
+.take-two-fit-area {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  margin-top: 6px;
+}
+.take-two-fit-content {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 100%;
+  transform-origin: center;
+}
+.take-two-fit-content > .take-two-class-layout {
+  flex: none;
+}
+.take-two-fit-content .take-two-carousel {
+  flex: none;
+}
+.take-two-core[data-motion='exit'] {
+  animation: take-two-leave 0.1s ease-in forwards;
+}
+.take-two-core[data-motion='enter'] {
+  animation: take-two-arrive 0.21s cubic-bezier(0.2, 0.65, 0.3, 1) both;
+}
+.take-two-core[data-direction='1'] {
+  --slide-direction: 1;
+}
+.take-two-core[data-direction='-1'] {
+  --slide-direction: -1;
+}
+@keyframes take-two-leave {
+  to {
+    opacity: 0;
+    transform: translateX(calc(var(--slide-direction) * -28px));
+  }
+}
+@keyframes take-two-arrive {
+  from {
+    opacity: 0;
+    transform: translateX(calc(var(--slide-direction) * 32px));
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .take-two-core {
+    animation: none !important;
+  }
+}
+@media (max-width: 700px) {
+  .take-two-screen .take-two-card > .take-two-card-name {
+    margin-top: 11px;
+    font-size: 14px;
+  }
+}
+
+/* Profession navigation shares the information bar; the cards start directly below it. */
+.choosing-profession .take-two-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 16px;
+}
+.choosing-profession .take-two-progress {
+  justify-self: end;
+}
+.choosing-profession .take-two-header .take-two-professions {
+  padding: 0;
+  gap: 6px;
+}
+.choosing-profession .take-two-fit-content {
+  top: 0;
+  transform-origin: top center;
+}
+.choosing-profession .take-two-class-layout {
+  padding-top: 0;
+}
+@media (max-width: 1100px) {
+  .choosing-profession .take-two-header {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .choosing-profession .take-two-heading {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .choosing-profession .take-two-progress {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .choosing-profession .take-two-header .take-two-professions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+}
+@media (max-width: 700px) {
+  .choosing-profession .take-two-header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .choosing-profession .take-two-progress {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: stretch;
+  }
+  .choosing-profession .take-two-header .take-two-professions {
+    grid-row: 3;
+  }
+}
+
+/* Side cards dissolve into the scene toward the outside, without a boxed panel edge. */
+.take-two-neighbor {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+.take-two-neighbor.previous {
+  -webkit-mask-image: linear-gradient(to right, transparent 60%, #000 100%);
+  mask-image: linear-gradient(to right, transparent 60%, #000 100%);
+}
+.take-two-neighbor.next {
+  -webkit-mask-image: linear-gradient(to left, transparent 60%, #000 100%);
+  mask-image: linear-gradient(to left, transparent 60%, #000 100%);
+}
+
+/* This parent mounts on entering the draft; subsequent picks keep it mounted. */
+.take-two-offers {
+  animation: take-two-draft-fade-in 280ms ease-out both;
+}
+@keyframes take-two-draft-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .take-two-offers {
+    animation: none;
+  }
+}
+
+.managed-pool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+.managed-pool-grid article > button {
+  display: grid;
+  width: 100%;
+  gap: 8px;
+  padding: 8px;
+}
+.managed-pool-grid img {
+  width: 100%;
+  aspect-ratio: 5/7;
+  object-fit: cover;
+}
+.managed-pool-grid strong {
+  font-size: 15px;
+}
+.take-two-pool .take-two-class-tabs {
+  flex-wrap: wrap;
+}
+
+.managed-pool-grid {
+  align-items: start;
+}
+.managed-pool-grid article,
+.managed-pool-grid article > button {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.managed-pool-grid img {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+}
+.managed-pool-grid strong {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+.managed-pool-art {
+  display: block;
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  aspect-ratio: 5/7;
+  container-type: inline-size;
+  overflow: hidden;
+  border-radius: 3px;
+}
+.managed-pool-art > img {
+  height: 100%;
+  object-fit: cover;
+}
+.managed-pool-art .card-badge {
+  position: absolute;
+  z-index: 2;
+  width: 18%;
+  height: auto;
+  font-size: 10.8cqw;
+  pointer-events: none;
+}
+.managed-pool-art .card-badge-cost {
+  left: 0;
+  top: 0;
+  width: 16%;
+  font-size: 9.7cqw;
+}
+.managed-pool-art .card-badge-attack {
+  left: 0;
+  bottom: 0;
+}
+.managed-pool-art .card-badge-health {
+  right: 0;
+  bottom: 0;
+}
+.managed-pool-redraw {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin: 16px auto 22px;
+  color: #c5d2df;
+}
+.managed-pool-redraw input {
+  width: 76px;
+  text-align: center;
+}
+.take-two-pool nav[aria-label='卡池职业'] button {
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  min-width: 48px;
+}
+.take-two-card-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) minmax(130px, 1.5fr) repeat(2, minmax(100px, 1fr)) auto;
+  gap: 10px;
+  margin: 18px 0;
+  align-items: center;
+}
+.take-two-card-filters > *,
+.take-two-saved-actions > * {
+  min-width: 0;
+  max-width: 100%;
+}
+.take-two-card-filters select,
+.take-two-saved-actions select {
+  padding: 10px 12px;
+}
+.take-two-saved-pools {
+  border: 1px solid #304353;
+  border-radius: 8px;
+  background: #111d2966;
+  padding: 16px;
+  margin: 18px 0;
+}
+.take-two-saved-pools h3 {
+  margin: 0 0 14px;
+  font-size: 18px;
+  color: #c6deed;
+}
+.take-two-saved-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.take-two-saved-actions > input,
+.take-two-saved-actions > select {
+  flex: 1 1 230px;
+}
+.take-two-saved-pools p,
+.take-two-filter-count {
+  color: #99afbd;
+  font-size: 14px;
+  margin: 12px 0 0;
+}
+.take-two-pool-empty {
+  padding: 36px 20px;
+  text-align: center;
+  color: #99afbd;
+  border: 1px dashed #35434f;
+  border-radius: 8px;
+}
+.take-two-load-more {
+  display: block;
+  margin: 22px auto;
+  min-width: 180px;
+}
+@media (max-width: 800px) {
+  .take-two-card-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .take-two-card-filters > input {
+    grid-column: 1 / -1;
+  }
+  .take-two-packs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .take-two-pool-body {
+    padding: 0 16px 20px;
+  }
+  .take-two-saved-actions > button {
+    flex: 1;
+    white-space: normal;
+  }
+}
+.take-two-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 18px 0;
+}
+.take-two-pagination select {
+  padding: 10px 12px;
+}
+@media (max-width: 600px) {
+  .take-two-pagination {
+    gap: 5px;
+  }
+  .take-two-pagination button {
+    padding: 8px 10px;
+  }
+}
+
+
+.take-two-single-pack-search { display: grid; gap: 6px; min-width: 0; }
+.take-two-single-pack-search input, .take-two-single-pack-search select { width: 100%; min-width: 0; box-sizing: border-box; }

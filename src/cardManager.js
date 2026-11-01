@@ -44,6 +44,7 @@ export function createCardInstance(cardDto) {
         keywords: cardDto.Keywords || [],
         tribe: cardDto.Tribe || [],
         earthsigil: cardDto.Earthsigil ?? cardDto.earthsigil ?? cardDto.EarthSigil ?? 0,
+        evidence: cardDto.Evidence ?? cardDto.evidence ?? cardDto.counters?.evidence ?? 0,
         canEvolve: cardDto.CanEvolve ?? cardDto.canEvolve,
         effectDescriptions: cardDto.EffectDescriptions ?? cardDto.effectDescriptions ?? [],
 
@@ -66,6 +67,7 @@ export function createCardInstance(cardDto) {
         zone: cardDto.Zone,
         countdown: cardDto.CurrentCountdown,
         buffSummaries: cardDto.BuffSummaries ?? cardDto.buffSummaries ?? [],
+        alternatePlayReferences: cardDto.AlternatePlayReferences ?? cardDto.alternatePlayReferences ?? [],
         buffStatSummary: cardDto.BuffStatSummary ?? cardDto.buffStatSummary ?? null,
         counters: cardDto.Counters ?? cardDto.counters ?? cardDto.CounterMap ?? cardDto.counterMap ?? {},
         counterDisplayNames: cardDto.CounterDisplayNames ?? cardDto.counterDisplayNames ?? {},

@@ -536,6 +536,9 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
 
             foreach (var definition in existing)
             {
+                // Seeded tasks already have precise activity mappings. Legacy QuestType is not one-to-one.
+                if (seeds.Any(seed => seed.Id == definition.Id || string.Equals(seed.Name, definition.Name, StringComparison.OrdinalIgnoreCase))) continue;
+                if (definition.DeduplicationPolicy != QuestDeduplicationPolicy.None) continue;
                 var mapped = MapQuestActivity(definition.Type);
                 if (definition.ActivityType != mapped.ActivityType || definition.DeduplicationPolicy == QuestDeduplicationPolicy.None)
                 {
@@ -929,6 +932,26 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
 
         private static string? ResolveNormalizedArtPath(string cardFolder, int cardId, string kind, string? currentPath)
         {
+            // Explicit shared-card art and remote URLs are valid configuration.
+            // Only repair missing legacy paths; never replace an existing image with this ID's folder.
+            if (!string.IsNullOrWhiteSpace(currentPath))
+            {
+                if (Uri.TryCreate(currentPath, UriKind.Absolute, out var uri)
+                    && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+                    return currentPath;
+                var relativePath = currentPath.Replace('\\', '/').TrimStart('/');
+                if (relativePath.StartsWith("assets/", StringComparison.OrdinalIgnoreCase))
+                {
+                    var root = Directory.GetParent(cardFolder)?.Parent?.Parent?.FullName;
+                    if (root != null)
+                    {
+                        var assetRoot = Path.GetFullPath(Path.Combine(root, "assets")) + Path.DirectorySeparatorChar;
+                        var diskPath = Path.GetFullPath(Path.Combine(root, relativePath));
+                        if (diskPath.StartsWith(assetRoot, StringComparison.OrdinalIgnoreCase) && File.Exists(diskPath))
+                            return "/" + relativePath;
+                    }
+                }
+            }
             var currentFileName = GetFileNameFromArtPath(currentPath);
             if (!string.IsNullOrWhiteSpace(currentFileName))
             {

@@ -1,4 +1,4 @@
-using ShadowverseBeyond.Server.Mappings;
+﻿using ShadowverseBeyond.Server.Mappings;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
@@ -796,6 +796,8 @@ namespace ShadowverseBeyond.Server.Services
             bool requireComplete,
             CancellationToken cancellationToken)
         {
+            if (selection.GeneratedDraftCardIds is { Length:30 } draftIds && selection.DeckClass.HasValue)
+                return new ResolvedDeckSelection(draftIds.ToList(), selection.DeckClass.Value, null, DeckEnvironment.Open, DeckRule.Standard, null);
             if (!selection.HasSelection)
             {
                 _logger.LogWarning("[GameService] Deck selection is empty.");
@@ -2199,6 +2201,22 @@ namespace ShadowverseBeyond.Server.Services
                 }
             }
             _logger.LogInformation("[GameService:{GameId}] Finished broadcasting {EventCount} events.", gameId, events.Count);
+        }
+
+        public async Task NotifyCardStylesChangedAsync(Guid ownerPlayerId)
+        {
+            await using var scope = _serviceScopeFactory.CreateAsyncScope();
+            var sp=scope.ServiceProvider;
+            foreach(var entry in _gameStates)
+            {
+                var state=entry.Value;
+                if(state.Player1.PlayerId!=ownerPlayerId && state.Player2.PlayerId!=ownerPlayerId) continue;
+                using var context=new GameContext(sp,sp.GetRequiredService<IMapper>(),sp.GetRequiredService<IGameContextAccessor>(),state,ownerPlayerId);
+                var field=state.AllCards.Where(c=>c.OwnerPlayerId==ownerPlayerId && c.CurrentZone==CardZone.Field).Select(c=>CardInstanceProjection.Create(c,context)).ToList();
+                if(field.Count>0) await BroadcastEventsAsync(entry.Key,new List<GameEventDto>{new CardInstanceUpdatedEventDto(Guid.Empty,field)});
+                var hand=state.AllCards.Where(c=>c.OwnerPlayerId==ownerPlayerId && c.CurrentZone==CardZone.Hand).Select(c=>CardInstanceProjection.Create(c,context)).ToList();
+                if(hand.Count>0) await BroadcastEventToPlayerAsync(entry.Key,ownerPlayerId,new CardInstanceUpdatedEventDto(Guid.Empty,hand));
+            }
         }
 
         public async Task NotifyCardDefinitionUpdatedAsync(int cardId)

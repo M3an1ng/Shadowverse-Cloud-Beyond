@@ -1,0 +1,439 @@
+/* Native host only; selection geometry and animation come from Mini's take-two.css. */
+.draft-overlay {
+  padding: 16px;
+}
+.draft-overlay > .take-two-screen {
+  width: calc(100% - 16px);
+  height: calc(100dvh - 32px);
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 18px clamp(16px, 2vw, 40px);
+}
+.draft-overlay .feature-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+.draft-overlay .draft-shell-header {
+  border: 0;
+  padding: 0 0 8px;
+  min-height: 24px;
+}
+.draft-shell-header > h2 {
+  display: none;
+}
+.draft-shell-header > button {
+  font-size: 13px;
+  padding: 3px 0;
+}
+.draft-shell-header .draft-room-copy {
+  margin-left: auto;
+  font-size: 12px;
+}
+.draft-overlay .take-two-header {
+  background: transparent !important;
+}
+.draft-overlay .take-two-professions button {
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent !important;
+}
+.draft-overlay .take-two-professions button[aria-pressed="true"] {
+  border-color: rgba(var(--profession-rgb), 0.65);
+  background: radial-gradient(
+    rgba(var(--profession-rgb), 0.2),
+    transparent
+  ) !important;
+  box-shadow: 0 0 16px rgba(var(--profession-rgb), 0.12);
+}
+.draft-overlay .take-two-primary {
+  color: #eadbb2 !important;
+  border: 1px solid #a08b596b !important;
+  border-top-color: #c5b17b9c !important;
+  background: linear-gradient(180deg, #3d3628, #29251e 48%, #221f1b) !important;
+}
+.draft-overlay .take-two-neighbor {
+  background: transparent !important;
+  border: 0 !important;
+}
+.draft-overlay .take-two-card {
+  font: inherit;
+}
+.draft-overlay .take-two-card-frame .catalog-badge {
+  background: none;
+  padding: 0;
+  font-weight: 400;
+}
+.draft-overlay .take-two-carousel-arrow {
+  padding: 0 !important;
+}
+.draft-overlay .take-two-header .take-two-eyebrow {
+  color: #91b3c9;
+  font-size: 11px;
+  letter-spacing: 4px;
+}
+/* Same Mini rarity frames, with native enum names mapped to the Mini labels. */
+:is(.take-two-screen, .mini-draft-preview) .pool-card[data-rarity="青铜"] {
+  border: 2px solid #be7936;
+}
+:is(.take-two-screen, .mini-draft-preview) .pool-card[data-rarity="白银"] {
+  border: 2px solid #c0c0c0;
+}
+:is(.take-two-screen, .mini-draft-preview) .pool-card[data-rarity="黄金"] {
+  border: 2px solid #ffc800;
+}
+:is(.take-two-screen, .mini-draft-preview) .pool-card[data-rarity="传说"] {
+  border: 2px solid transparent;
+  background-image: conic-gradient(
+    from 0deg,
+    #ffd24d,
+    #ff6ad5,
+    #7c83ff,
+    #3dffdf,
+    #ffd24d
+  );
+  background-clip: border-box;
+  background-origin: border-box;
+}
+:is(.take-two-screen, .mini-draft-preview) .deck-summary {
+  display: flex;
+  gap: 25px;
+  align-items: center;
+}
+:is(.take-two-screen, .mini-draft-preview) .deck-curve {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  height: 90px;
+  min-width: 210px;
+}
+:is(.take-two-screen, .mini-draft-preview) .deck-curve > div {
+  width: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+}
+:is(.take-two-screen, .mini-draft-preview) .deck-curve b {
+  font-size: 10px;
+  line-height: 15px;
+}
+:is(.take-two-screen, .mini-draft-preview) .deck-curve i {
+  width: 100%;
+  background: linear-gradient(#ebad15, #613f04);
+  border-top: 2px solid #efb122;
+  display: block;
+}
+:is(.take-two-screen, .mini-draft-preview) .deck-curve small {
+  font-size: 11px;
+  color: #a0a0a8;
+}
+:is(.take-two-screen, .mini-draft-preview) .deck-summary-count {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+:is(.take-two-screen, .mini-draft-preview) .deck-summary-count strong {
+  white-space: nowrap;
+}
+:is(.take-two-screen, .mini-draft-preview) .deck-summary-count small {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #7abfbb;
+  font-size: 12px;
+}
+/* Mini's DeckPreview markup: merged copies, cost/type overlay, curve and 30-card capacity. */
+.feature-dialog.mini-draft-preview {
+  width: min(1200px, 94vw);
+  max-height: 90vh;
+  padding: 18px 22px;
+  line-height: 1.5;
+}
+.mini-draft-preview > header {
+  display: none;
+}
+.mini-draft-preview .feature-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0;
+}
+.mini-draft-preview .reference-deck-preview-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #ffffff20;
+}
+.mini-draft-preview .reference-deck-preview-heading > div:first-child {
+  flex: 1;
+}
+.mini-draft-preview .preview-caption {
+  font:
+    11.52px "JetBrains Mono",
+    monospace;
+  letter-spacing: 0.12em;
+  color: #ffffff8c;
+}
+.mini-draft-preview .reference-deck-preview-heading h2 {
+  margin: 2px 0 0;
+  font:
+    700 24.8px/1.2 "Cinzel",
+    "SimSun",
+    serif;
+  color: #fff;
+}
+.mini-draft-preview .reference-deck-preview-heading p {
+  margin: 0;
+  font:
+    12.48px "JetBrains Mono",
+    "SimSun",
+    monospace;
+  letter-spacing: 0.08em;
+  color: #989ca5;
+}
+.mini-draft-preview .deck-summary {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid #ffffff20;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.mini-draft-preview .deck-curve {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(20px, 1fr));
+  height: 92px;
+  width: min(500px, 60vw);
+  gap: 6px;
+}
+.mini-draft-preview .deck-curve > div {
+  display: grid;
+  width: auto;
+  grid-template-rows: 1fr auto;
+  gap: 6px;
+  min-height: 90px;
+  justify-content: stretch;
+  align-items: end;
+}
+.mini-draft-preview .preview-curve-bar-area {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+.mini-draft-preview .deck-curve i {
+  min-height: 3px;
+  border: 1px solid #ffffff38;
+  background: linear-gradient(to top, #f59e0bf2, #f59e0b42);
+}
+.mini-draft-preview .deck-summary-count {
+  min-width: 220px;
+  text-align: right;
+}
+.mini-draft-preview .deck-summary-count strong {
+  color: #fff;
+  font:
+    28.8px "Cinzel",
+    serif;
+}
+.mini-draft-preview .deck-summary-count small {
+  justify-content: flex-end;
+  gap: 12px;
+  font:
+    12.48px "JetBrains Mono",
+    "SimSun",
+    monospace;
+}
+.mini-draft-preview [data-card-type="follower"] {
+  color: #ef4444;
+}
+.mini-draft-preview [data-card-type="spell"] {
+  color: #b997ff;
+}
+.mini-draft-preview [data-card-type="amulet"] {
+  color: #22c55e;
+}
+.mini-draft-preview .deck-preview-grid {
+  display: grid;
+  grid-auto-columns: 130px;
+  grid-auto-flow: column;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 4px 2px 4px 0;
+  margin: 0;
+  flex-shrink: 0;
+}
+.mini-draft-preview .pool-card {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  aspect-ratio: 2/3;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  text-align: center;
+  background-color: #080b10;
+  transition:
+    transform 0.15s,
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.mini-draft-preview .pool-card .deck-card-art {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+}
+.mini-draft-preview .deck-card-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.mini-draft-preview .pool-card::after {
+  content: "";
+  position: absolute;
+  inset: 40% 0 0;
+  background: linear-gradient(transparent, #000e);
+  pointer-events: none;
+}
+.mini-draft-preview .pool-card > strong {
+  position: relative;
+  z-index: 1;
+  padding: 20px 8px 3px;
+  line-height: 1.5;
+  color: #fff;
+  text-shadow: 0 1px 2px #000c;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font:
+    400 13.12px/1.5 "Cinzel",
+    "SimSun",
+    serif;
+}
+.mini-draft-preview .preview-card-type {
+  position: relative;
+  z-index: 1;
+  padding: 0 8px 8px;
+  color: #ffffffc2;
+  text-shadow: 0 1px 2px #000c;
+  font:
+    9.92px/1.5 "JetBrains Mono",
+    "SimSun",
+    monospace;
+  letter-spacing: 0.06em;
+}
+.mini-draft-preview .cost-orb {
+  position: absolute;
+  z-index: 2;
+  top: 4px;
+  left: 4px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #00c7ae;
+  border-radius: 50%;
+  color: #00d6bd;
+  background: #001713;
+  font:
+    11.2px "JetBrains Mono",
+    monospace;
+}
+.mini-draft-preview .deck-copy-count {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
+  min-width: 24px;
+  padding: 3px 6px;
+  border: 1px solid #ffffff4d;
+  border-radius: 999px;
+  color: #fff;
+  background: #000000d1;
+  font:
+    700 11.2px/1 "JetBrains Mono",
+    monospace;
+  text-align: center;
+}
+.mini-draft-preview .pool-card:hover {
+  transform: translateY(-2px);
+  border-color: #00ffcc;
+  box-shadow: 0 6px 18px #00000080;
+}
+@media (max-width: 700px) {
+  .mini-draft-preview .deck-summary-count {
+    min-width: 0;
+  }
+  .mini-draft-preview .deck-summary {
+    gap: 12px;
+  }
+  .mini-draft-preview .deck-curve {
+    min-width: 0;
+    width: 60%;
+  }
+}
+.draft-overlay .draft-shell-header > button {
+  font-size: 13px;
+  padding: 3px 0;
+}
+.draft-overlay .take-two-core-heading h2 {
+  color: #e2ded3;
+  font:
+    500 24px Georgia,
+    "SimSun",
+    serif;
+}
+.draft-overlay .take-two-header h1 {
+  font:
+    400 26px Georgia,
+    "SimSun",
+    serif;
+}
+.draft-overlay .take-two-draft-summary > button {
+  font:
+    13px/1.4 "SimSun",
+    serif;
+  padding: 12px;
+  border-radius: 4px;
+}
+.draft-overlay .take-two-card > .take-two-card-name {
+  font-family: Georgia, "SimSun", serif;
+}
+.mini-draft-preview .deck-preview-actions > button {
+  padding: 8px 18px;
+  font:
+    14px "SimSun",
+    serif;
+  border-radius: 4px;
+}
+@media (max-height: 800px) {
+  .mini-draft-preview .deck-preview-grid {
+    grid-auto-columns: clamp(80px, calc((100dvh - 380px) / 3), 130px);
+  }
+  .mini-draft-preview .pool-card > strong {
+    font-size: 12px;
+  }
+}
+/* The completed draft uses the persistent header deck entry. */
+.draft-overlay .take-two-wait {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.draft-overlay .take-two-wait > button {
+  margin: 8px 0 0;
+}

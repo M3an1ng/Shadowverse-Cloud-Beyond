@@ -16,6 +16,27 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.0");
+            modelBuilder.Entity("ShadowverseBeyond.Server.Infrastructure.Data.CardRevisionRecord", b =>
+            {
+                b.Property<long>("Id").ValueGeneratedOnAdd().HasColumnType("INTEGER");
+                b.Property<int>("CardId").HasColumnType("INTEGER");
+                b.Property<int>("Revision").HasColumnType("INTEGER");
+                b.Property<string>("Editor").IsRequired().HasColumnType("TEXT");
+                b.Property<DateTime>("ModifiedAt").HasColumnType("TEXT");
+                b.Property<string>("Note").IsRequired().HasColumnType("TEXT");
+                b.Property<string>("Operation").IsRequired().HasColumnType("TEXT");
+                b.Property<string>("Snapshot").IsRequired().HasColumnType("TEXT");
+                b.HasKey("Id");b.HasIndex("CardId","Revision").IsUnique();b.ToTable("CardRevisions");
+            });
+            modelBuilder.Entity("ShadowverseBeyond.Server.Infrastructure.Data.FeatureDocument", b =>
+            {
+                b.Property<string>("Id").HasColumnType("TEXT");
+                b.Property<string>("Json").IsRequired().HasColumnType("TEXT");
+                b.Property<int>("Revision").HasColumnType("INTEGER");
+                b.Property<DateTime>("UpdatedAt").HasColumnType("TEXT");
+                b.HasKey("Id");b.ToTable("FeatureDocuments");
+            });
+
 
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.AbilityDefinition", b =>
                 {

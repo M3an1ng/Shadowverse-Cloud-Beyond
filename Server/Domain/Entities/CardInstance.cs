@@ -41,7 +41,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     {
         public const string SpellboostCounterKey = "spellboost";
         public const string EarthsigilCounterKey = "earthsigil";
-        private static readonly string[] SystemCounterKeys = { SpellboostCounterKey, EarthsigilCounterKey };
+        public const string EvidenceCounterKey = "evidence";
+        private static readonly string[] SystemCounterKeys = { SpellboostCounterKey, EarthsigilCounterKey, EvidenceCounterKey };
         private static Dictionary<CardActionUsageType, int> CreateDefaultActionUsageCounts()
             => Enum.GetValues<CardActionUsageType>().ToDictionary(static actionType => actionType, static _ => 0);
 
@@ -66,6 +67,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// The DefinitionId of the card's original, non-evolved state. This should be immutable after creation.
         /// </summary>
         public int BaseDefinitionId { get; private set; }
+        public int? AlternateArtDefinitionId { get; set; }
 
         /// <summary>
         /// A computed property that returns the appropriate DefinitionId based on the current IsEvolved state.
@@ -325,6 +327,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         [DslExposable("土之印", Description = "earthsigil 计数器数值")]
         public int Earthsigil => GetCounter(EarthsigilCounterKey);
+
+        [DslExposable("证据数", Description = "证据护符的证据数")]
+        public int Evidence => GetCounter(EvidenceCounterKey);
 
         /// <summary>
         /// Whether this card currently has at least one Enhance ability.
@@ -986,6 +991,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         internal sealed record CardRuntimeStateSnapshot
         {
+            public int? AlternateArtDefinitionId { get; init; }
             public int Damage { get; init; }
             public bool IsEvolved { get; init; }
             public bool IsSuperEvolved { get; init; }
@@ -1005,6 +1011,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             return new CardRuntimeStateSnapshot
             {
+                AlternateArtDefinitionId = AlternateArtDefinitionId,
                 Damage = Damage,
                 IsEvolved = IsEvolved,
                 IsSuperEvolved = IsSuperEvolved,
@@ -1030,6 +1037,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         internal void CopyRuntimeStateFrom(CardRuntimeStateSnapshot source)
         {
+            AlternateArtDefinitionId = source.AlternateArtDefinitionId;
             Damage = source.Damage;
             HealthFloorFromBuffRemoval = 0;
             IsEvolved = source.IsEvolved;
@@ -1150,6 +1158,10 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             {
                 defaults[EarthsigilCounterKey] = 1;
             }
+
+            if (definition.Type == CardType.Amulet && definition.Keywords.Any(keyword =>
+                string.Equals(keyword, nameof(CardKeyword.Evidence), StringComparison.OrdinalIgnoreCase)))
+                defaults[EvidenceCounterKey] = 1;
 
             return defaults;
         }
@@ -1443,8 +1455,21 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         /// </summary>
         /// <param name="newDefinition">新的卡牌定义。</param>
         /// <returns>包含操作结果的DomainOperationResult。</returns>
-        public DomainOperationResult Transform(CardDefinition newDefinition, GameContext context)
+        public DomainOperationResult Transform(CardDefinition newDefinition, GameContext context, out CardInstance transformedCard, bool preserveInstanceIdentity = false)
         {
+            transformedCard = this;
+            var owner = context.CurrentGameState.GetPlayerState(OwnerPlayerId);
+            var zone = CurrentZone;
+            var zoneList = zone switch
+            {
+                CardZone.Hand => owner?.Hand, CardZone.Deck => owner?.Deck,
+                CardZone.Field => owner?.Field, CardZone.Graveyard => owner?.Graveyard,
+                CardZone.Extra => owner?.Extra, CardZone.Emblem => owner?.Emblem,
+                _ => null
+            };
+            var index = zoneList?.IndexOf(this) ?? -1;
+            if (owner == null || (zoneList != null && index < 0))
+                return new DomainOperationResult { Success = false, ErrorMessage = "Transform target is no longer in its zone." };
             var result = new DomainOperationResult();
             var abilityManager = context.AbilityManager;
 
@@ -1476,25 +1501,36 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
             abilityManager.UnregisterCardAbilities(this.InstanceId, "transform");
 
-            // 2. Perform the transformation and reset runtime state to the new definition baseline.
-            this.BaseDefinitionId = newDefinition.Id;
-            ResetToDefinitionState();
-            MarkCombatContinuityChanged();
-
-            // 3. Get ability configurations for the new card definition.
-            var newAbilityConfigs = GameDataProvider.Instance.GetAbilityConfigs(newDefinition.Id);
-            if (newAbilityConfigs != null && newAbilityConfigs.Any())
+            if (preserveInstanceIdentity)
             {
-                // 4. Create and register new abilities for the transformed card.
-                var abilities = abilityManager.CreateAbilitiesForCard(this, newAbilityConfigs, null, context.CurrentGameState);
-                foreach (var ability in abilities)
-                {
-                    context.CurrentGameState.InGameIds.GetOrCreate(InGameIdKind.Ability, ability.RuntimeId);
-                }
+                // Alternate play is a declaration, not an in-game Transform effect. Its
+                // preflight choices already refer to this entity and must survive commit.
+                BaseDefinitionId = newDefinition.Id;
+                ResetToDefinitionState();
+                MarkCombatContinuityChanged();
+                var configs = GameDataProvider.Instance.GetAbilityConfigs(newDefinition.Id);
+                if (configs.Count > 0)
+                    foreach (var ability in abilityManager.CreateAbilitiesForCard(this, configs, null, context.CurrentGameState))
+                        context.CurrentGameState.InGameIds.GetOrCreate(InGameIdKind.Ability, ability.RuntimeId);
+                context.BuffService.InvalidateDerivedState(context.CurrentGameState, InstanceId);
+                result.Success = true;
+                return result;
             }
 
-            // 5. Generate the notification event (after transform)
-            context.BuffService.InvalidateDerivedState(context.CurrentGameState, this.InstanceId);
+            // A transformation replaces the entity. Stale targets continue pointing at the
+            // removed entity and cannot accidentally modify the new card.
+            var factory = context.ServiceProvider.GetRequiredService<ShadowverseBeyond.Server.Domain.Factories.ICardFactory>();
+            transformedCard = factory.CreateAndRegisterNewCard(context.CurrentGameState, newDefinition.Id, OwnerPlayerId, CardZone.Staging);
+            transformedCard.CurrentZone = zone;
+            transformedCard.ZoneIndex = ZoneIndex;
+            if (zoneList != null) zoneList[index] = transformedCard;
+            if (owner.Leader == this) owner.Leader = transformedCard;
+            CurrentZone = CardZone.Removed;
+            ZoneIndex = null;
+            MarkCombatContinuityChanged();
+            context.CurrentGameState.UnregisterCardInstance(InstanceId);
+            context.BuffService.InvalidateDerivedState(context.CurrentGameState, InstanceId);
+            context.BuffService.InvalidateDerivedState(context.CurrentGameState, transformedCard.InstanceId);
             result.Success = true;
 
             return result;

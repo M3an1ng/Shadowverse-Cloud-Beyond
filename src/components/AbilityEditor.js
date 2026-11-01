@@ -1,3 +1,6 @@
+import { alternatePlayFromEffects, alternatePlayPatch } from '../alternatePlayConfig.js';
+import { confirmDialog } from '../siteDialog.js';
+import { showAlert } from '../siteDialog.js';
 // src/components/AbilityEditor.js - 主要的能力编辑器组件 (Wizard Mode)
 //
 // 相关文档:
@@ -101,6 +104,14 @@ export class AbilityEditor extends MetadataDrivenComponent {
         const legacyExecutionKind = ability.executionKind || ability.ExecutionKind || '';
         const normalizedType = ability.type || ability.Type
             || (String(legacyExecutionKind).toLowerCase() === 'aura' ? 'Continuous' : '');
+        const alternatePlay = ability.alternatePlay || ability.AlternatePlay || null;
+        const effects = (ability.effects?.length ? ability.effects : [{type:'',parameters:{}}]).map(effect => ({...effect}));
+        const mode = this.normalizeAbilityKeywords(ability).find(entry => ['Accelerate','Crystalize'].includes(entry.keyword))?.keyword;
+        const boundId = alternatePlay?.playAsCardDefinitionId ?? alternatePlay?.PlayAsCardDefinitionId;
+        if (boundId && mode && !effects.some(effect => ['Accelerate','Crystalize',11,12].includes(effect.type ?? effect.Type))) {
+            if (effects.every(effect => !effect.type)) effects.length = 0;
+            effects.unshift({type:mode,parameters:{CardDefinitionId:Number(boundId)},isEnabled:true});
+        }
         return {
             id: ability.id || '',
             name: ability.name || '',
@@ -118,8 +129,9 @@ export class AbilityEditor extends MetadataDrivenComponent {
             trigger,
             conditions: ability.conditions || [],
             targets: ability.targets || [],
-            effects: (ability.effects && ability.effects.length > 0) ? ability.effects : [{ type: '', parameters: {} }],
+            effects,
             auraConfig,
+            alternatePlay: ability.alternatePlay || ability.AlternatePlay || null,
             auras: ability.auras || ability.Auras || [],
             counterRegistrations: this.mergeCounterRegistrations(
                 ability.counterRegistrations || ability.CounterRegistrations || [],
@@ -216,7 +228,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
     isCostKeyword(keyword) {
         if (!keyword || typeof keyword !== 'string') return false;
         const normalized = keyword.toLowerCase();
-        return ['enhance', 'act', 'necromance', 'sacrifice', 'earthritual'].includes(normalized);
+        return ['enhance', 'accelerate', 'crystalize', 'act', 'necromance', 'sacrifice', 'earthritual'].includes(normalized);
     }
 
     getDefaultAbilityName() {
@@ -371,7 +383,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
                     await this.effectEditor.render(
                         contentArea,
                         this.ability.effects,
-                        (effects) => this.updateAbility({ effects: effects }),
+                        (effects) => this.updateAbility({ effects, alternatePlay: alternatePlayFromEffects({...this.ability,effects}) }),
                         {
                             trigger: this.ability.trigger,
                             targets: this.ability.targets,
@@ -431,7 +443,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
         // 验证当前步骤
         const errors = await this.validateCurrentStep();
         if (errors.length > 0) {
-            alert('请修正以下问题后再继续:\n' + errors.join('\n'));
+            showAlert('请修正以下问题后再继续:\n' + errors.join('\n'));
             return;
         }
 
@@ -459,11 +471,11 @@ export class AbilityEditor extends MetadataDrivenComponent {
 
         const validation = await this.validateAbilityBeforeSave();
         if (validation.errors.length > 0) {
-            alert('请修正以下问题后再完成:\n' + validation.errors.map(i => `- ${i.message}`).join('\n'));
+            showAlert('请修正以下问题后再完成:\n' + validation.errors.map(i => `- ${i.message}`).join('\n'));
             return;
         }
         if (validation.warns.length > 0) {
-            const ok = confirm('存在警告，仍要继续保存吗？\n' + validation.warns.map(i => `- ${i.message}`).join('\n'));
+            const ok = await confirmDialog('存在警告，仍要继续保存吗？\n' + validation.warns.map(i => `- ${i.message}`).join('\n'));
             if (!ok) return;
         }
 
@@ -476,15 +488,15 @@ export class AbilityEditor extends MetadataDrivenComponent {
             }
         } catch (error) {
             console.error('AbilityEditor: Save failed:', error);
-            alert(`保存失败: ${error.message}`);
+            showAlert(`保存失败: ${error.message}`);
         }
     }
 
     /**
      * 处理取消
      */
-    handleCancel() {
-        if (confirm('确定要取消编辑吗？未保存的更改将丢失。')) {
+    async handleCancel() {
+        if (await confirmDialog('确定要取消编辑吗？未保存的更改将丢失。')) {
             if (this.onChange) {
                 this.onChange(null);
             }
@@ -857,7 +869,6 @@ export class AbilityEditor extends MetadataDrivenComponent {
         const tagGroup = this.createFormGroup('能力关键字', keywordContainer, '可多选，部分关键字可填写数值参数');
         tagGroup.classList.add('full-width');
         formGrid.appendChild(tagGroup);
-
         // 5. 变量注册 (全宽)
         const counterGroup = document.createElement('div');
         counterGroup.className = 'counter-registration-group';
@@ -1245,6 +1256,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
         const cleanedAbility = this.stripUiFields(finalAbility);
         cleanedAbility.effects = this.effectEditor.synchronizeDecisionBranchTriggers(cleanedAbility.effects, cleanedAbility.trigger);
         const finalizedEffects = this.effectEditor.buildEffectsForSave(cleanedAbility.effects, this.metadata);
+        cleanedAbility.alternatePlay = alternatePlayFromEffects({...cleanedAbility,effects:finalizedEffects});
         const isAuraMode = this.isAuraMode();
         const auraConfig = this.ability?.auraConfig || {};
         const finalizedBuffConfigs = this.statusEditor.buildBuffConfigsForSave(auraConfig.buffConfigs || []);
@@ -1263,6 +1275,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
                 name: cleanedAbility.name,
                 description: cleanedAbility.description,
                 abilityKeywords: cleanedAbility.abilityKeywords,
+                alternatePlay: cleanedAbility.alternatePlay,
                 type: nextType,
                 trigger: cleanedAbility.trigger,
                 conditions: cleanedAbility.conditions,

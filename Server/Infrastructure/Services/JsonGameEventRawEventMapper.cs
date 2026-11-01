@@ -211,7 +211,8 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                         ["AttacksThisTurn"] = JsonValue.Create(snapshot.AttacksThisTurn),
                         ["MaxAttacksPerTurn"] = JsonValue.Create(snapshot.MaxAttacksPerTurn),
                         ["Spellboost"] = JsonValue.Create(snapshot.Spellboost),
-                        ["Earthsigil"] = JsonValue.Create(snapshot.Earthsigil)
+                        ["Earthsigil"] = JsonValue.Create(snapshot.Earthsigil),
+                        ["Evidence"] = JsonValue.Create(snapshot.Evidence)
                     };
 
                     if (snapshot.CurrentDefinition != null &&

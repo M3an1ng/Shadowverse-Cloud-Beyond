@@ -1,4 +1,4 @@
-﻿using ShadowverseBeyond.Server.Domain.Abilities.Common;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
 using ShadowverseBeyond.Server.Domain.Metadata;
 
@@ -12,5 +12,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 
         [ParameterMetadata("费用上限", UiControlType.NumberStepper, DefaultValue = 1, Min = 0, Description = "可召还的随从费用上限。")]
         public int MaxCost { get; set; } = 1;
+
+        [ParameterMetadata("亡召池筛选", UiControlType.ConditionListEditor, AllowDsl = false, Description = "仅从已破坏的随从中筛选；self 是候选随从，启用的条件须全部满足。")]
+        public global::System.Collections.Generic.List<ShadowverseBeyond.Server.Domain.Abilities.Conditions.ConditionConfig> PoolConditions { get; set; } = new();
     }
 }

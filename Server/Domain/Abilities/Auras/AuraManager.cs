@@ -554,6 +554,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
                         config.RemoveCondition);
                 }
 
+                buff.RemoveAfterUse = config.RemoveAfterUse;
                 buff.SourceEffectIndex = aura.AuraIndex;
                 _logger.LogDebug("[AuraManager] ApplyAuraBuffToTarget: aura {AuraId} -> target {TargetId}. SourceAbilityId={SourceAbilityId} SourceCardId={SourceCardId} EffectIndex={EffectIndex}.",
                     aura.AuraId,
@@ -809,6 +810,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
                 staticDurationValue < 0)
             {
                 errorMessage = "Aura registration failed: duration parameter cannot be negative.";
+                return false;
+            }
+
+            if (config.RemoveAfterUse && ((config.AbilityKeywordModifiers?.Count ?? 0) == 0
+                || config.AbilityKeywordModifiers!.Any(modifier => modifier.Keyword != AbilityKeyword.Act && modifier.Keyword != AbilityKeyword.Reanimate)
+                || (config.GrantedAbilities?.Count ?? 0) > 0 || (config.StatModifiers?.Count ?? 0) > 0
+                || (config.KeywordModifiers?.Count ?? 0) > 0 || (config.TribeModifiers?.Count ?? 0) > 0
+                || (config.ActionUsageLimitModifiers?.Count ?? 0) > 0))
+            {
+                errorMessage = "生效后移除仅支持纯启动／亡者召还数值修正，请将其他状态放在独立条目。";
                 return false;
             }
 

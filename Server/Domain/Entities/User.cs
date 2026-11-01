@@ -134,5 +134,6 @@ public enum UserRole
     /// <summary>
     /// 游客 (仅观战模式)
     /// </summary>
-    Guest = 2
+    Guest = 2,
+    Editor = 3
 }

@@ -1,0 +1,130 @@
+.history-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100010;
+  display: grid;
+  place-items: center;
+  background: #02060bc9;
+  padding: 24px;
+}
+.history-dialog {
+  width: min(1200px, 95vw);
+  max-height: 92vh;
+  background: #0e1722;
+  border: 1px solid #54708a;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  color: #cdd6e0;
+}
+.history-dialog header,
+.history-dialog footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 24px;
+  border-bottom: 1px solid #ffffff20;
+  gap: 16px;
+}
+.history-dialog h2 {
+  font-size: 23px;
+  color: #6eb1ff;
+  margin: 0;
+}
+.history-dialog button {
+  padding: 10px 18px;
+  background: #152131;
+  color: #d3dfed;
+  border: 1px solid #54708a;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+}
+.history-dialog button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.history-dialog main {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  gap: 24px;
+  padding: 20px 24px;
+  overflow: auto;
+  min-height: 340px;
+}
+.history-dialog nav {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  max-height: 56vh;
+  overflow: auto;
+}
+.history-dialog nav button {
+  display: grid;
+  text-align: left;
+  gap: 7px;
+}
+.history-dialog nav button[aria-pressed="true"] {
+  background: #1d3445;
+  border-color: #8ab8d2;
+}
+.history-dialog nav time,
+.history-dialog small {
+  color: #8fa7bb;
+}
+.history-detail {
+  min-width: 0;
+}
+.history-detail h3 {
+  font-size: 24px;
+  color: #83b6e7;
+}
+.history-description {
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+.history-detail label {
+  display: grid;
+  gap: 8px;
+  margin: 20px 0;
+}
+.history-detail textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 12px;
+  background: #080f17;
+  color: inherit;
+  border: 1px solid #4a6378;
+  resize: vertical;
+  font: inherit;
+}
+.history-actions {
+  display: flex;
+  gap: 14px;
+}
+.history-status {
+  margin: 0;
+  padding: 8px 24px;
+  color: #e7c36e;
+}
+.history-dialog footer {
+  border-top: 1px solid #ffffff20;
+  border-bottom: 0;
+}
+.workshop-history-actions {
+  display: grid;
+  gap: 10px;
+  padding: 16px 0;
+}
+.workshop-history-actions[hidden],
+.workshop-history-actions button[hidden] {
+  display: none;
+}
+@media (max-width: 700px) {
+  .history-dialog main {
+    grid-template-columns: 1fr;
+  }
+  .history-dialog nav {
+    max-height: 180px;
+  }
+}

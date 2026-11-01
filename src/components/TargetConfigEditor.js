@@ -1,3 +1,4 @@
+import { confirmDialog, promptDialog } from '../siteDialog.js';
 // src/components/TargetConfigEditor.js - 目标配置编辑器 (Refactored)
 //
 // 相关文档:
@@ -706,7 +707,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         existingNode.replaceWith(newNode);
     }
 
-    toggleTargetMode(index) {
+    async toggleTargetMode(index) {
         const target = this.targets[index];
         const currentMode = target._uiMode || 'simplified';
         
@@ -720,7 +721,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             if (simplifiedState) {
                 this.updateTarget(index, { _uiMode: 'simplified', ...simplifiedState });
             } else {
-                if (confirm('当前配置过于复杂，无法完全转换为简化模式。切换将重置部分高级配置。是否继续？')) {
+                if (await confirmDialog('当前配置过于复杂，无法完全转换为简化模式。切换将重置部分高级配置。是否继续？')) {
                     this.updateTarget(index, { _uiMode: 'simplified' }); // 重置为默认简化状态
                 }
             }
@@ -1511,8 +1512,8 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         this.notifyChange();
     }
 
-    removeTarget(index) {
-        if (confirm('确定删除此目标？')) {
+    async removeTarget(index) {
+        if (await confirmDialog('确定删除此目标？')) {
             this.targets.splice(index, 1);
             this.renderTargetsList(this.container.querySelector('#targets-list-container'));
             this.notifyChange();
@@ -1605,7 +1606,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         return rest;
     }
 
-    showAddOperationMenu(index) {
+    async showAddOperationMenu(index) {
         // 简化版菜单
         const supported = [
             'FilterOperation',
@@ -1614,7 +1615,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             'DistinctOperation',
             'SelectOperation'
         ];
-        const type = prompt(`输入操作类型 (${supported.join(', ')}):`, 'FilterOperation');
+        const type = await promptDialog(`输入操作类型 (${supported.join(', ')}):`, 'FilterOperation');
         if (type) this.addOperation(index, type);
     }
 

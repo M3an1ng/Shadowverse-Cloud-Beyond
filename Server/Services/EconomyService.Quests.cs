@@ -15,14 +15,37 @@ public partial class EconomyService
             return new List<UserQuestDto>();
         }
 
-        var userQuests = await _context.UserQuests
-            .Include(uq => uq.QuestDefinition)
-            .Where(uq => uq.UserId == userId)
-            .OrderByDescending(uq => uq.IsCompleted)
-            .ThenBy(uq => uq.QuestDefinition.Type)
-            .ToListAsync();
-
-        return userQuests.Select(UserQuestDto.FromEntity).ToList();
+        return await _transactionService.ExecuteInTransactionAsync(async () =>
+        {
+            var now = DateTime.UtcNow;
+            var definitions = await _context.QuestDefinitions.Where(q => q.IsActive).OrderBy(q => q.Type).ToListAsync();
+            var current = new List<UserQuest>();
+            foreach (var definition in definitions)
+            {
+                var quest = await QuestProgressState.GetOrCreateAsync(_context, userId, definition, now);
+                // An authenticated returning player can remain signed in across midnight.
+                if (definition.ActivityType == QuestActivityType.Login && !quest.IsCompleted)
+                    quest.UpdateProgress(definition.TargetValue);
+                if (definition.ActivityType == QuestActivityType.Comment && !quest.IsRewardClaimed)
+                {
+                    // Repair unclaimed progress previously attributed to votes; real comment events remain valid after comment deletion.
+                    var recorded = await _context.QuestProgressEvents.Where(e => e.UserId == userId && e.QuestDefinitionId == definition.Id &&
+                        e.PeriodKey == quest.PeriodKey && e.ActivityType == QuestActivityType.Comment).SumAsync(e => (int?)e.Increment) ?? 0;
+                    var comments = await _context.CardComments.Where(c => c.UserId == userId && c.CreatedAt >= quest.PeriodStartUtc && c.CreatedAt < quest.PeriodEndUtc)
+                        .Select(c => c.CardDefinitionId).Distinct().CountAsync();
+                    var actual = Math.Min(definition.TargetValue, Math.Max(recorded, comments));
+                    if (quest.CurrentProgress != actual || quest.IsCompleted != (actual >= definition.TargetValue))
+                    {
+                        quest.CurrentProgress = actual;
+                        quest.IsCompleted = actual >= definition.TargetValue;
+                        quest.CompletedAt = quest.IsCompleted ? quest.CompletedAt ?? now : null;
+                    }
+                }
+                current.Add(quest);
+            }
+            return current.Where(q => !q.IsExpired()).OrderByDescending(q => q.IsCompleted)
+                .Select(UserQuestDto.FromEntity).ToList();
+        });
     }
 
     public async Task<bool> UpdateQuestProgressAsync(Guid userId, QuestType type, int increment = 1)

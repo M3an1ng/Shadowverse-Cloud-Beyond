@@ -681,6 +681,7 @@ namespace ShadowverseBeyond.Server.Services
         {
             return new MatchDeckSelection
             {
+                GeneratedDraftCardIds = selection.GeneratedDraftCardIds?.ToArray(),
                 UserId = selection.UserId,
                 GuestId = selection.GuestId,
                 DeckId = selection.DeckId,

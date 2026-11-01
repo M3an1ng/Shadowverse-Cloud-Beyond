@@ -49,7 +49,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             var events = new List<IGameEvent>(cards.Count);
             foreach (var card in cards)
             {
-                events.Add(new CardRevealedEvent(player, card));
+                var owner = context.CurrentGameState.GetPlayerState(card.OwnerPlayerId) ?? player;
+                events.Add(new CardRevealedEvent(owner, card));
             }
 
             Logger.LogDebug("{EffectName}: Revealing {Count} card(s).", effectName, cards.Count);

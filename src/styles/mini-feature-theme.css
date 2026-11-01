@@ -1,0 +1,401 @@
+/* Shared native black theme for features migrated from Mini. */
+:is(.feature-dialog, .history-dialog, .site-dialog, .choice-centered-dialog) {
+  background: #090909 !important;
+  color: #ededed;
+  border-color: #383838 !important;
+}
+:is(.feature-dialog, .history-dialog, .site-dialog, .choice-centered-dialog)
+  > :is(header, footer),
+.feature-body,
+.choice-centered-dialog .choice-controls-overlay,
+.choice-centered-dialog .choice-panel-overlay {
+  background: #090909 !important;
+  border-color: #303030 !important;
+}
+:is(.feature-dialog, .history-dialog, .site-dialog, .choice-centered-dialog)
+  :is(input:not([type="checkbox"]), select, textarea) {
+  background: #101010 !important;
+  color: #eee !important;
+  border-color: #414141 !important;
+}
+:is(.feature-dialog, .history-dialog, .site-dialog, .choice-centered-dialog)
+  :is(input, textarea)::placeholder {
+  color: #858585;
+}
+:is(.feature-dialog, .history-dialog, .site-dialog, .choice-centered-dialog)
+  button:not(.catalog-card):not(.style-choice):not(.take-two-card):not(
+    .pool-card
+  ):not(.take-two-primary):not(.mini-profession-button):not(
+    .site-dialog-primary
+  ):not(.choice-confirm-btn, .style-select-button) {
+  background: #141414;
+  color: #eee;
+  border: 1px solid #3c3c3c;
+}
+:is(.feature-dialog, .history-dialog, .site-dialog, .choice-centered-dialog)
+  button:hover:not(:disabled):not(.catalog-card):not(.take-two-card):not(
+    .pool-card
+  ):not(.take-two-primary):not(.mini-profession-button):not(
+    .site-dialog-primary
+  ):not(.choice-confirm-btn, .style-select-button) {
+  background: #242424;
+}
+:is(.feature-dialog, .history-dialog) > header button {
+  background: transparent;
+  border: 0;
+}
+.feature-dialog .catalog-classes button,
+.feature-dialog .catalog-classes button:hover {
+  background: transparent;
+}
+.feature-dialog .gallery-search-row .catalog-classes button {
+  border: 0;
+}
+.feature-dialog .catalog-check input[type="checkbox"] {
+  background: #202020;
+  border-color: #777;
+}
+.feature-dialog .catalog-check input[type="checkbox"]:checked {
+  background: #90b9c4;
+  box-shadow: inset 0 0 0 4px #202020;
+}
+.feature-dialog
+  :is(
+    .gallery-pack-results,
+    .gallery-search,
+    .pool-pack-section,
+    .gallery-suggestions
+  ) {
+  background: #111 !important;
+  border-color: #333;
+}
+.feature-dialog .gallery-suggestions > button {
+  background: #111;
+}
+.feature-dialog .gallery-suggestions > button:is(:hover, :focus) {
+  background: #303030;
+}
+.feature-dialog .gallery-filter-row {
+  border-color: #333;
+}
+.feature-dialog .gallery-suggest {
+  color: #eee;
+}
+.feature-dialog .cost-options > button {
+  background: transparent;
+  border: 0;
+}
+.feature-dialog .style-choice.selected {
+  background: #222 !important;
+}
+.history-dialog nav button[aria-pressed="true"] {
+  background: #282828 !important;
+  border-color: #aaa !important;
+}
+.history-dialog :is(small, time) {
+  color: #aaa;
+}
+.site-dialog button.site-dialog-primary {
+  background: #292929;
+  border-color: #777;
+}
+.choice-centered-dialog .choice-card {
+  background: #141414 !important;
+  border-color: #444;
+}
+.choice-centered-dialog .choice-card-selected {
+  background: #282828 !important;
+  border-color: #aaa;
+  box-shadow: 0 0 0 1px #aaa;
+}
+.take-two-pool-editor .pool-toolbar button {
+  background: #191919;
+  color: #eee;
+  border-color: #444;
+}
+.take-two-pool-editor .gallery-search-row > button,
+.take-two-pool-editor > div > button,
+.take-two-pool-editor .catalog-pagination button {
+  background: #191919;
+  color: #eee;
+  border: 1px solid #444;
+  padding: 8px 14px;
+  border-radius: 3px;
+  font: inherit;
+}
+.take-two-pool-editor .gallery-search-row {
+  background: #111;
+}
+.take-two-pool-editor .pool-pack-section {
+  border-radius: 4px;
+}
+.take-two-pool-editor > .pool-single-results {
+  color: #ddd;
+}
+#take-two-admin .tool-button {
+  display: block;
+  width: 100%;
+}
+.mp-deck-switcher .take-two-create-settings {
+  grid-column: 2;
+  grid-row: 1;
+  justify-content: flex-start;
+}
+.mp-deck-switcher .take-two-create-settings :is(select, button) {
+  background: #080808;
+  border: 1px solid #353535;
+  color: #eee;
+  border-radius: 3px;
+  font: inherit;
+  padding: 6px 12px;
+  min-height: 39px;
+}
+.mp-deck-switcher .take-two-create-settings select {
+  min-width: 260px;
+  max-width: 520px;
+  text-align: center;
+}
+.mp-deck-switcher .take-two-create-settings button:hover {
+  background: #1b1b1b;
+  border-color: #777;
+}
+/* Keep the black theme stable when feature CSS is loaded lazily. */
+:is(.feature-dialog, .history-dialog, .site-dialog, .choice-centered-dialog)
+  button:not(.catalog-card):not(.style-choice):not(.take-two-card):not(
+    .pool-card
+  ):not(.take-two-primary):not(.mini-profession-button):not(
+    .site-dialog-primary
+  ):not(.choice-confirm-btn, .style-select-button) {
+  background: #141414 !important;
+  color: #eee !important;
+  border-color: #444;
+}
+:is(.feature-dialog, .history-dialog) > header button,
+.feature-dialog .catalog-classes button,
+.feature-dialog .cost-options > button {
+  background: transparent !important;
+}
+.history-dialog nav button[aria-pressed="true"],
+.site-dialog button.site-dialog-primary {
+  background: #292929 !important;
+}
+/* Profession icons and close controls remain frameless. */
+.feature-dialog .gallery-search-row .catalog-classes button,
+.feature-dialog .gallery-search-row .catalog-classes button:hover {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+:is(.feature-dialog, .history-dialog) > header button {
+  border: 0 !important;
+  background: transparent !important;
+}
+.feature-dialog .cost-options > button {
+  border: 0 !important;
+}
+.pool-search-empty {
+  grid-column: 1/-1;
+  margin: 0;
+  color: #aaa;
+  text-align: center;
+}
+/* Reserve equal space on both sides so the native arrow cannot offset the label. */
+.mp-deck-switcher .take-two-create-settings select {
+  appearance: none;
+  -webkit-appearance: none;
+  text-align: center;
+  text-align-last: center;
+  padding-inline: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='10' viewBox='0 0 14 10'%3E%3Cpath d='m2 2 5 5 5-5' fill='none' stroke='%23ddd' stroke-width='1.5'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 12px center !important;
+}
+.mp-deck-switcher .take-two-create-settings select option {
+  text-align: center;
+}
+
+/* Confirm actions use the same warm gold emphasis as the draft primary action. */
+.site-dialog:has(footer > button + button) button.site-dialog-primary,
+.choice-centered-dialog button.choice-confirm-btn {
+  background: linear-gradient(180deg, #51462c, #30291b) !important;
+  color: #f2dc9d !important;
+  border: 1px solid #b59a58 !important;
+  box-shadow: inset 0 1px #fff2;
+}
+.site-dialog:has(footer > button + button) button.site-dialog-primary:hover,
+.choice-centered-dialog button.choice-confirm-btn:enabled:hover {
+  filter: brightness(1.15);
+}
+.site-dialog[data-tone="error"] button.site-dialog-primary,
+.site-dialog[data-tone="danger"] button.site-dialog-primary {
+  background: linear-gradient(180deg, #6a292d, #421a1e) !important;
+  color: #ffe0e0 !important;
+  border: 1px solid #bd656b !important;
+}
+.site-dialog[data-tone="error"] button.site-dialog-primary:hover {
+  filter: brightness(1.15);
+}
+.mp-deck-switcher .take-two-create-settings .pool-environment-picker {
+  position: relative;
+  flex: 1;
+  width: 260px;
+  min-width: 180px;
+  max-width: 520px;
+}
+.mp-deck-switcher .take-two-create-settings .pool-environment-picker button {
+  display: block;
+  width: 100% !important;
+  margin: 0;
+  text-align: center;
+  font: inherit;
+}
+.pool-environment-trigger {
+  position: relative;
+  padding-inline: 32px !important;
+}
+.pool-environment-trigger::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid #ddd;
+  border-bottom: 1.5px solid #ddd;
+  transform: translateY(-75%) rotate(45deg);
+}
+.pool-environment-menu {
+  position: absolute;
+  z-index: 100;
+  top: calc(100% + 2px);
+  left: 0;
+  width: 100%;
+  background: #080808;
+  border: 1px solid #555;
+  box-shadow: 0 8px 24px #0009;
+}
+.pool-environment-menu[hidden] {
+  display: none;
+}
+.mp-deck-switcher .take-two-create-settings .pool-environment-menu button {
+  border: 0;
+  border-radius: 0;
+  padding: 10px 32px;
+  background: #080808;
+  color: #eee;
+}
+.mp-deck-switcher
+  .take-two-create-settings
+  .pool-environment-menu
+  button[aria-selected="true"] {
+  background: #342e20;
+  color: #efd594;
+}
+.mp-deck-switcher
+  .take-two-create-settings
+  .pool-environment-menu
+  button:is(:hover, :focus-visible) {
+  background: #292929;
+}
+.site-dialog[data-tone="success"] button.site-dialog-primary {
+  background: linear-gradient(180deg, #254d76, #16314d) !important;
+  color: #d9ecff !important;
+  border: 1px solid #679acf !important;
+}
+.site-dialog[data-tone="success"] button.site-dialog-primary:hover {
+  filter: brightness(1.15);
+}
+/* Detailed search follows the supplied reference palette; other dialogs stay black. */
+.feature-dialog:has(.gallery-advanced),
+.feature-dialog:has(.gallery-advanced) > header,
+.feature-dialog:has(.gallery-advanced) > .feature-body {
+  background: #2b2c35 !important;
+}
+.feature-dialog:has(.gallery-advanced)
+  :is(input:not([type="checkbox"]), select, textarea) {
+  background: #252a34 !important;
+  border-color: #6d7072 !important;
+}
+.feature-dialog:has(.gallery-advanced) .gallery-pack-results,
+.feature-dialog:has(.gallery-advanced) .gallery-suggestions {
+  background: #171d23 !important;
+}
+.feature-dialog:has(.gallery-advanced) .gallery-filter-row {
+  border-color: #52535a;
+}
+.feature-dialog:has(.gallery-advanced) .catalog-check input[type="checkbox"] {
+  background: #252a34;
+  border-color: #6d7072;
+}
+/* Mini's card-style picker: this surface intentionally uses the blue Mini palette. */
+.card-style-picker .feature-dialog {
+  background: #0a1018 !important;
+}
+.card-style-picker .feature-dialog > header {
+  background: #101923 !important;
+}
+.card-style-picker .feature-dialog > .feature-body {
+  background: #090e15 !important;
+}
+.card-style-picker .style-picker-grid {
+  display: flex;
+  gap: 28px;
+  justify-content: center;
+  flex-wrap: wrap;
+  padding: 20px;
+}
+.card-style-picker .style-picker-grid > article {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid #ffffff18;
+  border-radius: 10px;
+  background: #0c141d;
+}
+.card-style-picker .style-picker-grid > article.selected {
+  background: #172c43;
+  border-color: #64adff;
+  box-shadow: 0 0 20px #60bed522;
+}
+.card-style-picker .style-face-wrap {
+  width: clamp(150px, min(20vw, calc((100dvh - 330px) / 1.4)), 280px);
+  container-type: inline-size;
+  text-align: center;
+}
+.card-style-picker .catalog-card-name {
+  font-size: 20px;
+  min-height: 0;
+  margin-top: 3px;
+}
+.card-style-picker .catalog-face {
+  border-width: 2px;
+  border-radius: 8px;
+}
+.card-style-picker .style-select-button {
+  min-height: 38px;
+  padding: 8px 18px;
+  border-radius: 5px;
+  background: #302715 !important;
+  color: #dfd3b3 !important;
+  border: 1px solid #8a714144 !important;
+  font: inherit;
+}
+.card-style-picker .style-select-button:enabled:hover {
+  filter: brightness(1.2);
+}
+.card-style-picker .style-select-button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.feature-dialog:has(.gallery-advanced)
+  .catalog-check
+  input[type="checkbox"]:checked {
+  background-color: #252a34 !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3E%3Cpath d='m4 15 7 7L27 5' fill='none' stroke='%23e2cfa1' stroke-width='4' stroke-linecap='square'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-size: 86% 86% !important;
+  background-position: center !important;
+  box-shadow: none !important;
+}

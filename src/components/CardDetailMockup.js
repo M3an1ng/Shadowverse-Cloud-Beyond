@@ -1,5 +1,6 @@
+﻿import { mountStylePicker } from '../cardStyles.js';
 import { renderDescriptionHtml } from '../descriptionParser.js';
-import { hydrateDescriptionReferences } from '../previewDescriptionReferences.js';
+import { hydrateAlternatePlayReferences, hydrateDescriptionReferences } from '../previewDescriptionReferences.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from '../enumLocalizationCache.js';
 import { showPreviewDescriptionTooltip } from '../previewDescriptionTooltip.js';
 import { getUserSession } from '../userSession.js';
@@ -422,6 +423,7 @@ export function showCardDetailModal(card, options = {}) {
     const overlay = document.createElement('div');
     overlay.id = MODAL_ID;
     overlay.className = `card-detail-modal-overlay${hadOpenModal ? ' is-reopen' : ''}`;
+    overlay.style.zIndex=String(Math.max(100010,...[...document.querySelectorAll('.feature-overlay,.history-overlay')].map(el=>Number(getComputedStyle(el).zIndex)||0))+20);
     overlay.innerHTML = `
         <div class="card-detail-modal-shell">
             <div class="card-detail-modal" role="dialog" aria-modal="true" aria-label="Card detail">
@@ -604,6 +606,10 @@ export function showCardDetailModal(card, options = {}) {
     });
     document.addEventListener('keydown', onKeydown);
 
+    void mountStylePicker(overlay.querySelector('.inspect-btn').parentElement, options.styleOriginalCard || card, (appearance,base) => {
+        const original=base || options.styleOriginalCard || card;
+        showCardDetailModal(appearance ? {...original,...appearance} : original,{...modalOptions,previewUrl:appearance?.artPreview||original.artPreview,detailUrl:appearance?.artDetail||original.artDetail,styleOriginalCard:original,stylePreferenceApplied:true,navigationMode:'replace'});
+    },!options.stylePreferenceApplied).catch(console.warn);
     const inspectBtn = overlay.querySelector('.inspect-btn');
     if (inspectBtn && !inspectDisabled) {
         inspectBtn.addEventListener('click', (event) => {
@@ -913,7 +919,10 @@ export function showCardDetailModal(card, options = {}) {
 
     document.body.appendChild(overlay);
     ensureDetailEnumLocalization(overlay);
+    const openReferenceDetail = referencedCard => showCardDetailModal(referencedCard, { ...modalOptions, navigationMode: DETAIL_NAVIGATION_PUSH });
+    void hydrateAlternatePlayReferences(overlay.querySelector('.ability-box'), currentCardId, { fallbackPreviewUrl: previewUrl, cards: modalOptions.cards, openCardDetail: openReferenceDetail });
     void hydrateDescriptionReferences(overlay, {
+        openCardDetail: openReferenceDetail,
         cards: modalOptions.cards,
         fallbackPreviewUrl: previewUrl,
         currentCardId,

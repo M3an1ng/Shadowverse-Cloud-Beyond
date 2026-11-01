@@ -329,7 +329,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 applicabilityCondition: originalBuff.ApplicabilityCondition
             )
             {
-                IsActive = originalBuff.IsActive
+                IsActive = originalBuff.IsActive,
+                RemoveAfterUse = originalBuff.RemoveAfterUse
             };
             newBuff.SourceEffectIndex = originalBuff.SourceEffectIndex;
             newBuff.EffectKey = originalBuff.EffectKey;

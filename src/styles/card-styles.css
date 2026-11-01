@@ -1,0 +1,342 @@
+﻿.catalog-classes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.catalog-classes button {
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 50%;
+  padding: 7px;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+}
+.catalog-classes button.selected {
+  border-color: var(--class-color);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--class-color) 25%, transparent);
+}
+.catalog-classes img {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+.catalog-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #d9dce1;
+  min-width: 0;
+  width: 100%;
+  font: inherit;
+}
+.catalog-face {
+  position: relative;
+  aspect-ratio: 5/7;
+  width: 100%;
+  border: 1px solid #a3a5ab;
+  border-radius: 9px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.catalog-face.gold {
+  border-color: #c7a559;
+}
+.catalog-face.legendary {
+  border-color: #bb9be0;
+}
+.catalog-face > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.catalog-card-name {
+  width: 100%;
+  min-height: 2.6em;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  text-align: center;
+  font-size: 17px;
+}
+.catalog-badge {
+  position: absolute;
+  width: 17%;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  font:
+    700 clamp(16px, 2vw, 30px) Georgia,
+    serif;
+  color: white;
+  text-shadow: 1px 2px 2px #000;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+}
+.catalog-badge.cost {
+  top: 0;
+  left: 0;
+  background-image: url("./../icon/utx_ic_card_cost.png");
+}
+.catalog-badge.attack {
+  bottom: 0;
+  left: 0;
+  background-image: url("./../icon/utx_ic_card_attack.png");
+  padding-top: 3%;
+}
+.catalog-badge.health {
+  bottom: 0;
+  right: 0;
+  background-image: url("./../icon/utx_ic_card_health.png");
+}
+.feature-overlay {
+  position: fixed;
+  inset: 0;
+  background: #000a;
+  z-index: 100040;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.feature-dialog {
+  width: min(100%, 1000px);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  background: #101924;
+  border: 1px solid #425466;
+  border-radius: 12px;
+  color: #d4dce6;
+  box-shadow: 0 16px 70px #000a;
+}
+.feature-dialog.wide {
+  width: min(100%, 1600px);
+}
+.feature-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #344252;
+  padding: 20px 28px;
+}
+.feature-dialog h2 {
+  margin: 0;
+  font-size: 26px;
+  color: #67afff;
+}
+.feature-dialog button {
+  cursor: pointer;
+}
+.feature-dialog > header button {
+  border: 0;
+  background: none;
+  color: #a7bbc9;
+  font-size: 27px;
+}
+.feature-body {
+  padding: 24px;
+  overflow: auto;
+  min-height: 0;
+}
+.style-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 230px));
+  gap: 30px;
+  justify-content: center;
+}
+.style-choice {
+  padding: 12px;
+  border: 1px solid transparent;
+  text-align: center;
+}
+.style-choice.selected {
+  border-color: #65b5c0;
+  background: #2b495a55;
+}
+.card-style-open {
+  position: absolute;
+  bottom: 100px;
+  left: -80px;
+  border: 1px solid #536372;
+  border-radius: 8px;
+  color: #d9e3ee;
+  background: #132232;
+  padding: 10px 14px;
+}
+.style-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 15px 0;
+}
+.style-editor-toolbar button,
+.style-bindings button {
+  background: #121314;
+  color: #d2d3d5;
+  border: 1px solid #3b3e42;
+  padding: 8px 14px;
+  border-radius: 5px;
+}
+.style-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 15px 0;
+  color: #bcbfc4;
+}
+.style-field input,
+.style-field textarea,
+.style-bindings input,
+.style-editor-toolbar select {
+  color: #dce6f0;
+  background: #090a0c;
+  border: 1px solid #303337;
+  border-radius: 5px;
+  padding: 12px;
+  font: inherit;
+}
+.style-field textarea {
+  min-height: 140px;
+  resize: vertical;
+}
+.style-bindings fieldset {
+  border: 1px solid #303337;
+  margin: 20px 0;
+  padding: 16px;
+}
+
+#styles-tab .style-editor-toolbar select[hidden] {
+  display: none !important;
+}
+#styles-tab button {
+  font: inherit;
+  cursor: pointer;
+}
+#styles-tab .style-editor-toolbar button:hover,
+#styles-tab .style-bindings button:hover {
+  background: #1b1d20;
+  border-color: #65696f;
+}
+#styles-tab button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+#styles-tab .style-field input:focus,
+#styles-tab .style-field textarea:focus,
+#styles-tab .style-binding-picker input:focus {
+  outline: none;
+  border-color: #65758a;
+}
+#styles-tab .style-bindings > h3 {
+  font-size: 20px;
+  color: #d2d3d5;
+  margin: 24px 0 12px;
+}
+#styles-tab .style-bindings fieldset {
+  border-radius: 6px;
+  background: #090a0b;
+  padding: 18px;
+  margin: 18px 0;
+}
+#styles-tab .style-bindings legend {
+  color: #c5c8cd;
+  font-size: 16px;
+  padding: 0 8px;
+}
+#styles-tab .style-art-panel {
+  width: min(100%, 360px);
+  margin-top: 20px;
+  background: #08090a;
+  border-color: #303337;
+  padding: 16px;
+  gap: 12px;
+  display: flex;
+  flex-direction: column;
+}
+#styles-tab .style-art-panel h4 {
+  font-size: 16px;
+  color: #bcbfc4;
+  margin: 0;
+}
+#styles-tab .style-art-panel .asset-preview {
+  aspect-ratio: 5/7;
+  max-height: 360px;
+  background: #060708;
+  border-color: #303337;
+}
+#styles-tab .style-art-panel .asset-preview img {
+  object-fit: contain;
+}
+#styles-tab .style-art-panel .asset-actions button {
+  color: #c8cbd0;
+  background: #121314;
+  border: 1px solid #3b3e42;
+  border-radius: 4px;
+  padding: 9px 18px;
+}
+#styles-tab .style-art-panel .asset-path {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #81868e;
+  overflow-wrap: anywhere;
+}
+#styles-tab .style-binding-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 12px;
+  max-width: 680px;
+  margin: 16px 0;
+}
+#styles-tab .style-binding-picker input {
+  width: 100%;
+  min-width: 0;
+  background: #090a0c;
+  border-color: #303337;
+}
+#styles-tab .style-binding-picker > button:last-child {
+  grid-column: 1/-1;
+  justify-self: start;
+  width: calc(100% - 104px);
+}
+@media (max-width: 700px) {
+  #styles-tab .style-binding-picker > button:last-child {
+    width: 100%;
+    justify-self: stretch;
+  }
+}
+/* Share the inspect control's size and horizontal anchor; stack directly above it. */
+.card-detail-modal .card-style-open.inspect-btn {
+  left: -54px;
+  bottom: 66px;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  padding: 0;
+  white-space: pre-line;
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: center;
+}
+.card-detail-modal .card-style-open.inspect-btn {
+  display: grid;
+  place-items: center;
+  text-indent: 0;
+  letter-spacing: 0;
+  line-height: normal;
+}
+.card-detail-modal .card-style-open-label {
+  display: block;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  text-align: center;
+  white-space: pre-line;
+  font: 12px/1.3 var(--cd-font-tech);
+  letter-spacing: 0;
+}

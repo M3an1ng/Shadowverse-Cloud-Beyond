@@ -25,7 +25,8 @@ namespace ShadowverseBeyond.Server.Services
             // EffectType.Necromancy,
             // EffectType.Sacrifice
             EffectType.SetStatus,
-            EffectType.AddAura
+            EffectType.AddAura,
+            EffectType.SettleEvidence
         };
         private static readonly IReadOnlyDictionary<EffectType, string> EffectCategoryMap = new Dictionary<EffectType, string>
         {
@@ -68,6 +69,7 @@ namespace ShadowverseBeyond.Server.Services
             { EffectType.ModifyStatus, AbilityEditorCategories.ResourceValueId },
             { EffectType.SpellBoost, AbilityEditorCategories.ResourceValueId },
             { EffectType.AddEarthSigil, AbilityEditorCategories.ResourceValueId },
+            { EffectType.ModifyEvidence, AbilityEditorCategories.ResourceValueId },
             { EffectType.EarthRite, AbilityEditorCategories.ResourceValueId },
             { EffectType.Necromancy, AbilityEditorCategories.ResourceValueId },
             { EffectType.Sacrifice, AbilityEditorCategories.ResourceValueId },

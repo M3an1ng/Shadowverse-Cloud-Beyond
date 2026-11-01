@@ -1,3 +1,4 @@
+﻿import { showAlert } from './siteDialog.js';
 // src/router.js - 简单的前端路由系统
 //
 // 相关文档:
@@ -150,6 +151,7 @@ class Router {
             }
             if (route === this.currentRoute && this.failedRoute !== route) return true;
             oldRoute = this.currentRoute;
+            if(oldRoute==='deck-builder' && route!=='deck-builder')document.body.classList.remove('card-gallery-active');
             if (this.beforeRouteChange && !await this.beforeRouteChange(oldRoute, route, routeButton)) {
                 return false;
             }
@@ -433,10 +435,10 @@ window.testMetadataAPI = async function () {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
         console.info('元数据API响应:', data);
-        alert('API测试成功！请查看控制台输出。');
+        showAlert('API测试成功！请查看控制台输出。');
     } catch (error) {
         console.error('API测试失败:', error);
-        alert(`API测试失败: ${error.message}`);
+        showAlert(`API测试失败: ${error.message}`);
     }
 };
 

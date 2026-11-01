@@ -1,0 +1,2120 @@
+{
+  "format": 1,
+  "pack": "星光舞台",
+  "sourceBackup": "/opt/svnebula/backups/before-native-native-20261030-20261030T015116Z-20261030T020917Z-1192294/mini-data/laboratory.sqlite",
+  "sourceSha256": "7865ea6b8a1e57b0721705fa2417b8c6dcbe8a96f76b6aa6211fb6b3ef69644c",
+  "reviewedCards": 260,
+  "patches": [
+    {
+      "cardId": 1471951,
+      "name": "最初的训练",
+      "sourceUpdatedAt": "2026-10-28T10:55:00.706Z",
+      "fields": {},
+      "abilities": [
+        {
+          "id": 1471405041,
+          "nameBefore": "最初的训练-回合结束",
+          "nameAfter": "最初的训练-回合结束",
+          "before": {
+            "name": "最初的训练-回合结束",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "turnEnd"
+              ],
+              "relationType": "Any",
+              "timing": "On",
+              "validZones": [
+                "Hand"
+              ],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "condition_1772889436814_jvgzoqd9w",
+                "expression": "(count(byType(context.eventHistory.events, (\"Destroy\")).query(((self.CurrentPlayerTurnNumber) == (context.owner.turnNumber))).query(((self.DestroyTarget.ownerPlayerId) == (context.owner.playerId))).query(((self.DestroyTarget.cardType) == (\"Follower\"))))) == (1)",
+                "isEnabled": true
+              },
+              {
+                "id": "condition_1772890225062_zv7cp40yb",
+                "expression": "(context.triggeringEvent.EndingPlayer.playerId) == (context.owner.playerId)",
+                "isEnabled": true
+              }
+            ],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.SourceCard",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "Transform",
+                "parameters": {
+                  "TargetCardDefinitionId": {
+                    "$type": "StaticValueConfig",
+                    "Value": 1471952
+                  },
+                  "CardSourceMode": {
+                    "$type": "StaticValueConfig",
+                    "Value": "definition"
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": false,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          },
+          "after": {
+            "name": "最初的训练-回合结束",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "turnEnd"
+              ],
+              "relationType": "Any",
+              "timing": "On",
+              "validZones": [
+                "Hand"
+              ],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "condition_1772889436814_jvgzoqd9w",
+                "expression": "(count(byType(context.eventHistory.events, (\"Destroy\")).query(((self.CurrentPlayerTurnNumber) == (context.owner.turnNumber))).query(self.CurrentPlayerId == context.owner.playerId).query(((self.DestroyTarget.ownerPlayerId) == (context.owner.playerId))).query(((self.DestroyTarget.cardType) == (\"Follower\"))))) == (1)",
+                "isEnabled": true
+              },
+              {
+                "id": "condition_1772890225062_zv7cp40yb",
+                "expression": "(context.triggeringEvent.EndingPlayer.playerId) == (context.owner.playerId)",
+                "isEnabled": true
+              }
+            ],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.SourceCard",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "Transform",
+                "parameters": {
+                  "TargetCardDefinitionId": {
+                    "$type": "StaticValueConfig",
+                    "Value": 1471952
+                  },
+                  "CardSourceMode": {
+                    "$type": "StaticValueConfig",
+                    "Value": "definition"
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": false,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          }
+        }
+      ],
+      "notes": [
+        "历史破坏计数同时限定当前玩家，避免双方相同回合编号混计。"
+      ]
+    },
+    {
+      "cardId": 1471952,
+      "name": "认真的训练",
+      "sourceUpdatedAt": "2026-10-28T10:55:00.709Z",
+      "fields": {},
+      "abilities": [
+        {
+          "id": 1471405037,
+          "nameBefore": "认真的训练",
+          "nameAfter": "认真的训练",
+          "before": {
+            "name": "认真的训练",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "turnEnd"
+              ],
+              "relationType": "Any",
+              "timing": "On",
+              "validZones": [
+                "Hand"
+              ],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "condition_1772889436814_jvgzoqd9w",
+                "expression": "(count(byType(context.eventHistory.events, (\"Destroy\")).query(((self.CurrentPlayerTurnNumber) == (context.owner.turnNumber))).query(((self.DestroyTarget.ownerPlayerId) == (context.owner.playerId))).query(((self.DestroyTarget.cardType) == (\"Follower\"))))) > (2)",
+                "isEnabled": true
+              },
+              {
+                "id": "condition_1772890278707_65cr7emrr",
+                "expression": "(context.triggeringEvent.EndingPlayer.playerId) == (context.owner.playerId)",
+                "isEnabled": true
+              }
+            ],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.SourceCard",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "Transform",
+                "parameters": {
+                  "TargetCardDefinitionId": {
+                    "$type": "StaticValueConfig",
+                    "Value": 1471953
+                  },
+                  "CardSourceMode": {
+                    "$type": "StaticValueConfig",
+                    "Value": "definition"
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": false,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          },
+          "after": {
+            "name": "认真的训练",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "turnEnd"
+              ],
+              "relationType": "Any",
+              "timing": "On",
+              "validZones": [
+                "Hand"
+              ],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "condition_1772889436814_jvgzoqd9w",
+                "expression": "(count(byType(context.eventHistory.events, (\"Destroy\")).query(((self.CurrentPlayerTurnNumber) == (context.owner.turnNumber))).query(self.CurrentPlayerId == context.owner.playerId).query(((self.DestroyTarget.ownerPlayerId) == (context.owner.playerId))).query(((self.DestroyTarget.cardType) == (\"Follower\"))))) > (2)",
+                "isEnabled": true
+              },
+              {
+                "id": "condition_1772890278707_65cr7emrr",
+                "expression": "(context.triggeringEvent.EndingPlayer.playerId) == (context.owner.playerId)",
+                "isEnabled": true
+              }
+            ],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.SourceCard",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "Transform",
+                "parameters": {
+                  "TargetCardDefinitionId": {
+                    "$type": "StaticValueConfig",
+                    "Value": 1471953
+                  },
+                  "CardSourceMode": {
+                    "$type": "StaticValueConfig",
+                    "Value": "definition"
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": false,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          }
+        }
+      ],
+      "notes": [
+        "历史破坏计数同时限定当前玩家，避免双方相同回合编号混计。"
+      ]
+    },
+    {
+      "cardId": 1472298,
+      "name": "缘结吉日·依田芳乃",
+      "sourceUpdatedAt": "2026-10-29T08:46:56.519Z",
+      "fields": {},
+      "abilities": [
+        {
+          "id": 1471405649,
+          "nameBefore": "缘结吉日·依田芳乃2",
+          "nameAfter": "缘结吉日·依田芳乃",
+          "before": {
+            "name": "缘结吉日·依田芳乃2",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "addCardToHand"
+              ],
+              "relationType": "TargetOther",
+              "timing": "On",
+              "validZones": [
+                "Field"
+              ],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "condition_1773974107166_l5ra2z154",
+                "expression": "(context.triggeringEvent.TargetPlayer.playerId) == (context.owner.playerId)",
+                "isEnabled": true
+              }
+            ],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.owner.leader",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "Heal",
+                "parameters": {
+                  "HealAmount": {
+                    "$type": "StaticValueConfig",
+                    "Value": 1
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": true,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          },
+          "after": {
+            "name": "缘结吉日·依田芳乃",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "CardMoved"
+              ],
+              "relationType": "TargetOther",
+              "timing": "On",
+              "validZones": [
+                "Field"
+              ],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "a02a37ce-c431-4e87-bde0-f80bb52cb11a",
+                "isEnabled": true,
+                "expression": "(context.triggeringEvent.MoveReason) != (\"Drawn\")"
+              },
+              {
+                "id": "d3aa6bc0-c645-4f98-9116-d993f9ddbd70",
+                "isEnabled": true,
+                "expression": "(context.triggeringEvent.ToZone) == (\"Hand\")"
+              },
+              {
+                "id": "mini-starlight-own-hand",
+                "isEnabled": true,
+                "expression": "context.triggeringEvent.MovedCard.ownerPlayerId == context.owner.playerId"
+              }
+            ],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.owner.leader",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "Heal",
+                "parameters": {
+                  "HealAmount": {
+                    "$type": "StaticValueConfig",
+                    "Value": 1
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": true,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          }
+        }
+      ],
+      "notes": [
+        "改为监听移动到己方手牌且非抽取的事件；显式保留己方归属限制。"
+      ]
+    },
+    {
+      "cardId": 1472406,
+      "name": "风缠之光",
+      "sourceUpdatedAt": "2026-10-29T08:48:36.714Z",
+      "fields": {},
+      "abilities": [
+        {
+          "id": 1471405805,
+          "nameBefore": "风缠之光-手牌计数",
+          "nameAfter": "风缠之光-手牌计数",
+          "before": {
+            "name": "风缠之光-手牌计数",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "addCardToHand"
+              ],
+              "relationType": "Any",
+              "timing": "On",
+              "validZones": [
+                "Hand"
+              ],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "condition_1774177591721_5os2auymn",
+                "expression": "(context.triggeringEvent.TargetPlayer.playerId) == (context.owner.playerId)",
+                "isEnabled": true
+              }
+            ],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.SourceCard",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "ModifyVariable",
+                "parameters": {
+                  "CounterName": {
+                    "$type": "StaticValueConfig",
+                    "Value": "X"
+                  },
+                  "TargetType": {
+                    "$type": "StaticValueConfig",
+                    "Value": "Card"
+                  },
+                  "Operation": {
+                    "$type": "StaticValueConfig",
+                    "Value": "add"
+                  },
+                  "Amount": {
+                    "$type": "StaticValueConfig",
+                    "Value": 1
+                  },
+                  "PlayerScope": {
+                    "$type": "StaticValueConfig",
+                    "Value": "self"
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [
+              {
+                "name": "X",
+                "displayName": "X",
+                "initialValue": 1
+              }
+            ],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": false,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          },
+          "after": {
+            "name": "风缠之光-手牌计数",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "CardMoved"
+              ],
+              "relationType": "Any",
+              "timing": "On",
+              "validZones": [
+                "Hand"
+              ],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "c2284d2e-bcca-43c4-9a0f-9f226cb368ae",
+                "isEnabled": true,
+                "expression": "(context.triggeringEvent.MoveReason) != (\"Drawn\")"
+              },
+              {
+                "id": "6c675116-dc30-4828-9c4f-d0052a1a1aaf",
+                "isEnabled": true,
+                "expression": "(context.triggeringEvent.ToZone) == (\"Hand\")"
+              },
+              {
+                "id": "mini-starlight-own-hand",
+                "isEnabled": true,
+                "expression": "context.triggeringEvent.MovedCard.ownerPlayerId == context.owner.playerId"
+              }
+            ],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.SourceCard",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "ModifyVariable",
+                "parameters": {
+                  "CounterName": {
+                    "$type": "StaticValueConfig",
+                    "Value": "X"
+                  },
+                  "TargetType": {
+                    "$type": "StaticValueConfig",
+                    "Value": "Card"
+                  },
+                  "Operation": {
+                    "$type": "StaticValueConfig",
+                    "Value": "add"
+                  },
+                  "Amount": {
+                    "$type": "StaticValueConfig",
+                    "Value": 1
+                  },
+                  "PlayerScope": {
+                    "$type": "StaticValueConfig",
+                    "Value": "self"
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [
+              {
+                "name": "X",
+                "displayName": "X",
+                "initialValue": 1
+              }
+            ],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": false,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          }
+        }
+      ],
+      "notes": [
+        "改为监听移动到己方手牌且非抽取的事件；显式保留己方归属限制。"
+      ]
+    },
+    {
+      "cardId": 1472407,
+      "name": "雪之结晶·安娜斯塔西娅",
+      "sourceUpdatedAt": "2026-10-29T08:47:45.297Z",
+      "fields": {
+        "Description": {
+          "before": "【入场曲】将1张『妖精』加入手牌。\n--\n卡牌因能力加入手牌时，对对手的战场上的随机1个随从造成1点伤害。",
+          "after": "【入场曲】将1张『妖精』加入手牌。\n--\n因能力将卡牌以抽牌以外的方式加入手牌时，对对手的战场上的随机1个随从造成1点伤害。"
+        }
+      },
+      "abilities": [
+        {
+          "id": 1471405809,
+          "nameBefore": "雪之结晶·安娜斯塔西娅2",
+          "nameAfter": "雪之结晶·安娜斯塔西娅2",
+          "before": {
+            "name": "雪之结晶·安娜斯塔西娅2",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "addCardToHand"
+              ],
+              "relationType": "Any",
+              "timing": "On",
+              "validZones": [
+                "Field"
+              ],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "condition_1774177899865_vh69svv0l",
+                "expression": "(context.triggeringEvent.TargetPlayer.playerId) == (context.owner.playerId)",
+                "isEnabled": true
+              }
+            ],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.opponent.field.query(self.type == \"Follower\").take(random 1)",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "Damage",
+                "parameters": {
+                  "DamageAmount": {
+                    "$type": "StaticValueConfig",
+                    "Value": 1
+                  },
+                  "DistributionMode": {
+                    "$type": "StaticValueConfig",
+                    "Value": "perTarget"
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": true,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          },
+          "after": {
+            "name": "雪之结晶·安娜斯塔西娅2",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "CardMoved"
+              ],
+              "relationType": "TargetOther",
+              "timing": "On",
+              "validZones": [
+                "Field"
+              ],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "7e1c8d2f-0169-4163-82d5-8c0a02e13f05",
+                "isEnabled": true,
+                "expression": "(context.triggeringEvent.MoveReason) != (\"Drawn\")"
+              },
+              {
+                "id": "e6a40e3a-ba0a-4060-8f08-90993b9239be",
+                "isEnabled": true,
+                "expression": "(context.triggeringEvent.ToZone) == (\"Hand\")"
+              },
+              {
+                "id": "mini-starlight-own-hand",
+                "isEnabled": true,
+                "expression": "context.triggeringEvent.MovedCard.ownerPlayerId == context.owner.playerId"
+              }
+            ],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.opponent.field.query((self.type == \"Follower\")).take(random (1))",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "Damage",
+                "parameters": {
+                  "DamageAmount": {
+                    "$type": "StaticValueConfig",
+                    "Value": 1
+                  },
+                  "DistributionMode": {
+                    "$type": "StaticValueConfig",
+                    "Value": "perTarget"
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": true,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          }
+        }
+      ],
+      "notes": [
+        "改为监听移动到己方手牌且非抽取的事件；显式保留己方归属限制。"
+      ]
+    },
+    {
+      "cardId": 1472650,
+      "name": "仲夏之心·佐藤心",
+      "sourceUpdatedAt": "2026-10-29T07:34:10.332Z",
+      "fields": {},
+      "abilities": [
+        {
+          "id": 1471406160,
+          "nameBefore": "仲夏之心·佐藤心触发",
+          "nameAfter": "仲夏之心·佐藤心触发",
+          "before": {
+            "name": "仲夏之心·佐藤心触发",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "summon"
+              ],
+              "relationType": "Any",
+              "timing": "On",
+              "validZones": [
+                "Field"
+              ],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "condition_1774582280155_jl8rw3bzb",
+                "expression": "(context.triggeringEvent.SummoningPlayer.playerId) == (context.owner.playerId)",
+                "isEnabled": true
+              }
+            ],
+            "targets": [],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "None",
+                "parameters": {},
+                "targetSelector": [],
+                "outputs": {
+                  "心": "context.triggeringEvent.SummonedCard.currentDefinition.cost"
+                },
+                "chainedAbilities": [
+                  {
+                    "name": "连锁能力1",
+                    "description": "",
+                    "abilityKeywords": [],
+                    "type": "Triggered",
+                    "trigger": {
+                      "eventTypes": [
+                        "EffectCompleted"
+                      ],
+                      "relationType": "Any",
+                      "timing": "On",
+                      "validZones": [],
+                      "revalidateZoneBeforeExecution": false
+                    },
+                    "conditions": [
+                      {
+                        "id": "condition_1774582362844_uof84qgcg",
+                        "expression": "(context.triggeringEvent.Outputs.心) == (2)",
+                        "isEnabled": true
+                      }
+                    ],
+                    "targets": [
+                      {
+                        "isEnabled": true,
+                        "targetHandlingStrategy": 0,
+                        "requireValidTarget": false,
+                        "query": {
+                          "sourcePoolExpression": "context.triggeringEvent.GeneratedCards",
+                          "operations": []
+                        },
+                        "playerChoiceOptions": null
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "isEnabled": true,
+                        "type": "SetKeyword",
+                        "parameters": {
+                          "Keyword": {
+                            "$type": "StaticValueConfig",
+                            "Value": "Drain"
+                          },
+                          "Operation": {
+                            "$type": "StaticValueConfig",
+                            "Value": "add"
+                          },
+                          "DurationType": {
+                            "$type": "StaticValueConfig",
+                            "Value": "permanent"
+                          },
+                          "DurationParameter": {
+                            "$type": "StaticValueConfig",
+                            "Value": 0
+                          }
+                        },
+                        "targetSelector": [],
+                        "outputs": {},
+                        "chainedAbilities": [],
+                        "repeatCount": 0,
+                        "repeatCountValue": null,
+                        "repeatCondition": null
+                      }
+                    ],
+                    "auras": [],
+                    "counterRegistrations": [],
+                    "playerCounterRegistrations": [],
+                    "broadcastOnTrigger": true,
+                    "buffDisplay": true,
+                    "isActive": true,
+                    "version": "1.0"
+                  },
+                  {
+                    "name": "连锁能力2",
+                    "description": "",
+                    "abilityKeywords": [],
+                    "type": "Triggered",
+                    "trigger": {
+                      "eventTypes": [
+                        "EffectCompleted"
+                      ],
+                      "relationType": "Any",
+                      "timing": "On",
+                      "validZones": [],
+                      "revalidateZoneBeforeExecution": false
+                    },
+                    "conditions": [
+                      {
+                        "id": "condition_1774582416092_ym82pc69w",
+                        "expression": "(context.triggeringEvent.Outputs.心) == (3)",
+                        "isEnabled": true
+                      }
+                    ],
+                    "targets": [
+                      {
+                        "isEnabled": true,
+                        "targetHandlingStrategy": 0,
+                        "requireValidTarget": false,
+                        "query": {
+                          "sourcePoolExpression": "context.triggeringEvent.GeneratedCards",
+                          "operations": []
+                        },
+                        "playerChoiceOptions": null
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "isEnabled": true,
+                        "type": "SetKeyword",
+                        "parameters": {
+                          "Keyword": {
+                            "$type": "StaticValueConfig",
+                            "Value": "Ward"
+                          },
+                          "Operation": {
+                            "$type": "StaticValueConfig",
+                            "Value": "add"
+                          },
+                          "DurationType": {
+                            "$type": "StaticValueConfig",
+                            "Value": "permanent"
+                          },
+                          "DurationParameter": {
+                            "$type": "StaticValueConfig",
+                            "Value": 0
+                          }
+                        },
+                        "targetSelector": [],
+                        "outputs": {},
+                        "chainedAbilities": [],
+                        "repeatCount": 0,
+                        "repeatCountValue": null,
+                        "repeatCondition": null
+                      }
+                    ],
+                    "auras": [],
+                    "counterRegistrations": [],
+                    "playerCounterRegistrations": [],
+                    "broadcastOnTrigger": true,
+                    "buffDisplay": true,
+                    "isActive": true,
+                    "version": "1.0"
+                  },
+                  {
+                    "name": "连锁能力3",
+                    "description": "",
+                    "abilityKeywords": [],
+                    "type": "Triggered",
+                    "trigger": {
+                      "eventTypes": [
+                        "EffectCompleted"
+                      ],
+                      "relationType": "Any",
+                      "timing": "On",
+                      "validZones": [],
+                      "revalidateZoneBeforeExecution": false
+                    },
+                    "conditions": [
+                      {
+                        "id": "condition_1774582446700_z8poq72ge",
+                        "expression": "(context.triggeringEvent.Outputs.心) == (4)",
+                        "isEnabled": true
+                      }
+                    ],
+                    "targets": [
+                      {
+                        "isEnabled": true,
+                        "targetHandlingStrategy": 0,
+                        "requireValidTarget": false,
+                        "query": {
+                          "sourcePoolExpression": "context.triggeringEvent.GeneratedCards",
+                          "operations": []
+                        },
+                        "playerChoiceOptions": null
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "isEnabled": true,
+                        "type": "SetKeyword",
+                        "parameters": {
+                          "Keyword": {
+                            "$type": "StaticValueConfig",
+                            "Value": "Shield"
+                          },
+                          "Operation": {
+                            "$type": "StaticValueConfig",
+                            "Value": "add"
+                          },
+                          "DurationType": {
+                            "$type": "StaticValueConfig",
+                            "Value": "permanent"
+                          },
+                          "DurationParameter": {
+                            "$type": "StaticValueConfig",
+                            "Value": 0
+                          }
+                        },
+                        "targetSelector": [],
+                        "outputs": {},
+                        "chainedAbilities": [],
+                        "repeatCount": 0,
+                        "repeatCountValue": null,
+                        "repeatCondition": null
+                      }
+                    ],
+                    "auras": [],
+                    "counterRegistrations": [],
+                    "playerCounterRegistrations": [],
+                    "broadcastOnTrigger": true,
+                    "buffDisplay": true,
+                    "isActive": true,
+                    "version": "1.0"
+                  }
+                ],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": true,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          },
+          "after": {
+            "name": "仲夏之心·佐藤心触发",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "summon"
+              ],
+              "relationType": "Any",
+              "timing": "On",
+              "validZones": [
+                "Field"
+              ],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "35d2dff4-1984-48a8-b071-c8c8b81df817",
+                "isEnabled": true,
+                "expression": "(context.triggeringEvent.SummoningPlayer.playerId) == (context.owner.playerId)"
+              },
+              {
+                "id": "a2d06972-6115-45de-8cd2-d7ba12699c8c",
+                "isEnabled": true,
+                "expression": "(context.triggeringEvent.SummonedCard.cardType) == (\"Follower\")"
+              }
+            ],
+            "targets": [],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "None",
+                "parameters": {},
+                "targetSelector": [],
+                "outputs": {
+                  "心": "context.triggeringEvent.SummonedCard.currentDefinition.cost",
+                  "心随从": "context.triggeringEvent.SummonedCard.instanceId"
+                },
+                "chainedAbilities": [
+                  {
+                    "name": "连锁能力1",
+                    "description": "",
+                    "abilityKeywords": [],
+                    "type": "Triggered",
+                    "trigger": {
+                      "eventTypes": [
+                        "EffectCompleted"
+                      ],
+                      "relationType": "Any",
+                      "timing": "On",
+                      "validZones": [],
+                      "revalidateZoneBeforeExecution": false
+                    },
+                    "conditions": [
+                      {
+                        "id": "condition_1774582362844_uof84qgcg",
+                        "expression": "(context.triggeringEvent.Outputs.心) == (2)",
+                        "isEnabled": true
+                      }
+                    ],
+                    "targets": [
+                      {
+                        "isEnabled": true,
+                        "targetHandlingStrategy": 0,
+                        "requireValidTarget": false,
+                        "query": {
+                          "sourcePoolExpression": "context.owner.field.query(self.instanceId == context.triggeringEvent.Outputs.心随从)",
+                          "operations": []
+                        },
+                        "playerChoiceOptions": null
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "isEnabled": true,
+                        "type": "SetKeyword",
+                        "parameters": {
+                          "Keyword": {
+                            "$type": "StaticValueConfig",
+                            "Value": "Drain"
+                          },
+                          "Operation": {
+                            "$type": "StaticValueConfig",
+                            "Value": "add"
+                          },
+                          "DurationType": {
+                            "$type": "StaticValueConfig",
+                            "Value": "permanent"
+                          },
+                          "DurationParameter": {
+                            "$type": "StaticValueConfig",
+                            "Value": 0
+                          }
+                        },
+                        "targetSelector": [],
+                        "outputs": {},
+                        "chainedAbilities": [],
+                        "repeatCount": 0,
+                        "repeatCountValue": null,
+                        "repeatCondition": null
+                      }
+                    ],
+                    "auras": [],
+                    "counterRegistrations": [],
+                    "playerCounterRegistrations": [],
+                    "broadcastOnTrigger": false,
+                    "buffDisplay": true,
+                    "isActive": true,
+                    "version": "1.0"
+                  },
+                  {
+                    "name": "连锁能力2",
+                    "description": "",
+                    "abilityKeywords": [],
+                    "type": "Triggered",
+                    "trigger": {
+                      "eventTypes": [
+                        "EffectCompleted"
+                      ],
+                      "relationType": "Any",
+                      "timing": "On",
+                      "validZones": [],
+                      "revalidateZoneBeforeExecution": false
+                    },
+                    "conditions": [
+                      {
+                        "id": "condition_1774582416092_ym82pc69w",
+                        "expression": "(context.triggeringEvent.Outputs.心) == (3)",
+                        "isEnabled": true
+                      }
+                    ],
+                    "targets": [
+                      {
+                        "isEnabled": true,
+                        "targetHandlingStrategy": 0,
+                        "requireValidTarget": false,
+                        "query": {
+                          "sourcePoolExpression": "context.owner.field.query(self.instanceId == context.triggeringEvent.Outputs.心随从)",
+                          "operations": []
+                        },
+                        "playerChoiceOptions": null
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "isEnabled": true,
+                        "type": "SetKeyword",
+                        "parameters": {
+                          "Keyword": {
+                            "$type": "StaticValueConfig",
+                            "Value": "Ward"
+                          },
+                          "Operation": {
+                            "$type": "StaticValueConfig",
+                            "Value": "add"
+                          },
+                          "DurationType": {
+                            "$type": "StaticValueConfig",
+                            "Value": "permanent"
+                          },
+                          "DurationParameter": {
+                            "$type": "StaticValueConfig",
+                            "Value": 0
+                          }
+                        },
+                        "targetSelector": [],
+                        "outputs": {},
+                        "chainedAbilities": [],
+                        "repeatCount": 0,
+                        "repeatCountValue": null,
+                        "repeatCondition": null
+                      }
+                    ],
+                    "auras": [],
+                    "counterRegistrations": [],
+                    "playerCounterRegistrations": [],
+                    "broadcastOnTrigger": false,
+                    "buffDisplay": true,
+                    "isActive": true,
+                    "version": "1.0"
+                  },
+                  {
+                    "name": "连锁能力3",
+                    "description": "",
+                    "abilityKeywords": [],
+                    "type": "Triggered",
+                    "trigger": {
+                      "eventTypes": [
+                        "EffectCompleted"
+                      ],
+                      "relationType": "Any",
+                      "timing": "On",
+                      "validZones": [],
+                      "revalidateZoneBeforeExecution": false
+                    },
+                    "conditions": [
+                      {
+                        "id": "condition_1774582446700_z8poq72ge",
+                        "expression": "(context.triggeringEvent.Outputs.心) == (4)",
+                        "isEnabled": true
+                      }
+                    ],
+                    "targets": [
+                      {
+                        "isEnabled": true,
+                        "targetHandlingStrategy": 0,
+                        "requireValidTarget": false,
+                        "query": {
+                          "sourcePoolExpression": "context.owner.field.query(self.instanceId == context.triggeringEvent.Outputs.心随从)",
+                          "operations": []
+                        },
+                        "playerChoiceOptions": null
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "isEnabled": true,
+                        "type": "SetKeyword",
+                        "parameters": {
+                          "Keyword": {
+                            "$type": "StaticValueConfig",
+                            "Value": "Shield"
+                          },
+                          "Operation": {
+                            "$type": "StaticValueConfig",
+                            "Value": "add"
+                          },
+                          "DurationType": {
+                            "$type": "StaticValueConfig",
+                            "Value": "permanent"
+                          },
+                          "DurationParameter": {
+                            "$type": "StaticValueConfig",
+                            "Value": 0
+                          }
+                        },
+                        "targetSelector": [],
+                        "outputs": {},
+                        "chainedAbilities": [],
+                        "repeatCount": 0,
+                        "repeatCountValue": null,
+                        "repeatCondition": null
+                      }
+                    ],
+                    "auras": [],
+                    "counterRegistrations": [],
+                    "playerCounterRegistrations": [],
+                    "broadcastOnTrigger": false,
+                    "buffDisplay": true,
+                    "isActive": true,
+                    "version": "1.0"
+                  }
+                ],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": true,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          }
+        }
+      ],
+      "notes": [
+        "限定随从进场，按召唤随从的实例ID绑定三个连锁能力，适配新版输出和目标池格式。"
+      ]
+    },
+    {
+      "cardId": 1472651,
+      "name": "最初的提尔纳诺·神崎兰子",
+      "sourceUpdatedAt": "2026-10-16T03:30:10.040Z",
+      "fields": {},
+      "abilities": [
+        {
+          "id": 1471406164,
+          "nameBefore": "最初的提尔纳诺·神崎兰子1",
+          "nameAfter": "最初的提尔纳诺·神崎兰子1",
+          "before": {
+            "name": "最初的提尔纳诺·神崎兰子1",
+            "description": "",
+            "abilityKeywords": [
+              {
+                "keyword": "Fanfare",
+                "value": null
+              }
+            ],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "playCard"
+              ],
+              "relationType": "TargetSelf",
+              "timing": "On",
+              "validZones": [],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.owner.field.query((self.type == \"Follower\")).query(((self.instanceId) != (context.sourceCard.instanceId))).query((contains(self.tribe, (\"灰姑娘\"))))",
+                  "operations": []
+                },
+                "playerChoiceOptions": {
+                  "isRequired": true,
+                  "minCount": 1,
+                  "maxCount": 1
+                }
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "None",
+                "parameters": {},
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null,
+                "chainedAbilities": [
+                  {
+                    "name": "连锁能力1",
+                    "description": "",
+                    "abilityKeywords": [],
+                    "type": "Triggered",
+                    "trigger": {
+                      "eventTypes": [
+                        "EffectCompleted"
+                      ],
+                      "relationType": "Any",
+                      "timing": "On",
+                      "validZones": [],
+                      "revalidateZoneBeforeExecution": false
+                    },
+                    "conditions": [],
+                    "targets": [
+                      {
+                        "isEnabled": true,
+                        "targetHandlingStrategy": 0,
+                        "requireValidTarget": false,
+                        "query": {
+                          "sourcePoolExpression": "context.owner.field.query(self.type == \"Follower\")",
+                          "operations": []
+                        },
+                        "playerChoiceOptions": null
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "isEnabled": true,
+                        "type": "Transform",
+                        "parameters": {
+                          "TargetCardDefinitionId": {
+                            "$type": "FormulaValueConfig",
+                            "Formula": "context.triggeringEvent.Outputs.兰子"
+                          },
+                          "CardSourceMode": {
+                            "$type": "StaticValueConfig",
+                            "Value": "definition"
+                          }
+                        },
+                        "targetSelector": [],
+                        "outputs": {},
+                        "chainedAbilities": [],
+                        "repeatCount": 0,
+                        "repeatCountValue": null,
+                        "repeatCondition": null
+                      }
+                    ],
+                    "auras": [],
+                    "counterRegistrations": [],
+                    "playerCounterRegistrations": [],
+                    "broadcastOnTrigger": true,
+                    "buffDisplay": true,
+                    "isActive": true,
+                    "version": "1.0"
+                  }
+                ],
+                "outputs": {
+                  "兰子": "sum(context.resolvedTargetCards.target1.select((self.currentDefinition.id)))"
+                },
+                "targetSelector": []
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": true,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          },
+          "after": {
+            "name": "最初的提尔纳诺·神崎兰子1",
+            "description": "",
+            "abilityKeywords": [
+              {
+                "keyword": "Fanfare",
+                "value": null
+              }
+            ],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "playCard"
+              ],
+              "relationType": "TargetSelf",
+              "timing": "On",
+              "validZones": [],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.owner.field.query((self.type == \"Follower\")).query(((self.instanceId) != (context.sourceCard.instanceId))).query((contains(self.tribe, (\"灰姑娘\"))))",
+                  "operations": []
+                },
+                "playerChoiceOptions": {
+                  "isRequired": true,
+                  "minCount": 1,
+                  "maxCount": 1
+                }
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "None",
+                "parameters": {},
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null,
+                "chainedAbilities": [
+                  {
+                    "name": "连锁能力1",
+                    "description": "",
+                    "abilityKeywords": [],
+                    "type": "Triggered",
+                    "trigger": {
+                      "eventTypes": [
+                        "EffectCompleted"
+                      ],
+                      "relationType": "Any",
+                      "timing": "On",
+                      "validZones": [],
+                      "revalidateZoneBeforeExecution": false
+                    },
+                    "conditions": [
+                      {
+                        "id": "repair-lanko-empty",
+                        "isEnabled": true,
+                        "expression": "context.triggeringEvent.Outputs.兰子 != 0"
+                      }
+                    ],
+                    "targets": [
+                      {
+                        "isEnabled": true,
+                        "targetHandlingStrategy": 0,
+                        "requireValidTarget": false,
+                        "query": {
+                          "sourcePoolExpression": "context.owner.field.query(self.type == \"Follower\")",
+                          "operations": []
+                        },
+                        "playerChoiceOptions": null
+                      }
+                    ],
+                    "effects": [
+                      {
+                        "isEnabled": true,
+                        "type": "Transform",
+                        "parameters": {
+                          "TargetCardDefinitionId": {
+                            "$type": "FormulaValueConfig",
+                            "Formula": "context.triggeringEvent.Outputs.兰子"
+                          },
+                          "CardSourceMode": {
+                            "$type": "StaticValueConfig",
+                            "Value": "definition"
+                          }
+                        },
+                        "targetSelector": [],
+                        "outputs": {},
+                        "chainedAbilities": [],
+                        "repeatCount": 0,
+                        "repeatCountValue": null,
+                        "repeatCondition": null
+                      }
+                    ],
+                    "auras": [],
+                    "counterRegistrations": [],
+                    "playerCounterRegistrations": [],
+                    "broadcastOnTrigger": true,
+                    "buffDisplay": true,
+                    "isActive": true,
+                    "version": "1.0"
+                  }
+                ],
+                "outputs": {
+                  "兰子": "sum(context.resolvedTargetCards.target1.select((self.currentDefinition.id)))"
+                },
+                "targetSelector": []
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": true,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          }
+        }
+      ],
+      "notes": [
+        "没有可用变身目标时跳过连锁。"
+      ]
+    },
+    {
+      "cardId": 1472921,
+      "name": "纹章：黎明骑士·高垣枫",
+      "sourceUpdatedAt": "2026-10-28T04:43:55.107Z",
+      "fields": {},
+      "abilities": [
+        {
+          "id": 1471406696,
+          "nameBefore": "纹章：黎明骑士·高垣枫1",
+          "nameAfter": "纹章：黎明骑士·高垣枫1",
+          "before": {
+            "name": "纹章：黎明骑士·高垣枫1",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "summon"
+              ],
+              "relationType": "Any",
+              "timing": "On",
+              "validZones": [],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "condition_1775132554143_6ixrwwo8u",
+                "expression": "(context.triggeringEvent.SummoningPlayer.playerId) == (context.owner.playerId)",
+                "isEnabled": true
+              },
+              {
+                "id": "condition_1775132851152_1aul6f8iu",
+                "expression": "(contains(byType(context.eventHistory.events, (\"PlayCard\")).take(last (1)).select((self.PlayedCard.instanceId)), (context.triggeringEvent.SummonedCard.instanceId))) == (false)",
+                "isEnabled": true
+              }
+            ],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.triggeringEvent.SummonedCard",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "ModifyStatus",
+                "parameters": {
+                  "AttackModifier": {
+                    "$type": "StaticValueConfig",
+                    "Value": 2
+                  },
+                  "HealthModifier": {
+                    "$type": "StaticValueConfig",
+                    "Value": 1
+                  },
+                  "DurationType": {
+                    "$type": "StaticValueConfig",
+                    "Value": "permanent"
+                  },
+                  "DurationParameter": {
+                    "$type": "StaticValueConfig",
+                    "Value": 0
+                  },
+                  "ModifierLayer": {
+                    "$type": "StaticValueConfig",
+                    "Value": "additive"
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              },
+              {
+                "isEnabled": true,
+                "type": "SetKeyword",
+                "parameters": {
+                  "Keyword": {
+                    "$type": "StaticValueConfig",
+                    "Value": "Rush"
+                  },
+                  "Operation": {
+                    "$type": "StaticValueConfig",
+                    "Value": "add"
+                  },
+                  "DurationType": {
+                    "$type": "StaticValueConfig",
+                    "Value": "permanent"
+                  },
+                  "DurationParameter": {
+                    "$type": "StaticValueConfig",
+                    "Value": 0
+                  }
+                },
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null,
+                "chainedAbilities": [],
+                "outputs": {},
+                "targetSelector": []
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": true,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          },
+          "after": {
+            "name": "纹章：黎明骑士·高垣枫1",
+            "description": "",
+            "abilityKeywords": [],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "summon"
+              ],
+              "relationType": "Any",
+              "timing": "On",
+              "validZones": [],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [
+              {
+                "id": "condition_1775132554143_6ixrwwo8u",
+                "expression": "(context.triggeringEvent.SummoningPlayer.playerId) == (context.owner.playerId)",
+                "isEnabled": true
+              },
+              {
+                "id": "condition_1775132851152_1aul6f8iu",
+                "expression": "(context.triggeringEvent.Reason) == (\"Ability\")",
+                "isEnabled": true
+              }
+            ],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.triggeringEvent.SummonedCard",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "ModifyStatus",
+                "parameters": {
+                  "AttackModifier": {
+                    "$type": "StaticValueConfig",
+                    "Value": 2
+                  },
+                  "HealthModifier": {
+                    "$type": "StaticValueConfig",
+                    "Value": 1
+                  },
+                  "DurationType": {
+                    "$type": "StaticValueConfig",
+                    "Value": "permanent"
+                  },
+                  "DurationParameter": {
+                    "$type": "StaticValueConfig",
+                    "Value": 0
+                  },
+                  "ModifierLayer": {
+                    "$type": "StaticValueConfig",
+                    "Value": "additive"
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              },
+              {
+                "isEnabled": true,
+                "type": "SetKeyword",
+                "parameters": {
+                  "Keyword": {
+                    "$type": "StaticValueConfig",
+                    "Value": "Rush"
+                  },
+                  "Operation": {
+                    "$type": "StaticValueConfig",
+                    "Value": "add"
+                  },
+                  "DurationType": {
+                    "$type": "StaticValueConfig",
+                    "Value": "permanent"
+                  },
+                  "DurationParameter": {
+                    "$type": "StaticValueConfig",
+                    "Value": 0
+                  }
+                },
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null,
+                "chainedAbilities": [],
+                "outputs": {},
+                "targetSelector": []
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": true,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          }
+        }
+      ],
+      "notes": [
+        "使用召唤原因识别因能力进场。"
+      ]
+    },
+    {
+      "cardId": 1474098,
+      "name": "救世圣剑",
+      "sourceUpdatedAt": "2026-10-29T06:22:47.317Z",
+      "fields": {},
+      "abilities": [
+        {
+          "id": 1471409026,
+          "nameBefore": "救世圣剑-启动",
+          "nameAfter": "救世圣剑-启动",
+          "before": {
+            "name": "救世圣剑-启动",
+            "description": "",
+            "abilityKeywords": [
+              {
+                "keyword": "Act",
+                "value": 1
+              }
+            ],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "act"
+              ],
+              "relationType": "TargetSelf",
+              "timing": "On",
+              "validZones": [],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [],
+            "targets": [],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "SetCountdown",
+                "parameters": {
+                  "ChangeAmount": {
+                    "$type": "StaticValueConfig",
+                    "Value": -1
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              },
+              {
+                "isEnabled": true,
+                "type": "None",
+                "parameters": {},
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null,
+                "chainedAbilities": [
+                  {
+                    "name": "连锁能力1",
+                    "description": "",
+                    "abilityKeywords": [],
+                    "type": "Triggered",
+                    "trigger": {
+                      "eventTypes": [
+                        "EffectCompleted"
+                      ],
+                      "relationType": "Any",
+                      "timing": "On",
+                      "validZones": [],
+                      "revalidateZoneBeforeExecution": false
+                    },
+                    "conditions": [
+                      {
+                        "id": "condition_1781737486630_1vb24bco0",
+                        "expression": "(count(context.owner.field.query(((self.cardType) == (\"Follower\"))).query((contains(self.keywords, (\"Ward\")))))) > (0)",
+                        "isEnabled": true
+                      }
+                    ],
+                    "targets": [],
+                    "effects": [
+                      {
+                        "isEnabled": true,
+                        "type": "SetPP",
+                        "parameters": {
+                          "ModifyAmount": {
+                            "$type": "StaticValueConfig",
+                            "Value": 3
+                          },
+                          "PlayerScope": {
+                            "$type": "StaticValueConfig",
+                            "Value": "self"
+                          }
+                        },
+                        "targetSelector": [],
+                        "outputs": {},
+                        "chainedAbilities": [],
+                        "repeatCount": 0,
+                        "repeatCountValue": null,
+                        "repeatCondition": null
+                      }
+                    ],
+                    "auras": [],
+                    "counterRegistrations": [],
+                    "playerCounterRegistrations": [],
+                    "broadcastOnTrigger": false,
+                    "buffDisplay": true,
+                    "isActive": true,
+                    "version": "1.0"
+                  }
+                ],
+                "outputs": {},
+                "targetSelector": []
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": true,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          },
+          "after": {
+            "name": "救世圣剑-启动",
+            "description": "",
+            "abilityKeywords": [
+              {
+                "keyword": "Act",
+                "value": 1
+              }
+            ],
+            "type": "Triggered",
+            "trigger": {
+              "eventTypes": [
+                "act"
+              ],
+              "relationType": "TargetSelf",
+              "timing": "On",
+              "validZones": [],
+              "revalidateZoneBeforeExecution": false
+            },
+            "conditions": [],
+            "targets": [
+              {
+                "isEnabled": true,
+                "targetHandlingStrategy": 0,
+                "requireValidTarget": false,
+                "query": {
+                  "sourcePoolExpression": "context.SourceCard",
+                  "operations": []
+                },
+                "playerChoiceOptions": null
+              }
+            ],
+            "effects": [
+              {
+                "isEnabled": true,
+                "type": "SetCountdown",
+                "parameters": {
+                  "ChangeAmount": {
+                    "$type": "StaticValueConfig",
+                    "Value": -1
+                  }
+                },
+                "targetSelector": [],
+                "outputs": {},
+                "chainedAbilities": [],
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null
+              },
+              {
+                "isEnabled": true,
+                "type": "None",
+                "parameters": {},
+                "repeatCount": 0,
+                "repeatCountValue": null,
+                "repeatCondition": null,
+                "chainedAbilities": [
+                  {
+                    "name": "连锁能力1",
+                    "description": "",
+                    "abilityKeywords": [],
+                    "type": "Triggered",
+                    "trigger": {
+                      "eventTypes": [
+                        "EffectCompleted"
+                      ],
+                      "relationType": "Any",
+                      "timing": "On",
+                      "validZones": [],
+                      "revalidateZoneBeforeExecution": false
+                    },
+                    "conditions": [
+                      {
+                        "id": "condition_1781737486630_1vb24bco0",
+                        "expression": "(count(context.owner.field.query(((self.cardType) == (\"Follower\"))).query((contains(self.keywords, (\"Ward\")))))) > (0)",
+                        "isEnabled": true
+                      }
+                    ],
+                    "targets": [],
+                    "effects": [
+                      {
+                        "isEnabled": true,
+                        "type": "SetPP",
+                        "parameters": {
+                          "ModifyAmount": {
+                            "$type": "StaticValueConfig",
+                            "Value": 3
+                          },
+                          "PlayerScope": {
+                            "$type": "StaticValueConfig",
+                            "Value": "self"
+                          }
+                        },
+                        "targetSelector": [],
+                        "outputs": {},
+                        "chainedAbilities": [],
+                        "repeatCount": 0,
+                        "repeatCountValue": null,
+                        "repeatCondition": null
+                      }
+                    ],
+                    "auras": [],
+                    "counterRegistrations": [],
+                    "playerCounterRegistrations": [],
+                    "broadcastOnTrigger": false,
+                    "buffDisplay": true,
+                    "isActive": true,
+                    "version": "1.0"
+                  }
+                ],
+                "outputs": {},
+                "targetSelector": []
+              }
+            ],
+            "auras": [],
+            "counterRegistrations": [],
+            "playerCounterRegistrations": [],
+            "broadcastOnTrigger": true,
+            "buffDisplay": true,
+            "isActive": true,
+            "version": "1.0"
+          }
+        }
+      ],
+      "notes": [
+        "启动补上本卡牌目标，使倒数减少正确作用于自身。"
+      ]
+    }
+  ],
+  "equivalentDifferences": [
+    {
+      "cardId": 1473372,
+      "name": "敌托邦的庇护",
+      "reason": "新版原生支持单个卡牌ID转为ID列表；保留合法的原生DSL，不复制Mini的动态数组语法。"
+    },
+    {
+      "cardId": 1473971,
+      "name": "心灵光辉•岛村卯月",
+      "reason": "缺省的removeAfterUse与false等价。"
+    },
+    {
+      "cardId": 1474035,
+      "name": "花雾春光",
+      "reason": "缺省的removeAfterUse与false等价。"
+    }
+  ]
+}

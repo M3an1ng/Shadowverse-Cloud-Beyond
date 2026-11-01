@@ -1,3 +1,4 @@
+import { confirmDialog } from '../siteDialog.js';
 // src/components/ConditionConfigEditor.js - 条件配置编辑器 (Refactored)
 //
 // 相关文档:
@@ -296,6 +297,8 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
             },
             {
                 expectedType: 'Boolean',
+                selfType: this.options?.selfType || null,
+                fixedRootContext: this.options?.selfType ? {name:'self',displayName:'当前项',typeName:this.options.selfType,description:'亡召池中正在筛选的候选随从'} : null,
                 triggeringEventContext: {
                     eventTypes: this.options?.trigger?.eventTypes || [],
                     timing: this.options?.trigger?.timing || 'On',
@@ -335,8 +338,8 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
      * 移除条件
      * @param {number} index - 条件索引
      */
-    removeCondition(index) {
-        if (confirm('确定要删除这个条件吗？')) {
+    async removeCondition(index) {
+        if (await confirmDialog('确定要删除这个条件吗？')) {
             // 清理对应的DSL编辑器
             const editorKey = `condition_${index}`;
             this.dslEditors.delete(editorKey);

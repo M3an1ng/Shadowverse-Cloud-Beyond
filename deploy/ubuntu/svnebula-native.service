@@ -1,0 +1,25 @@
+[Unit]
+Description=SV Nebula Cloud Beyond
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=svnebula
+Group=svnebula
+WorkingDirectory=/opt/svnebula-native/current/Server
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=ASPNETCORE_URLS=http://127.0.0.1:5173
+Environment="ConnectionStrings__DefaultConnection=Data Source=/opt/svnebula-native/shared/data/shadowverse.db"
+Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
+ExecStart=/usr/bin/dotnet /opt/svnebula-native/current/Server/ShadowverseBeyond.Server.dll
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=45
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

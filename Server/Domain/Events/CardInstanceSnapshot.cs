@@ -114,6 +114,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [DslExposable("土之印", Description = "earthsigil 计数器数值")]
         public int Earthsigil { get; init; }
 
+        [DslExposable("证据数", Description = "证据护符的证据数")]
+        public int Evidence { get; init; }
+
         [DslExposable("卡名列表", Description = "卡牌可被视为的名称列表（包含基础名称）")]
         public IReadOnlyList<string> CardNames { get; init; } = Array.Empty<string>();
 
@@ -159,6 +162,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 CounterMap = new Dictionary<string, int>(card.CounterMap ?? new Dictionary<string, int>()),
                 Spellboost = card.Spellboost,
                 Earthsigil = card.Earthsigil,
+                Evidence = card.Evidence,
                 CardNames = card.CardNames?.ToList() ?? new List<string>(),
                 Tribe = card.Tribe?.ToList() ?? new List<string>()
             };

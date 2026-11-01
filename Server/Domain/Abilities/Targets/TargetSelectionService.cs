@@ -539,7 +539,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                     return true;
                 }
 
-                return !card.HasKeyword(CardKeyword.EarthSigil) && !card.HasKeyword(CardKeyword.Aura) && !card.HasKeyword(CardKeyword.Ambush);
+                return !card.HasKeyword(CardKeyword.EarthSigil) && !card.HasKeyword(CardKeyword.Evidence) && !card.HasKeyword(CardKeyword.Aura) && !card.HasKeyword(CardKeyword.Ambush);
             }).ToList();
         }
 

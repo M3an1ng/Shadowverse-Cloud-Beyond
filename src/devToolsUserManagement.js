@@ -1,9 +1,11 @@
+import { promptDialog } from './siteDialog.js';
 import { getUserSession, setUserSession, USER_SESSION_CHANGED_EVENT } from "./userSession.js";
 
 const USERS_ENDPOINT = "/api/users";
 const MIN_PASSWORD_LENGTH = 6;
 const MANAGED_ROLES = [
     { value: "Player", label: "普通用户", level: 10 },
+    { value: "Editor", label: "录卡编辑者", level: 50 },
     { value: "Admin", label: "管理员", level: 100 }
 ];
 
@@ -26,7 +28,7 @@ function resolvePermissionLevel(role) {
 }
 
 function roleLabel(role) {
-    return role === "Admin" ? "管理员" : "普通用户";
+    return MANAGED_ROLES.find(item => item.value === role)?.label || "普通用户";
 }
 
 async function readJsonResponse(response) {
@@ -390,9 +392,9 @@ class DevToolsUserManagement {
         return this.currentUsers.find(user => user.userId === targetUserId).coins;
     }
 
-    collectNewPassword(targetUserId) {
+    async collectNewPassword(targetUserId) {
         const username = this.resolveUsername(targetUserId);
-        const newPassword = window.prompt(`请输入用户 ${username} 的新密码（至少 ${MIN_PASSWORD_LENGTH} 位）`);
+        const newPassword = await promptDialog(`请输入用户 ${username} 的新密码（至少 ${MIN_PASSWORD_LENGTH} 位）`);
         if (newPassword == null) return null;
 
         const normalizedPassword = String(newPassword).trim();
@@ -401,7 +403,7 @@ class DevToolsUserManagement {
             return null;
         }
 
-        const confirmPassword = window.prompt(`请再次输入 ${username} 的新密码`);
+        const confirmPassword = await promptDialog(`请再次输入 ${username} 的新密码`);
         if (confirmPassword == null) return null;
 
         if (normalizedPassword !== String(confirmPassword).trim()) {
@@ -412,10 +414,10 @@ class DevToolsUserManagement {
         return normalizedPassword;
     }
 
-    collectNewCoins(targetUserId) {
+    async collectNewCoins(targetUserId) {
         const username = this.resolveUsername(targetUserId);
         const oldCoins = this.resolveUserCoins(targetUserId);
-        const rawValue = window.prompt(`请输入用户 ${username} 的金币数量（当前：${oldCoins}）`, String(oldCoins));
+        const rawValue = await promptDialog(`请输入用户 ${username} 的金币数量（当前：${oldCoins}）`, String(oldCoins));
         if (rawValue == null) return null;
 
         const normalized = String(rawValue).trim();
@@ -439,7 +441,7 @@ class DevToolsUserManagement {
         const session = getUserSession();
         if (session.mode !== "user" || !session.userId) return;
 
-        const newPassword = this.collectNewPassword(targetUserId);
+        const newPassword = await this.collectNewPassword(targetUserId);
         if (!newPassword) return;
 
         button.setAttribute("disabled", "disabled");
@@ -473,7 +475,7 @@ class DevToolsUserManagement {
         const session = getUserSession();
         if (session.mode !== "user" || !session.userId) return;
 
-        const payloadInput = this.collectNewCoins(targetUserId);
+        const payloadInput = await this.collectNewCoins(targetUserId);
         if (!payloadInput) return;
 
         button.setAttribute("disabled", "disabled");

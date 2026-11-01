@@ -1,0 +1,205 @@
+.pool-toolbar {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.pool-toolbar button {
+  background: linear-gradient(#263d4c, #14232f);
+  border: 1px solid #5b7385;
+  color: #d6e1e8;
+  padding: 10px 18px;
+  border-radius: 5px;
+  font: inherit;
+}
+.pool-toolbar select,
+.pool-pack-section input,
+.pool-rerolls input,
+.pool-single select {
+  background: #17232e;
+  color: #d4e0e9;
+  border: 1px solid #536575;
+  border-radius: 5px;
+  padding: 10px;
+  font: inherit;
+}
+.pool-pack-section {
+  border: 1px solid #3c4b59;
+  padding: 16px;
+  border-radius: 8px;
+}
+.pool-pack-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0 15px;
+}
+.pool-pack-grid .catalog-pagination {
+  grid-column: 1/-1;
+}
+.pool-rerolls {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 20px 0;
+}
+.pool-rerolls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pool-rerolls input {
+  width: 65px;
+}
+.pool-single-results {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 24px;
+  padding: 25px 0;
+}
+.pool-single-results .catalog-pagination {
+  grid-column: 1/-1;
+}
+.pool-single {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pool-single .catalog-face {
+  max-height: 300px;
+}
+.pool-single-results .catalog-face {
+  max-width: 210px;
+}
+.pool-single-results:empty {
+  display: none;
+}
+#take-two-admin[hidden] {
+  display: none !important;
+}
+@media (max-width: 1000px) {
+  .pool-single-results {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .pool-pack-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+/* Native DOM adapter for the Mini stylesheet above. */
+.entry-create-heading {
+  width: 100%;
+  flex-wrap: nowrap;
+  margin-bottom: 14px;
+  gap: 12px;
+}
+.entry-create-heading .mp-card-title {
+  margin: 0;
+  text-align: left;
+  white-space: nowrap;
+}
+.mp-card .entry-format-switch {
+  margin-left: auto;
+  flex: 0 0 auto;
+  width: auto;
+}
+.mp-card .entry-format-switch button {
+  width: auto;
+  min-width: 0;
+  padding: 7px 11px;
+  font-size: 12px;
+  letter-spacing: 0;
+  background: #141c23;
+  color: #a3b0b9;
+}
+.mp-card .entry-format-switch button[aria-pressed="true"] {
+  background: #203e4a;
+  color: #98e0e5;
+}
+.take-two-create-settings {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0;
+}
+.take-two-create-settings[hidden],
+#take-two-create[hidden],
+#mp-create-host[hidden] {
+  display: none !important;
+}
+.take-two-create-settings select,
+.take-two-create-settings button {
+  width: auto !important;
+  padding: 9px 12px;
+  background: #17252e;
+  color: #cfdae0;
+  border: 1px solid #415663;
+  border-radius: 4px;
+  font-size: 14px;
+}
+.take-two-create-settings select {
+  flex: 1;
+}
+.take-two-stage-error {
+  color: #ef9393;
+  text-align: center;
+}
+.mp-deck-switcher .take-two-create-settings {
+  justify-content: center;
+  margin: 0;
+  gap: 10px;
+}
+.mp-deck-switcher .take-two-create-settings select {
+  max-width: 230px;
+  min-width: 180px;
+}
+.mp-deck-controls[hidden],
+#mp-deck-output[hidden] {
+  display: none !important;
+}
+
+.as2p-rules {
+  color: #c6c6c6;
+  line-height: 1.6;
+  margin: 0 0 16px;
+}
+.as2p-neutral-assignments {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 10px;
+  border: 1px solid #444;
+  color: #ddd;
+}
+.as2p-neutral-assignments legend {
+  padding: 0 5px;
+  font-size: 14px;
+}
+.as2p-neutral-assignments label {
+  min-width: 0;
+  font-size: 13px;
+}
+
+.as2p-neutral-assignments {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+.as2p-neutral-assignments label.catalog-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  white-space: nowrap;
+}
+.as2p-neutral-assignments input[type="checkbox"] {
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px;
+  flex: 0 0 20px;
+}
+.as2p-neutral-assignments input[type="checkbox"]:checked {
+  background: #252a30
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m4 12 5 5L21 4' fill='none' stroke='%23ddc891' stroke-width='3'/%3E%3C/svg%3E")
+    center/90% no-repeat !important;
+}

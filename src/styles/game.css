@@ -2528,7 +2528,7 @@
 }
 
 .card.enhance-active .cost::after {
-    content: "ENH";
+    content: var(--play-mode-label, "ENH");
     position: absolute;
     top: -10px;
     right: -12px;
@@ -2640,6 +2640,15 @@
 
 .card .earthsigil {
     color: #f59e0b;
+}
+
+.card .evidence {
+    color: #60a5fa;
+    font-weight: 700;
+    font-size: 14px;
+    line-height: 1.2;
+    padding: 2px 6px;
+    text-shadow: 0 0 5px rgba(0, 0, 0, 0.9);
 }
 
 .card .attack {
@@ -3175,7 +3184,7 @@
 }
 
 .slate-cost-badge-embedded.enhance-active::after {
-    content: "ENH";
+    content: attr(data-play-mode-label);
     position: absolute;
     top: -12px;
     right: -14px;
@@ -3968,4 +3977,29 @@ img.badge-icon {
     height: 100%;
     object-fit: cover;
     filter: none;
+}
+
+/* Mini alternate payment treatment: green cost, ACC / CRY pill. */
+.card.alternate-active .cost,
+.card.amulet.alternate-active .cost,
+.slate-cost-badge-embedded.alternate-active {
+    background: linear-gradient(150deg, #69df8d, #199d61);
+    border: 2px solid #69dca1;
+    color: #fff;
+    border-radius: 10px;
+    box-shadow: 0 0 5px #4ee199aa;
+    transform: none;
+    rotate: none;
+    overflow: visible;
+}
+.card.enhance-active .cost::after { content: var(--play-mode-label, "ENH"); }
+
+.card.alternate-active .cost::after,
+.slate-cost-badge-embedded.alternate-active::after {
+    background: #d5ffe4;
+    color: #0c4426;
+    border-color: #69dca1;
+    font: 700 10px/1.15 'Segoe UI', sans-serif;
+    letter-spacing: .5px;
+    transform: none;
 }

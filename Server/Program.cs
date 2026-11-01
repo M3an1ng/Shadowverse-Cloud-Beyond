@@ -1,4 +1,4 @@
-using Scrutor; // Added for assembly scanning registration
+﻿using Scrutor; // Added for assembly scanning registration
 using AutoMapper; // Added for IMapper
 using ShadowverseBeyond.Server.Dtos; // Added for DTO types like CardDefinitionDto
 using Serilog; // Added for Serilog configuration
@@ -411,6 +411,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
 
     // Register System Abilities as IAbility
     builder.Services.AddSingleton<IAbility, ShadowverseBeyond.Server.Domain.Abilities.System.EarthSigilSystemAbility>();
+    builder.Services.AddSingleton<IAbility, ShadowverseBeyond.Server.Domain.Abilities.System.EvidenceSystemAbility>();
     // builder.Services.AddSingleton<IAbility, EvolveAbility>(); // Temporarily disabled after refactoring the evolve flow
     // Register MulliganAbility's dependency to be injected into its constructor
     Log.Information("Registered System Abilities (EndTurn, PlayCard, Attack, Evolve, Mulligan) and their dependencies as Singleton.");
@@ -525,6 +526,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
 
 
     Log.Information("All services registered (or skipped). Attempting builder.Build()..."); // Modified Log
+    builder.Services.AddSingleton<ShadowverseBeyond.Server.Services.TakeTwoService>();
     var app = builder.Build();
     Log.Information("builder.Build() completed.");
 
@@ -548,6 +550,34 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     {
         app.UseSwagger();   // Use standard .NET 8 middleware
         app.UseSwaggerUI(); // Use standard .NET 8 middleware
+    }
+
+    if (!app.Environment.IsDevelopment())
+    {
+        app.Use(async (context, next) =>
+        {
+            context.Response.Headers["X-Robots-Tag"] = "noindex, nofollow, noarchive";
+            var requestPath = context.Request.Path;
+            // The frontend root is the publish directory's parent. Do not expose
+            // the server's configuration or data files through that file provider.
+            if (requestPath.StartsWithSegments("/Server")
+                || requestPath.StartsWithSegments("/data")
+                   && !string.Equals(requestPath.Value, "/data/about-changelog.json", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+            context.Response.OnStarting(() =>
+            {
+                if (requestPath == "/" || requestPath == "/index.html"
+                    || requestPath == "/index.prod.html" || requestPath == "/sw.js")
+                {
+                    context.Response.Headers[HeaderNames.CacheControl] = "no-cache";
+                }
+                return Task.CompletedTask;
+            });
+            await next();
+        });
     }
 
     app.UseResponseCompression();
@@ -717,6 +747,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
             logger.LogInformation("Invoking DataSeeder to ensure database is seeded...");
             await DataSeeder.SeedDatabaseAsync(app);
             logger.LogInformation("DataSeeder invocation complete.");
+            await ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.Load(context);
 
             // Seed CardAbility data
         }

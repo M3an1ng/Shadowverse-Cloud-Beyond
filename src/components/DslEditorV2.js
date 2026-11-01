@@ -1,3 +1,4 @@
+import { confirmDialog } from '../siteDialog.js';
 import { MetadataDrivenComponent } from "./MetadataDrivenComponent.js";
 import { DslEditor } from "./DslEditor.js";
 import "./DslEditorV2.css";
@@ -279,9 +280,9 @@ export class DslEditorV2 extends DslEditor {
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'btn-tech-v2 btn-danger full-width';
         deleteBtn.textContent = 'DELETE NODE';
-        deleteBtn.onclick = () => {
+        deleteBtn.onclick = async () => {
             // Implement delete logic (reuse clearWorkspace or specific delete)
-            if (confirm('Delete this node?')) {
+            if (await confirmDialog('Delete this node?')) {
                 // Simple clear for now, ideally should be context aware delete
                 this.clearWorkspace();
             }

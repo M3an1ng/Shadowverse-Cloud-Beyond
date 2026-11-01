@@ -2,6 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+using ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation;
+using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
@@ -55,15 +58,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     }
 
                     var player = targetInfo.Player;
+                    var maximum = ctx.BuffService.GetEffectiveAbilityKeywordValue(
+                        player.Leader, AbilityKeyword.Reanimate, parameters.MaxCost, ctx);
+                    var compiler = ctx.ServiceProvider.GetRequiredService<IDslCompiler>();
+                    var selectionContext = new TargetSelectionContext(ctx, null);
+                    var predicates = parameters.PoolConditions
+                        .Where(condition => condition.IsEnabled && !string.IsNullOrWhiteSpace(condition.Expression))
+                        .Select(condition => compiler.CompilePredicate<CardInstance>(condition.Expression, selectionContext))
+                        .ToList();
                     var eligibleCards = player.Graveyard
                         .Where(card => card.IsFollower
-                            && card.BaseCost <= parameters.MaxCost
-                            && card.LastMoveReason == CardMoveReason.Destroyed)
+                            && card.BaseCost <= maximum
+                            && card.LastMoveReason == CardMoveReason.Destroyed
+                            && predicates.All(predicate => predicate(card)))
                         .ToList();
 
                     if (eligibleCards.Count == 0)
                     {
-                        return new DomainOperationResult { Success = false, ErrorMessage = "No destroyed followers eligible for reanimate." };
+                        return new DomainOperationResult { Success = true };
                     }
 
                     var maxCost = eligibleCards.Max(card => card.BaseCost);
@@ -95,6 +107,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
                     var expectedPosition = player.Field.Count + 1;
                     result.GeneratedEvents.Add(new SummonEvent(player, summoned, expectedPosition, EventReasonSource.Ability));
+                    result.Merge(global::ShadowverseBeyond.Server.Domain.Buffs.OneUseModifiers.Consume(player.Leader, AbilityKeyword.Reanimate, ctx));
                     return result;
                 };
 

@@ -1,3 +1,4 @@
+import { confirmDialog } from '../siteDialog.js';
 // src/components/StatusConfigEditor.js - 状态(Buff)配置编辑器
 //
 // 相关文档:
@@ -246,6 +247,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         );
         section.appendChild(this.createFormGroup(null, stackToggle));
 
+        const oneUseToggle = this.createAccordionToggleSwitch(!!buff.removeAfterUse, checked => this.updateBuffConfig(index, { removeAfterUse: checked }), '生效后移除（下次启动／亡者召还）');
+        section.appendChild(this.createFormGroup(null, oneUseToggle));
         const durationTypeControl = document.createElement('div');
         durationTypeControl.className = 'parameter-control';
         const durationTypeSelect = this.createEnumSelect(
@@ -1014,6 +1017,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                     durationType: base.durationType,
                     durationParameter: base.durationParameter,
                     canStack: base.canStack,
+                    removeAfterUse: base.removeAfterUse,
                     _uiType: type,
                     statModifiers: type === 'stat' ? base.statModifiers : [],
                     keywordModifiers: type === 'keyword' ? base.keywordModifiers : [],
@@ -1062,6 +1066,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
             durationParameter: raw.durationParameter ?? raw.DurationParameter ?? 0,
             removeCondition: raw.removeCondition ?? raw.RemoveCondition ?? null,
             canStack: raw.canStack ?? raw.CanStack ?? false,
+            removeAfterUse: raw.removeAfterUse ?? raw.RemoveAfterUse ?? false,
             statModifiers,
             keywordModifiers,
             tribeModifiers,
@@ -1285,8 +1290,8 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
         this.notifyChange();
     }
 
-    removeBuffConfig(index) {
-        if (!confirm('确定删除该状态配置？')) return;
+    async removeBuffConfig(index) {
+        if (!await confirmDialog('确定删除该状态配置？')) return;
         this.buffConfigs.splice(index, 1);
         this.updateBuffConfigList();
         this.notifyChange();
@@ -1493,6 +1498,7 @@ export class StatusConfigEditor extends MetadataDrivenComponent {
                 durationType: item.durationType ?? 'Permanent',
                 durationParameter: item.durationParameter ?? 0,
                 canStack: item.canStack ?? false,
+                removeAfterUse: item.removeAfterUse ?? false,
                 statModifiers: type === 'stat' ? statModifiers : [],
                 keywordModifiers: type === 'keyword' ? (Array.isArray(item.keywordModifiers) ? item.keywordModifiers : []) : [],
                 tribeModifiers: type === 'tribe'

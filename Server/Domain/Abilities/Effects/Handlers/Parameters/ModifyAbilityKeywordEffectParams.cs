@@ -19,7 +19,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
         [ParameterMetadata("移除条件", UiControlType.TextArea, DefaultValue = null, Description = "当持续时间为条件移除时，使用该 ConditionConfig 判断是否移除。")]
         public ConditionConfig? RemoveCondition { get; set; }
 
-        [ParameterMetadata("能力关键字", UiControlType.Dropdown, DefaultValue = AbilityKeyword.Act, Description = "要调整数值的能力关键字，如启动或增强。")]
+        [ParameterMetadata("能力关键字", UiControlType.Dropdown, DefaultValue = AbilityKeyword.Act, Description = "要调整数值的能力关键字，如启动、增强或亡者召还（调整召还费用上限；对主战者施加）。")]
         public AbilityKeyword Keyword { get; set; } = AbilityKeyword.Act;
 
         [ParameterMetadata("数值修正", UiControlType.NumberStepper, DefaultValue = null, Description = "修改能力关键字数值。Additive/Set/Base 模式使用数值；Multiplicative 模式使用百分比（50 表示 0.5 倍，150 表示 1.5 倍）。留空表示不修改。")]
@@ -27,6 +27,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 
         [ParameterMetadata("调整类型", UiControlType.Dropdown, DefaultValue = ModifierLayer.Additive, Description = "能力关键字数值调整的类型（基础/修正/设置/倍乘）。")]
         public ModifierLayer ModifierLayer { get; set; } = ModifierLayer.Additive;
+
+        [ParameterMetadata("生效后移除", UiControlType.Checkbox, DefaultValue = false)]
+        public bool RemoveAfterUse { get; set; } = false;
 
         public bool CanStack { get; set; } = true;
     }

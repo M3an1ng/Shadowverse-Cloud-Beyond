@@ -866,7 +866,8 @@ namespace ShadowverseBeyond.Server.Services
             var triggeredAbilities = new List<IAbility>();
             foreach (var ability in abilities)
             {
-                if (ability.TriggerConfig.Timing == timing && await ability.CanTrigger(gameEvent, gameContext))
+                if (ability.TriggerConfig.EventTypes.Contains(gameEvent.EventType)
+                    && ability.TriggerConfig.Timing == timing && await ability.CanTrigger(gameEvent, gameContext))
                 {
                     triggeredAbilities.Add(ability);
                 }
@@ -4760,6 +4761,12 @@ namespace ShadowverseBeyond.Server.Services
 
             foreach (var triggeredAbility in triggeredAbilities)
             {
+                if (parameters.SkipTargetAndModeSelection
+                    && triggeredAbility is Ability configuredAbility
+                    && AbilitySelectionPolicy.RequiresPlayerSelection(configuredAbility.Config))
+                {
+                    continue;
+                }
                 var abilityContext = context with
                 {
                     SourceCard = triggeredAbility.SourceCard,

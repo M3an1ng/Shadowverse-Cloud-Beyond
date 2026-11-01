@@ -1,4 +1,4 @@
-﻿// File: Server/Controllers/MatchController.cs
+// File: Server/Controllers/MatchController.cs
 //
 // 相关文档:
 // - 多人联机方案A: 内存房间 + JoinCode/Token
@@ -448,6 +448,7 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             return new MatchRoomListItemResponse
             {
+                IsTakeTwo = room.HostDeckSelection?.GeneratedDraftCardIds?.Length == 30,
                 RoomId = room.RoomId,
                 ActiveGameId = room.ActiveGameId,
                 Status = room.Status.ToString(),
@@ -527,6 +528,7 @@ namespace ShadowverseBeyond.Server.Controllers
 
         public class MatchRoomListItemResponse
         {
+            public bool IsTakeTwo { get; set; }
             public string RoomId { get; set; } = string.Empty;
             public string? ActiveGameId { get; set; }
             public string Status { get; set; } = string.Empty;
