@@ -1,3 +1,4 @@
+import { compareSpectatorRooms } from './matchRoomBrowser.js';
 import { historyRequest } from './cardHistory.js';
 import { catalogCards } from './cardGallery.js';
 import { cardId, classes, createFeatureModal } from './cardStyles.js';
@@ -26,12 +27,12 @@ export function mergeTakeTwoRooms(nativeRooms, drafts) {
       isTakeTwo: true,
       draftEnvironment: draft.environment,
       status: draft.status,
-      statusLabel: draft.status === 'Waiting' ? '等待对手' : '选牌中',
+      statusLabel: draft.status === 'Waiting' ? '等待中' : '选牌中',
       hasGuest: draft.players.length === 2,
       canSpectate: draft.status !== 'Waiting' && draft.players.length === 2,
     });
   }
-  return result;
+  return result.sort(compareSpectatorRooms);
 }
 
 export async function listSpectatableRooms(listMatches, normalize) {

@@ -1,4 +1,4 @@
-﻿@import url('https://fonts.loli.net/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+@import url('https://fonts.loli.net/css2?family=JetBrains+Mono:wght@400;700&display=swap');
 @import url('https://fonts.loli.net/css2?family=Orbitron:wght@700;900&display=swap');
 
 /*
@@ -2626,7 +2626,8 @@
 }
 
 .card .countdown,
-.card .earthsigil {
+.card .earthsigil,
+.card .evidence {
     font-weight: bold;
     background-color: var(--color-surface-highlight);
     padding: 2px 6px;
@@ -2644,11 +2645,6 @@
 
 .card .evidence {
     color: #60a5fa;
-    font-weight: 700;
-    font-size: 14px;
-    line-height: 1.2;
-    padding: 2px 6px;
-    text-shadow: 0 0 5px rgba(0, 0, 0, 0.9);
 }
 
 .card .attack {

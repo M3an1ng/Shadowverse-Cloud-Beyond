@@ -74,7 +74,7 @@ export function buildPreviewSlateHtml(options) {
         : (showCountdown || showEarthsigil || showEvidence)
             ? `
                 <div class="header-stats">
-                    ${showEvidence ? `<div class="stat-mini evidence" title="证据数"><span class="stat-value">${evidenceValue}</span></div>` : ''}
+                    ${showEvidence ? `<div class="stat-mini evidence" title="证据数"><span class="stat-icon evidence-icon" aria-hidden="true"></span><span class="stat-value">${evidenceValue}</span></div>` : ''}
                     ${showEarthsigil
             ? `
                     <div class="stat-mini earthsigil">

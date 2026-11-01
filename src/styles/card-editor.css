@@ -1879,6 +1879,16 @@
     background-position: center;
     opacity: 0.9;
 }
+.stat-mini .stat-icon.evidence-icon {
+    width: 14px;
+    height: 14px;
+    display: inline-block;
+    background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M12%203%20L16.5%2010.2%20L12%2018%20L7.5%2010.2%20Z'%20fill='%2360a5fa'/%3E%3Cpath%20d='M3.5%2011.2%20L7%2012.6%20L5.9%2016.8%20L2%2014.6%20Z'%20fill='%233b82f6'/%3E%3Cpath%20d='M20.5%2011.2%20L22%2014.6%20L18.1%2016.8%20L17%2012.6%20Z'%20fill='%233b82f6'/%3E%3C/svg%3E");
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    opacity: 0.9;
+}
 
 .tech-code-block {
     background: rgba(0, 0, 0, 0.5);

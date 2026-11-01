@@ -7,9 +7,10 @@ const STATUS_LABELS = {
 
 const STATUS_ORDER = {
     Started: 0,
-    Ready: 1,
-    Waiting: 2,
-    Closed: 3
+    Drafting: 1,
+    Ready: 2,
+    Waiting: 3,
+    Closed: 4
 };
 
 function readValue(source, camelKey, pascalKey) {
@@ -74,16 +75,11 @@ export function normalizeMatchRoomList(payload) {
             };
         })
         .filter(item => item.roomId)
-        .sort((a, b) => {
-            if (a.canSpectate !== b.canSpectate) {
-                return a.canSpectate ? -1 : 1;
-            }
+        .sort(compareSpectatorRooms);
+}
 
-            const statusDelta = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99);
-            if (statusDelta !== 0) {
-                return statusDelta;
-            }
-
-            return normalizeDateMs(b.createdAt) - normalizeDateMs(a.createdAt);
-        });
+export function compareSpectatorRooms(a, b) {
+    const statusDelta = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99);
+    if (statusDelta) return statusDelta;
+    return normalizeDateMs(b.createdAt) - normalizeDateMs(a.createdAt);
 }
