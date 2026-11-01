@@ -1,9 +1,11 @@
 import { historyRequest } from './cardHistory.js';
 import { getUserSession } from './userSession.js';
 import { createCardStylePresentation } from './cardStylePresentation.js';
-let task;
+let task, sessionKey;
 const entries = new Set(), callbacks = new WeakMap();
 export function getCardStylePresenter() {
+  const user = getUserSession().userId || '';
+  if (sessionKey !== user) { task = null; sessionKey = user; }
   return task ??= Promise.all([
     historyRequest('/api/card-styles'),
     getUserSession().userId ? historyRequest('/api/card-styles/preferences') : {},

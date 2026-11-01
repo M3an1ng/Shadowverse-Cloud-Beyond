@@ -1,3 +1,4 @@
+import { getCardStylePresenter } from './cardStyleDom.js';
 import { loadCardDefinitions } from './cardDefinitionsLoader.js';
 import {
     CARD_CATALOG_INVALIDATED_EVENT,
@@ -467,6 +468,9 @@ export async function resolveDerivedCardMatch(rawText, options = {}) {
         return { match: null, matches: [], reason: 'not_found', requestedId: parsed.id };
     }
 
+    if (!options.originalCardMode) {
+        try { const present = await getCardStylePresenter(); matches = matches.map(present); } catch {}
+    }
     if (parsed.id) {
         const idValue = Number(parsed.id);
         const byId = matches.find(card => {

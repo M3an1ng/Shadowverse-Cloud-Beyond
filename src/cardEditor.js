@@ -1,4 +1,4 @@
-﻿import { mountStyleEditor } from './cardStyles.js';
+import { mountStyleEditor } from './cardStyles.js';
 import { installCardHistoryActions } from './cardHistory.js';
 import { confirmDialog } from './siteDialog.js';
 import { showAlert } from './siteDialog.js';
@@ -14,7 +14,8 @@ import { DynamicUIRenderer } from './dynamicUIRenderer.js';
 import { buildPreviewSlateHtml } from './previewSlate.js';
 import { showPreviewDescriptionTooltip } from './previewDescriptionTooltip.js';
 import { hydrateDescriptionReferences } from './previewDescriptionReferences.js';
-import { showCardDetailModal } from './components/CardDetailMockup.js';
+import { showCardDetailModal as openCardDetailModal } from './components/CardDetailMockup.js';
+const showCardDetailModal = (card, options = {}) => openCardDetailModal(card?.styleOriginalCard || card, { ...options, originalCardMode: true, stylePreferenceApplied: true });
 import { getBlockingLoader } from './components/blockingLoader.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from './enumLocalizationCache.js';
 import {
@@ -788,6 +789,7 @@ class CardEditor {
             event.preventDefault();
             event.stopPropagation();
             void showPreviewDescriptionTooltip(tokenEl, tokenType, tokenValue, {
+                originalCardMode: true,
                 openCardDetail: showCardDetailModal,
                 cards: this.allCardsData,
                 currentCardId: this.currentCard?.id ?? this.currentCard?.Id ?? this.currentCard?.CardId ?? null,
@@ -2278,6 +2280,7 @@ CardEditor.prototype.updateCardPreview = function() {
     };
     bindPreviewDetailHandler(previewContainer);
     void hydrateDescriptionReferences(previewContainer, {
+        originalCardMode: true,
         openCardDetail: referencedCard => showCardDetailModal(referencedCard, { cards: this.allCardsData }),
         cards: this.allCardsData,
         fallbackPreviewUrl: artPreviewUrl,

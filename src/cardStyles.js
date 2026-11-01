@@ -1,3 +1,4 @@
+import { bindCardStyle } from './cardStyleDom.js';
 import { showCardDetailModal } from "./components/CardDetailMockup.js";
 import { DefinitionPicker } from "./components/DefinitionPicker.js";
 import { DefinitionPickerCatalog } from "./components/definitionPickerCatalog.js";
@@ -46,7 +47,7 @@ export function classButtons(
   }
   return row;
 }
-export function cardFace(card, { appearance = null, onClick = null } = {}) {
+export function cardFace(card, { appearance = null, onClick = null, applyPreference = true } = {}) {
   const root = document.createElement(onClick ? "button" : "div");
   root.className = "catalog-card";
   if (onClick) {
@@ -72,6 +73,12 @@ export function cardFace(card, { appearance = null, onClick = null } = {}) {
   name.className = "catalog-card-name";
   name.textContent = appearance?.name || cardValue(card, "name");
   root.append(face, name);
+  if (applyPreference && !appearance) bindCardStyle(root, present => {
+    const styled = present(card);
+    img.src = cardValue(styled, 'artPreview');
+    img.alt = cardValue(styled, 'name');
+    name.textContent = cardValue(styled, 'name');
+  });
   return root;
 }
 export function createFeatureModal(title, { wide = false } = {}) {
@@ -203,6 +210,7 @@ export async function mountStylePicker(
       wrap.className = "style-face-wrap";
       wrap.append(
         cardFace(base, {
+          applyPreference: false,
           appearance: style?.appearance,
           onClick: () =>
             showCardDetailModal(

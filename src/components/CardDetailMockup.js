@@ -337,10 +337,10 @@ export function showCardDetailImageModal(detailUrl) {
 }
 
 export function showCardDetailModal(card, options = {}) {
-    if (card && !options.stylePreferenceApplied && !card.OwnerPlayerId) {
+    if (card && !options.originalCardMode && !options.stylePreferenceApplied && !card.OwnerPlayerId) {
         void getCardStylePresenter().then(present => {
             const styled = present(card.styleOriginalCard || card);
-            showCardDetailModal(styled, { ...options, styleOriginalCard: card.styleOriginalCard || card, stylePreferenceApplied: true });
+            showCardDetailModal(styled, { ...options, styleOriginalCard: card.styleOriginalCard || card, previewUrl: styled.artPreview ?? styled.ArtPreview, detailUrl: styled.artDetail ?? styled.ArtDetail, stylePreferenceApplied: true });
         }).catch(() => showCardDetailModal(card, { ...options, stylePreferenceApplied: true }));
         return;
     }
@@ -605,6 +605,7 @@ export function showCardDetailModal(card, options = {}) {
         event.preventDefault();
         event.stopPropagation();
         const tooltipOptions = {
+            originalCardMode: options.originalCardMode,
             openCardDetail: showCardDetailModal,
             cards: modalOptions.cards,
             currentCardId,
@@ -614,7 +615,7 @@ export function showCardDetailModal(card, options = {}) {
     });
     document.addEventListener('keydown', onKeydown);
 
-    void mountStylePicker(overlay.querySelector('.inspect-btn').parentElement, options.styleOriginalCard || card, (appearance,base) => {
+    if (!options.originalCardMode) void mountStylePicker(overlay.querySelector('.inspect-btn').parentElement, options.styleOriginalCard || card, (appearance,base) => {
         const original=base || options.styleOriginalCard || card;
         showCardDetailModal(appearance ? {...original,...appearance} : original,{...modalOptions,previewUrl:appearance?.artPreview||original.artPreview,detailUrl:appearance?.artDetail||original.artDetail,styleOriginalCard:original,stylePreferenceApplied:true,navigationMode:'replace'});
     },!options.stylePreferenceApplied).catch(console.warn);
@@ -932,8 +933,9 @@ export function showCardDetailModal(card, options = {}) {
         for (const key of ['stylePreferenceApplied', 'styleOriginalCard', 'previewUrl', 'detailUrl']) delete referenceOptions[key];
         showCardDetailModal(referencedCard, referenceOptions);
     };
-    void hydrateAlternatePlayReferences(overlay.querySelector('.ability-box'), currentCardId, { fallbackPreviewUrl: previewUrl, cards: modalOptions.cards, openCardDetail: openReferenceDetail });
+    void hydrateAlternatePlayReferences(overlay.querySelector('.ability-box'), currentCardId, { originalCardMode: options.originalCardMode, fallbackPreviewUrl: previewUrl, cards: modalOptions.cards, openCardDetail: openReferenceDetail });
     void hydrateDescriptionReferences(overlay, {
+        originalCardMode: options.originalCardMode,
         openCardDetail: openReferenceDetail,
         cards: modalOptions.cards,
         fallbackPreviewUrl: previewUrl,

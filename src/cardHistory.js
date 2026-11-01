@@ -168,7 +168,7 @@ export function showCardHistory(card, onRestored) {
       return;
     }
     if (type === "details") {
-      showCardDetailModal(snapshot);
+      showCardDetailModal(snapshot, { originalCardMode: true, stylePreferenceApplied: true });
       return;
     }
     void action(async () => {
