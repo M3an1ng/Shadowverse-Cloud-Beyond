@@ -2,6 +2,7 @@ import { createRevealPresentationGate } from "./revealPresentationGate.js";
 import { formatRoomHandshake } from "./multiplayerRoomPresentation.js";
 import "./styles/mini-feature-theme.css";
 ﻿import { initializeTakeTwo,tryJoinTakeTwo } from './takeTwo.js';
+import { listSpectatableRooms, showTakeTwoSpectator, findTakeTwoSpectatorRoom } from './takeTwoSpectator.js';
 import { confirmDialog } from './siteDialog.js';
 import { showAlert } from './siteDialog.js';
 // src/main.js - 主入口模块
@@ -2120,13 +2121,18 @@ function setupMultiplayerUI() {
         }
     });
 
+    const draftGuid = id => String(id).replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
     const buildSpectateRoomMeta = (room) => {
         const parts = [];
         if (room.round) {
             parts.push(`第 ${room.round} 局`);
         }
         parts.push(room.hasGuest || room.useAiFallback ? '对手已就位' : '等待对手');
-        if (room.isTakeTwo) { parts.push("双选"); return parts.join(" · "); }
+        if (room.isTakeTwo) {
+            const label = { rotation: '指定', unlimited: '无限', open: '开放', as2p: 'AS2P' }[room.draftEnvironment];
+            parts.push(label === 'AS2P' ? 'AS2P' : `${label || getDeckEnvironmentLabel(room.requiredEnvironment) || '开放'} | 双选对战`);
+            return parts.join(' · ');
+        }
         if (room.requiredEnvironment) {
             parts.push(getDeckEnvironmentLabel(room.requiredEnvironment));
         }
@@ -2160,7 +2166,7 @@ function setupMultiplayerUI() {
 
             const id = document.createElement('span');
             id.className = 'mp-room-id';
-            id.textContent = room.roomId;
+            id.textContent = room.draftRoomId ? draftGuid(room.draftRoomId) : room.roomId;
 
             const status = document.createElement('span');
             status.className = 'mp-room-status';
@@ -2180,7 +2186,7 @@ function setupMultiplayerUI() {
             if (room.canSpectate) {
                 item.addEventListener('click', () => {
                     if (inputSpectateGame) {
-                        inputSpectateGame.value = room.roomId;
+                        inputSpectateGame.value = room.draftRoomId ? draftGuid(room.draftRoomId) : room.roomId;
                         inputSpectateGame.focus();
                     }
                     setOutput(outSpectate, `已选择房间：${room.roomId}`);
@@ -2615,8 +2621,7 @@ function setupMultiplayerUI() {
             setOutput(outSpectate, '加载房间状态中...');
             openSpectateRoomModal();
 
-            const payload = await listMatches();
-            const rooms = normalizeMatchRoomList(payload);
+            const rooms = await listSpectatableRooms(listMatches, normalizeMatchRoomList);
             renderSpectateRoomList(rooms);
 
             const spectatableCount = rooms.filter(room => room.canSpectate).length;
@@ -2648,7 +2653,17 @@ function setupMultiplayerUI() {
         try {
             setOutput(outSpectate, '检测房间状态中...');
 
-            const room = await getMatch(gameId);
+            const draft = await findTakeTwoSpectatorRoom(gameId);
+            if (draft && !draft.matchRoomId) {
+                await showTakeTwoSpectator(draft.roomId, { onMatch: (id) => {
+                    inputSpectateGame.value = id;
+                    btnSpectate.click();
+                }});
+                setOutput(outSpectate, '正在观战双选房间。');
+                return;
+            }
+            const resolvedGameId = draft?.matchRoomId || gameId;
+            const room = await getMatch(resolvedGameId);
             if (room?.status === "Closed") {
                 const reason = room.closedReason || '房间已关闭。';
                 setOutput(outSpectate, `无法开始观战：${reason}`, true);
@@ -2665,7 +2680,7 @@ function setupMultiplayerUI() {
             suppressMultiplayerLeaveOnce = true;
 
             const params = new URLSearchParams(window.location.search);
-            params.set('gameId', gameId);
+            params.set('gameId', resolvedGameId);
             params.set('spectate', '1');
             params.delete('playerId');
             params.delete('token');

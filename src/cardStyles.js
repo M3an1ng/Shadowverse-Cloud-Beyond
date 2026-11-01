@@ -183,7 +183,6 @@ export async function mountStylePicker(
     const selected = config.styles.find((s) => s.id === prefs[id]);
     if (selected && container.isConnected) {
       onSelected(selected.appearance, base);
-      return;
     }
   }
   button.onclick = async () => {

@@ -1,4 +1,4 @@
-﻿// File: Server/Services/MatchService.cs
+// File: Server/Services/MatchService.cs
 //
 // 相关文档:
 // - 多人联机方案A: 内存房间 + JoinCode/Token
@@ -682,6 +682,7 @@ namespace ShadowverseBeyond.Server.Services
             return new MatchDeckSelection
             {
                 GeneratedDraftCardIds = selection.GeneratedDraftCardIds?.ToArray(),
+                DraftEnvironment = selection.DraftEnvironment,
                 UserId = selection.UserId,
                 GuestId = selection.GuestId,
                 DeckId = selection.DeckId,

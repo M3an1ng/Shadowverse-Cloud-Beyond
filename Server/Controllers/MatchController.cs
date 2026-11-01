@@ -449,6 +449,7 @@ namespace ShadowverseBeyond.Server.Controllers
             return new MatchRoomListItemResponse
             {
                 IsTakeTwo = room.HostDeckSelection?.GeneratedDraftCardIds?.Length == 30,
+                DraftEnvironment = room.HostDeckSelection?.DraftEnvironment,
                 RoomId = room.RoomId,
                 ActiveGameId = room.ActiveGameId,
                 Status = room.Status.ToString(),
@@ -529,6 +530,7 @@ namespace ShadowverseBeyond.Server.Controllers
         public class MatchRoomListItemResponse
         {
             public bool IsTakeTwo { get; set; }
+            public string? DraftEnvironment { get; set; }
             public string RoomId { get; set; } = string.Empty;
             public string? ActiveGameId { get; set; }
             public string Status { get; set; } = string.Empty;

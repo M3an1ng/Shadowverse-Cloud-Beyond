@@ -1,0 +1,29 @@
+.take-two-spectator .feature-dialog { width: min(1500px, 96vw); }
+.draft-spectator-status { margin: 0 0 20px; color: #c6b786; }
+.draft-spectator-players { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.draft-spectator-player { min-width: 0; padding: 20px; border: 1px solid #353535; border-radius: 8px; background: #101010; }
+.draft-spectator-player h3 { margin: 0 0 16px; font-size: 18px; color: #d7dce5; }
+.draft-spectator-player > button { color: #eadbb2; background: #29251e; border: 1px solid #8a794d; padding: 8px 16px; border-radius: 4px; }
+.draft-spectator-grid.take-two-screen { display: grid; grid-template-columns: repeat(auto-fill, minmax(95px, 1fr)); gap: 16px 12px; margin: 18px 0 0; padding: 0; width: 100%; height: auto; min-height: 0; border: 0; background: transparent; }
+.draft-spectator-grid.take-two-screen .take-two-card { width: 100%; position: relative; padding: 0; background: transparent; border: 0; color: #d7dce5; }
+.draft-spectator-grid.take-two-screen .take-two-card > .take-two-card-name { margin: 8px 0 0; font-size: 13px; line-height: 1.5; }
+.draft-spectator-copies { position: absolute; top: 4px; right: 4px; padding: 2px 5px; background: #000d; color: #fff; border-radius: 3px; z-index: 4; }
+@media (max-width: 760px) { .draft-spectator-players { grid-template-columns: 1fr; } }
+
+.take-two-spectator .feature-dialog { width:min(1000px,96vw); }
+.draft-spectator-players { align-items:start; gap:32px; }
+.draft-spectator-player { padding:24px 28px; text-align:center; background:linear-gradient(155deg,#111a16,#0b1010 65%); border-color:#31473c; box-shadow:0 12px 35px #0005; }
+.draft-spectator-player h3 { font-size:21px; margin:0 0 22px; padding-bottom:18px; border-bottom:1px solid #ffffff14; overflow-wrap:anywhere; }
+.draft-spectator-round { font:28px/1.5 Georgia,'SimSun',serif; color:#e4e0d4; }
+.draft-spectator-profession { display:flex; align-items:center; justify-content:center; gap:12px; margin:22px 0; font-size:21px; }
+.draft-spectator-profession img { width:44px; height:44px; object-fit:contain; }
+.take-two-spectator .deck-summary { display:flex; flex-direction:column-reverse; align-items:stretch; gap:24px; margin:0 0 24px; }
+.take-two-spectator .deck-summary-count { display:flex; flex-direction:column; gap:12px; }
+.take-two-spectator .deck-summary-count strong { font:38px/1.3 Georgia,serif; color:#e4e0d4; font-variant-numeric:lining-nums; }
+.take-two-spectator .deck-summary-count small { display:flex; justify-content:center; gap:12px; color:#7abfbb; font-size:14px; }
+.take-two-spectator .deck-curve { display:grid; grid-template-columns:repeat(9,minmax(0,1fr)); align-items:end; gap:4px; height:100px; }
+.take-two-spectator .deck-curve>div { display:flex; flex-direction:column; justify-content:flex-end; align-items:center; min-width:0; }
+.take-two-spectator .deck-curve i { display:block; width:100%; background:linear-gradient(#edba12,#785507); border-top:2px solid #f2cb35; }
+.take-two-spectator .deck-curve b { min-height:20px; font-size:12px; }
+.take-two-spectator .deck-curve small { padding-top:5px; color:#9da4af; font-size:12px; }
+.draft-spectator-player>button { display:block; width:100%; padding:13px; background:#111; border-color:#ffffff30; color:#e4e0d4; }

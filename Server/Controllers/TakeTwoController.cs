@@ -21,6 +21,20 @@ public sealed class TakeTwoController(ApplicationDbContext db, TakeTwoService se
     [HttpPut("saved-pools/{id:guid}")] public async Task<IActionResult> SavePool(Guid id, SavedPool request, CancellationToken ct) { var actor = await Actor(ct); if (actor == null) return StatusCode(403); if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > 60 || !Valid(request.Pool)) return BadRequest(); return await Store($"take-two-saved:{actor.Id}:{id}", request, null, ct); }
     [HttpDelete("saved-pools/{id:guid}")] public async Task<IActionResult> DeletePool(Guid id, CancellationToken ct) { var actor = await Actor(ct); if (actor == null) return StatusCode(403); var doc = await db.FeatureDocuments.FindAsync(new object[] { $"take-two-saved:{actor.Id}:{id}" }, ct); if (doc != null) { db.Remove(doc); await db.SaveChangesAsync(ct); } return Ok(new { ok = true }); }
     [HttpGet("pool/{environment}")] public async Task<IActionResult> Pool(string environment, CancellationToken ct, [FromQuery] string? profession = null) { if (environment is not ("rotation" or "unlimited" or "as2p")) return BadRequest(); var all = await db.CardDefinitions.AsNoTracking().Include(c => c.CardSetDefinition).ToListAsync(ct); var settings = await Settings(environment, ct); var cards = TakeTwoService.PoolCards(all, environment, settings); if (profession != null) { if (!Enum.TryParse<ShadowverseBeyond.Server.Dtos.Enums.CardClass>(profession, out var cls) || !Enum.IsDefined(cls) || cls == 0) return BadRequest(); cards = TakeTwoService.ClassPool(cards, environment, settings, cls); } return Ok(cards.Select(c => c.Id)); }
+    // Only committed picks are public: never expose seat credentials or future offers.
+    [HttpGet("rooms")] public IActionResult SpectatorRooms() => Ok(service.SpectatorRooms());
+    [HttpGet("rooms/{id}/spectate")]
+    public async Task<IActionResult> Spectate(string id, CancellationToken ct)
+    {
+        if (await Actor(ct) == null) return StatusCode(403);
+        try {
+            var view = service.SpectatorView(service.Find(id.Replace("-", "")));
+            var ids = view.Players.Select(p => p.PlayerId).ToArray();
+            var names = await db.Users.AsNoTracking().Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.Username, ct);
+            return Ok(view with { Players = view.Players.Select(p => p with { Username = names.GetValueOrDefault(p.PlayerId, "本机玩家") }).ToArray() });
+        }
+        catch (InvalidOperationException e) { return NotFound(new { error = e.Message }); }
+    }
     public sealed record CreateRequest(string Environment, TakeTwoPool? Pool);
     [HttpPost("rooms")] public async Task<IActionResult> Create(CreateRequest request, CancellationToken ct) { var actor = await Actor(ct); if (actor == null) return StatusCode(403); if (request.Environment is not ("rotation" or "unlimited" or "as2p" or "open") || request.Environment == "open" && !Valid(request.Pool)) return BadRequest(); try { var settings = request.Environment == "open" ? request.Pool! : await Settings(request.Environment, ct); var all = await db.CardDefinitions.AsNoTracking().Include(c => c.CardSetDefinition).ToListAsync(ct); var room = service.Create(actor.Id, request.Environment, settings, all); return Ok(service.View(room, room.Players[0])); } catch (InvalidOperationException e) { return BadRequest(new { error = e.Message }); } }
     [HttpPut("rooms/{id}/pool")]

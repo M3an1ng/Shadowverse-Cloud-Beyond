@@ -1,3 +1,4 @@
+import { bindCardStyle } from './cardStyleDom.js';
 import { cardValue, classes, createFeatureModal } from "./cardStyles.js";
 import { miniCardBadge } from "./miniCardBadge.js";
 import { showCardDetailModal } from "./components/CardDetailMockup.js";
@@ -61,6 +62,16 @@ export function draftCard(card, decorative = false) {
     frame,
     element("strong", "take-two-card-name", cardValue(card, "name")),
   );
+  bindCardStyle(root, present => {
+    const styled = present(card);
+    img.src = cardValue(styled, 'artPreview');
+    img.alt = cardValue(styled, 'name');
+    root.querySelector('.take-two-card-name').textContent = cardValue(styled, 'name');
+    if (!decorative) {
+      root.setAttribute('aria-label', `查看 ${cardValue(styled, 'name')}`);
+      root.onclick = () => showCardDetailModal(styled, { stylePreferenceApplied: true, styleOriginalCard: styled.styleOriginalCard || card });
+    }
+  });
   return root;
 }
 export function draftCurve(ids, byId, { preview = false } = {}) {
@@ -118,7 +129,7 @@ export function showDraftDeckPreview(
     element(
       "p",
       "",
-      `${classes.find((c) => c[0] === profession)?.[1] || "中立"} | 双选 | ${{ rotation: "指定", unlimited: "无限", open: "开放" }[environment] || "开放"}`,
+      `${classes.find((c) => c[0] === profession)?.[1] || "中立"} | 双选 | ${{ rotation: "指定", unlimited: "无限", open: "开放", as2p: "AS2P" }[environment] || "开放"}`,
     ),
   );
   const actions = element("div", "deck-preview-actions"),
@@ -158,6 +169,13 @@ export function showDraftDeckPreview(
       ),
       element("b", "deck-copy-count", `×${count}`),
     );
+    bindCardStyle(tile, present => {
+      const styled = present(card);
+      img.src = cardValue(styled, 'artPreview', '');
+      img.alt = cardValue(styled, 'name');
+      tile.querySelector('strong').textContent = cardValue(styled, 'name');
+      tile.onclick = () => styled && showCardDetailModal(styled, { stylePreferenceApplied: true, styleOriginalCard: styled.styleOriginalCard || card });
+    });
     grid.append(tile);
   }
   modal.body.append(heading, draftCurve(ids, byId, { preview: true }), grid);

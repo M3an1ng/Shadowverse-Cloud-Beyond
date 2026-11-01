@@ -220,9 +220,23 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
     private void Start(TakeTwoRoom room)
     {
         if (room.Match != null) return; var host = room.Players[0]; var guest = room.Players[1]; var created = matches.Create(host.PlayerId); if (!created.Success) throw new InvalidOperationException(created.Message); var native = created.Room!; var joined = matches.TryJoin(native.RoomId, native.JoinCode, guest.PlayerId); if (!joined.Success) throw new InvalidOperationException(joined.Message);
-        foreach (var p in room.Players) { var result = matches.SubmitDeckSelection(native.RoomId, p.PlayerId, new MatchDeckSelection { UserId = p.LocalTestOwnerId ?? p.PlayerId, GeneratedDraftCardIds = p.Cards.ToArray(), DeckClass = Enum.Parse<CardClass>(p.Class!), Environment = DeckEnvironment.Open, Rule = DeckRule.Standard }); if (!result.Success) throw new InvalidOperationException(result.Message); matches.MarkReady(native.RoomId, p.PlayerId); }
+        foreach (var p in room.Players) { var result = matches.SubmitDeckSelection(native.RoomId, p.PlayerId, new MatchDeckSelection { UserId = p.LocalTestOwnerId ?? p.PlayerId, GeneratedDraftCardIds = p.Cards.ToArray(), DraftEnvironment = room.Environment, DeckClass = Enum.Parse<CardClass>(p.Class!), Environment = DeckEnvironment.Open, Rule = DeckRule.Standard }); if (!result.Success) throw new InvalidOperationException(result.Message); matches.MarkReady(native.RoomId, p.PlayerId); }
         var started = matches.Start(native.RoomId, host.PlayerId); if (!started.Success) throw new InvalidOperationException(started.Message); room.Match = matches.Get(native.RoomId).Room;
     }
+    public sealed record SpectatorSeat(string Role, string? Class, int[] Cards, int Round, bool Ready) { [System.Text.Json.Serialization.JsonIgnore] public Guid PlayerId { get; init; } public string? Username { get; init; } }
+    public sealed record SpectatorRoom(string RoomId, string Environment, string Status, bool Closed, string? MatchRoomId, SpectatorSeat[] Players);
+    public SpectatorRoom SpectatorView(TakeTwoRoom room)
+    {
+        lock (room)
+        {
+            IsActive(room);
+            return new(room.Id, room.Environment,
+                room.Closed ? "Closed" : room.Match != null ? "Started" : room.Players.Count < 2 ? "Waiting" : "Drafting",
+                room.Closed, room.Match?.RoomId,
+                room.Players.Select((p, i) => new SpectatorSeat(i == 0 ? "host" : "guest", p.Class, p.Cards.ToArray(), p.Round, p.Ready) { PlayerId = p.PlayerId }).ToArray());
+        }
+    }
+    public SpectatorRoom[] SpectatorRooms() => rooms.Values.Where(IsActive).Select(SpectatorView).Where(r => !r.Closed).ToArray();
     public object View(TakeTwoRoom room, TakeTwoSeat seat, bool includePlans = true) { lock (room) { IsActive(room); var enemy = room.Players.FirstOrDefault(p => p != seat); object? handshake = null; if (room.Match != null) { var host = room.Players[0] == seat; handshake = new { gameId = room.Match.RoomId, playerId = seat.PlayerId, token = host ? room.Match.HostToken : room.Match.GuestToken, joinCode = room.Match.JoinCode, role = host ? "host" : "guest", useAiFallback = false }; } return new { room.Id, room.Code, room.Environment, room.Closed, role = room.Players[0] == seat ? "host" : "guest", packs = room.Pool.Packs, player = new { seat.PlayerId, seat.Token, seat.Class, seat.Cards, seat.Round, seat.Redraws, seat.Ready, seat.Sequence, plans = includePlans ? seat.Plans : null }, opponentCount = enemy?.Cards.Count ?? 0, opponentReady = enemy?.Ready ?? false, opponentJoined = enemy != null, handshake }; } }
 }
 

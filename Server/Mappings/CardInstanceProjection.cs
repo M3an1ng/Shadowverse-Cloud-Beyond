@@ -1,4 +1,4 @@
-﻿using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Domain.Constants; // For CardKeyword enum
 using System;
@@ -219,6 +219,8 @@ namespace ShadowverseBeyond.Server.Mappings
             }
 
             var key = rawKey.Trim();
+            // Sequence cursors are engine state, not player-facing counters.
+            if (key.StartsWith("sequence.cursor.", StringComparison.OrdinalIgnoreCase)) return;
             if (!seenKeys.Add(key))
             {
                 return;
@@ -227,6 +229,7 @@ namespace ShadowverseBeyond.Server.Mappings
             var label = string.IsNullOrWhiteSpace(rawLabel)
                 ? key
                 : rawLabel.Trim();
+            label = key.ToLowerInvariant() switch { "spellboost" => "魔力增幅数", "earthsigil" => "土之印数", _ => label };
             var value = Math.Max(0, rawValue);
             if (value == 0)
             {

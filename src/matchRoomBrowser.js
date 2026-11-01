@@ -60,6 +60,8 @@ export function normalizeMatchRoomList(payload) {
 
             return {
                 roomId,
+                isTakeTwo: Boolean(readValue(item, "isTakeTwo", "IsTakeTwo")),
+                draftEnvironment: readValue(item, "draftEnvironment", "DraftEnvironment") || null,
                 activeGameId,
                 status,
                 statusLabel: STATUS_LABELS[status] || status || "未知",

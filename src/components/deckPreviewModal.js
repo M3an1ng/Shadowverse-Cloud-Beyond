@@ -1,3 +1,4 @@
+import { bindCardStyle } from '../cardStyleDom.js';
 import { compareCardsForEditorAndDeck } from "../cardListSort.js";
 import { buildDeckCardRootClassName } from "../deckCardTypeStyling.js";
 
@@ -281,6 +282,12 @@ export function createDeckPreviewModal({
             </div>
         `;
         cards.innerHTML = renderCardsHtml(snapshot.items);
+        bindCardStyle(cards, present => {
+            cards.innerHTML = renderCardsHtml(snapshot.items.map(item => {
+                const styled = present({ ...item, id: item.cardDefinitionId });
+                return { ...item, name: styled.name, artPreview: styled.artPreview };
+            }));
+        });
 
         if (toolbarStats) {
             toolbarStats.innerHTML = renderStatsHtml(stats);

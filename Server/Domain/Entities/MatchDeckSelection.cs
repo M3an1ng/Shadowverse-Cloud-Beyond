@@ -1,4 +1,4 @@
-﻿using ShadowverseBeyond.Server.Dtos.Enums;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Entities;
 
@@ -6,6 +6,7 @@ public class MatchDeckSelection
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public int[]? GeneratedDraftCardIds { get; set; }
+    public string? DraftEnvironment { get; set; }
     public Guid? UserId { get; set; }
     public Guid? GuestId { get; set; }
     public Guid? DeckId { get; set; }

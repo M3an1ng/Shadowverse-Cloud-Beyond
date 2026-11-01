@@ -1,6 +1,6 @@
 import { createRevealAnimator } from './revealAnimation.js';
 import { playModeVisual } from './playModeVisual.js';
-import { summarizeAttachedNumericEffects, numericEffectTitle, renderAttachedNumericEffects, effectSourceHtml, isRepeatedKeywordDetail } from './liveEffectSummary.js';
+import { summarizeAttachedNumericEffects, numericEffectTitle, renderAttachedNumericEffects, effectSourceHtml } from './liveEffectSummary.js';
 import { showAlert } from './siteDialog.js';
 // src/ui.js - UI渲染与交互处理
 //
@@ -3905,6 +3905,9 @@ const previewCounterLabelMap = new Map([
 function getCounterLabel(labelMap, key) {
     const rawKey = String(key ?? '').trim();
     if (!rawKey) return '';
+    const systemLabel = previewCounterLabelMap.get(rawKey.toLowerCase());
+    if (systemLabel) return systemLabel;
+    if (rawKey.toLowerCase().startsWith('sequence.cursor.')) return '';
     if (labelMap && typeof labelMap === 'object') {
         const direct = labelMap[rawKey];
         if (typeof direct === 'string' && direct.trim()) {
@@ -4054,7 +4057,7 @@ export function getBuffSummaryHtml(cardInstance) {
                 const sourceCardName = summary?.sourceCardName ?? summary?.SourceCardName;
                 const sourceCardArtPreview = summary?.sourceCardArtPreview ?? summary?.SourceCardArtPreview;
                 const sourceAbilityName = summary?.sourceAbilityName ?? summary?.SourceAbilityName;
-                if (!sourceCardName || !sourceAbilityName) {
+                if (!sourceCardName) {
                     return '';
                 }
                 const sourceCardArtUrl = resolveArtUrl(sourceCardArtPreview);
@@ -4063,10 +4066,10 @@ export function getBuffSummaryHtml(cardInstance) {
                 const description = grantedTexts.length ? '' : summary.description ?? summary.Description ?? '';
                 const details = summary.details ?? summary.Details ?? [];
                 const labels = { Attack:'攻击力', Health:'生命值', Defense:'生命值', Cost:'费用', Act:'启动费用', Reanimate:'亡召上限', Permanent:'永久', TurnEnd:'回合结束', TurnStart:'回合开始', NextTurnEnd:'下次回合结束', NextTurnStart:'下次回合开始', Ward:'守护', Rush:'突进', Storm:'疾驰', Shield:'屏障', EndOfTurn:'回合结束时', StartOfTurn:'下回合开始时', OwnerTurnStart:'我方回合开始时', OwnerTurnEnd:'我方回合结束时', OpponentTurnStart:'敌方回合开始时', OpponentTurnEnd:'敌方回合结束时', ConditionalRemoval:'满足条件时移除', UntilTurnEnd:'回合结束前', UntilTurnStart:'回合开始前' };
-                const localize = value => String(value).replace(/\b[A-Za-z]+\b/g, token => labels[token] || token);
+                const localize = value => String(value).replace(/\b[A-Za-z]+\b/g, token => labels[token] || getCardKeywordLabel(token) || token);
                 const numericTexts = new Set((summary.NumericEffects ?? summary.numericEffects ?? []).map(entry => entry.DisplayText ?? entry.displayText));
                 const detailCounts = new Map();
-                if (Array.isArray(details)) for (const detail of details) if (!numericTexts.has(detail) && !grantedTexts.includes(detail) && !isRepeatedKeywordDetail(detail, rawKeywords)) detailCounts.set(detail, (detailCounts.get(detail) || 0) + 1);
+                if (Array.isArray(details)) for (const detail of details) if (!numericTexts.has(detail) && !grantedTexts.includes(detail)) detailCounts.set(detail, (detailCounts.get(detail) || 0) + 1);
                 if (detailCounts.size === 0 && !grantedTexts.length && (numericTexts.size || details.length)) return '';
                 return `<section class="battle-attached-effect"><b class="battle-attached-title">${renderDescriptionHtml(grantedTexts.join('\n') || [...detailCounts.keys()].map(localize).join(' / ') || description || '附加效果')}</b>${effectSourceHtml({id:summary.SourceCardDefinitionId ?? summary.sourceCardDefinitionId,name:sourceCardName,abilityName:sourceAbilityName,art:sourceCardArtUrl})}</section>`;
             })
