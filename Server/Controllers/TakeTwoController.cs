@@ -29,6 +29,7 @@ public sealed class TakeTwoController(ApplicationDbContext db, TakeTwoService se
         if (await Actor(ct) == null) return StatusCode(403);
         try {
             var view = service.SpectatorView(service.Find(id.Replace("-", "")));
+            if (view.Status == "Waiting" || view.Players.Length < 2) return Conflict(new { error = "等待对手加入时无法观战" });
             var ids = view.Players.Select(p => p.PlayerId).ToArray();
             var names = await db.Users.AsNoTracking().Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id, u => u.Username, ct);
             return Ok(view with { Players = view.Players.Select(p => p with { Username = names.GetValueOrDefault(p.PlayerId, "本机玩家") }).ToArray() });

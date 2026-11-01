@@ -28,7 +28,7 @@ export function mergeTakeTwoRooms(nativeRooms, drafts) {
       status: draft.status,
       statusLabel: draft.status === 'Waiting' ? '等待对手' : '选牌中',
       hasGuest: draft.players.length === 2,
-      canSpectate: true,
+      canSpectate: draft.status !== 'Waiting' && draft.players.length === 2,
     });
   }
   return result;
@@ -73,6 +73,7 @@ export async function showTakeTwoSpectator(roomId, { onMatch = () => {} } = {}) 
         const room = await api(`/rooms/${encodeURIComponent(roomId)}/spectate`, { signal: abort.signal });
         if (!modal.overlay.isConnected) return;
         if (room.closed) { status.textContent = '房间已结束'; return; }
+        if (room.status === 'Waiting' || room.players.length < 2) { status.textContent = '等待对手加入时无法观战'; content.replaceChildren(); return; }
         if (room.matchRoomId) {
           modal.close();
           onMatch(room.matchRoomId);

@@ -2655,6 +2655,10 @@ function setupMultiplayerUI() {
 
             const draft = await findTakeTwoSpectatorRoom(gameId);
             if (draft && !draft.matchRoomId) {
+                if (draft.status === 'Waiting' || draft.players.length < 2) {
+                    setOutput(outSpectate, '等待对手加入时无法观战。', true);
+                    return;
+                }
                 await showTakeTwoSpectator(draft.roomId, { onMatch: (id) => {
                     inputSpectateGame.value = id;
                     btnSpectate.click();
