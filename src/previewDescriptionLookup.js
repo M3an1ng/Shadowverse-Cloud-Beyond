@@ -1,3 +1,4 @@
+import { buildReferenceNameIndex } from './cardReferenceIndex.js';
 import { getCardStylePresenter } from './cardStyleDom.js';
 import { loadCardDefinitions } from './cardDefinitionsLoader.js';
 import {
@@ -324,29 +325,22 @@ function createEmptyIndex() {
     };
 }
 
-function buildCardIndex(cards) {
-    const index = createEmptyIndex();
-    (cards || []).forEach(card => {
-        const cardId = card?.id ?? card?.CardId ?? card?.Id;
-        if (cardId == null) return;
-        if (!index.cardsById.has(cardId)) {
-            index.cardsById.set(cardId, card);
+const buildCardIndex = buildReferenceNameIndex;
+// Reuse the style presenter as a revision key; switching preferences creates a new one.
+let styledIndexes = new WeakMap();
+async function findReferenceMatches(index, name, options) {
+    const original = getMatchesByName(index, name);
+    if (options.originalCardMode) return original;
+    try {
+        const present = await getCardStylePresenter();
+        let cached = styledIndexes.get(index);
+        if (!cached || cached.present !== present) {
+            cached = { present, index: buildCardIndex([...index.cardsById.values()].map(present)) };
+            styledIndexes.set(index, cached);
         }
-
-        const name = card?.name ?? card?.Name;
-        if (!name) return;
-        const normalized = normalizeCardName(name);
-        if (!normalized) return;
-        const list = index.idsByName.get(normalized);
-        if (list) {
-            if (!list.includes(cardId)) {
-                list.push(cardId);
-            }
-        } else {
-            index.idsByName.set(normalized, [cardId]);
-        }
-    });
-    return index;
+        const styled = getMatchesByName(cached.index, name);
+        return [...new Map([...original.map(present), ...styled].map(card => [Number(card.id ?? card.Id ?? card.CardId), card])).values()];
+    } catch { return original; }
 }
 
 function getLocalCardIndex(cards) {
@@ -417,12 +411,12 @@ export async function resolveDerivedCardInfo(rawText, options = {}) {
 
     if (Array.isArray(options.cards)) {
         const index = getLocalCardIndex(options.cards);
-        const match = getMatchesByName(index, normalizedName);
+        const match = await findReferenceMatches(index, normalizedName, options);
         if (match.length) return match;
     }
 
     const index = await loadCardIndex();
-    const matches = getMatchesByName(index, normalizedName);
+    const matches = await findReferenceMatches(index, normalizedName, options);
     return matches?.length ? matches : null;
 }
 
@@ -453,7 +447,7 @@ export async function resolveDerivedCardMatch(rawText, options = {}) {
     let matches = [];
     if (Array.isArray(options.cards)) {
         const index = getLocalCardIndex(options.cards);
-        const localMatches = getMatchesByName(index, normalizedName);
+        const localMatches = await findReferenceMatches(index, normalizedName, options);
         if (localMatches.length) {
             matches = localMatches;
         }
@@ -461,7 +455,7 @@ export async function resolveDerivedCardMatch(rawText, options = {}) {
 
     if (matches.length === 0) {
         const index = await loadCardIndex();
-        matches = getMatchesByName(index, normalizedName);
+        matches = await findReferenceMatches(index, normalizedName, options);
     }
 
     if (matches.length === 0) {
