@@ -110,12 +110,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     return result;
                 }
 
-                var transformResult = card.Transform(alternateDefinition, context);
+                var originalArtId = card.AlternateArtDefinitionId ?? card.BaseDefinitionId;
+                var transformResult = card.Transform(alternateDefinition, context, out var transformedCard, preserveInstanceIdentity: true);
                 if (!transformResult.Success)
                 {
                     return transformResult;
                 }
                 result.GeneratedEvents.AddRange(transformResult.GeneratedEvents);
+                card = transformedCard;
+                card.AlternateArtDefinitionId = originalArtId;
+                Target.Clear();
+                Target.Add(TargetInfo.ForCard(card));
             }
 
             // Delegate to domain method that performs the play and generates factual events.

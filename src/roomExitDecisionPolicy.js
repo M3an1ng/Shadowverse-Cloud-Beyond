@@ -2,6 +2,7 @@
 
 export function isNonAiMultiplayerHandshake(handshake) {
     if (!handshake) return false;
+    if (handshake.role === 'spectator') return false;
     if (handshake.useAiFallback === true) return false;
 
     const gameId = String(handshake.gameId || "").trim();

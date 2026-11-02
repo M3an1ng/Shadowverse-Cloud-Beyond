@@ -1,3 +1,4 @@
+import { confirmDialog } from '../../siteDialog.js';
 export function removeFavoritesMenu(editor) {
     const existingMenu = document.querySelector(".dsl-favorites-menu");
     if (existingMenu) {
@@ -238,7 +239,7 @@ export function renderFavoritesSection(editor, menu, closeMenu) {
                 event.preventDefault();
                 event.stopPropagation();
                 if (!favoriteId) return;
-                const confirmed = window.confirm("确定删除这个收藏吗？");
+                const confirmed = await confirmDialog("确定删除这个收藏吗？");
                 if (!confirmed) return;
                 const result = await editor.deleteFavorite(favoriteId);
                 if (!result?.success) {

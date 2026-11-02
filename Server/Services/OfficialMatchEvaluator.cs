@@ -73,7 +73,7 @@ public sealed class OfficialMatchEvaluator : IOfficialMatchEvaluator
         if (participants.Any(participant =>
                 participant == null ||
                 participant.InitialDeck == null ||
-                participant.InitialDeck.Count < GameConstants.Cards.MaxDeckSize))
+                (participant.IsTakeTwo ? participant.InitialDeck.Count != 30 : participant.InitialDeck.Count < GameConstants.Cards.MaxDeckSize)))
         {
             return "IncompleteDeck";
         }

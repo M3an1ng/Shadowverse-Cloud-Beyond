@@ -35,6 +35,11 @@ export function setupDailyQuestUI({ apiGetJson, apiPostJson, syncTopNavHoverLock
         return Number.isFinite(parsed) ? parsed : fallback;
     };
 
+    const visibleQuests = (quests) => (Array.isArray(quests) ? quests : []).filter(quest => {
+        if (pickValue(quest, 'isExpired', 'IsExpired', false)) return false;
+        const expires = Date.parse(pickValue(quest, 'expiresAt', 'ExpiresAt', ''));
+        return !Number.isFinite(expires) || expires > Date.now();
+    });
     const isQuestClaimable = (quest) =>
         !!pickValue(quest, 'isCompleted', 'IsCompleted', false) &&
         !pickValue(quest, 'isRewardClaimed', 'IsRewardClaimed', false) &&
@@ -151,8 +156,9 @@ export function setupDailyQuestUI({ apiGetJson, apiPostJson, syncTopNavHoverLock
     };
 
     const renderQuests = (quests, claimableCount) => {
-        const list = Array.isArray(quests) ? quests : [];
+        const list = visibleQuests(quests);
         if (list.length === 0) {
+            setSummary('暂无可显示任务');
             renderEmpty('暂无可显示任务');
             return;
         }
@@ -166,7 +172,7 @@ export function setupDailyQuestUI({ apiGetJson, apiPostJson, syncTopNavHoverLock
             .filter(date => !Number.isNaN(date.getTime()))
             .sort((a, b) => a.getTime() - b.getTime())[0];
         const resetText = resetAt
-            ? resetAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+            ? resetAt.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
             : '--:--';
 
         setSummary(`今日 ${completedCount}/${list.length} · <strong>可领取 ${Math.max(0, toSafeInt(claimableCount, claimable.length))}</strong> · 重置 ${resetText}`);
@@ -196,8 +202,8 @@ export function setupDailyQuestUI({ apiGetJson, apiPostJson, syncTopNavHoverLock
         stateRequest = (async () => {
             try {
                 const state = await apiGetJson(`/api/economy/state/${session.userId}`);
-                const quests = Array.isArray(state?.quests) ? state.quests : [];
-                const claimableCount = toSafeInt(pickValue(state, 'claimableQuestCount', 'ClaimableQuestCount', 0), quests.filter(isQuestClaimable).length);
+                const quests = visibleQuests(state?.quests ?? state?.Quests);
+                const claimableCount = quests.filter(isQuestClaimable).length;
                 setBadge(claimableCount);
                 renderQuests(quests, claimableCount);
             } catch (err) {

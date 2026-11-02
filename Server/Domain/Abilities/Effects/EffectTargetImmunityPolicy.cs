@@ -1,65 +1,25 @@
-using System.Collections.Generic;
+using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
+using System;
 using System.Linq;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
-using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.Events;
-
 namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
 {
     public static class EffectTargetImmunityPolicy
     {
-        private static readonly HashSet<EffectType> IgnoredEffectTypes = new()
-        {
-            EffectType.Damage,
-            EffectType.ModifyStatus
-        };
-
-        public static bool IsImmuneTarget(CardInstance target, GameContext context)
-        {
-            return IsImmuneTarget(target, context.CurrentEffect, context);
-        }
-
+        public static bool IsImmuneTarget(CardInstance target, GameContext context) => IsImmuneTarget(target, context.CurrentEffect, context);
         public static bool IsImmuneTarget(CardInstance target, Effect? effect, GameContext context)
         {
-            if (target == null || effect == null)
-            {
-                return false;
-            }
-
-            if (context.IsAuraRefresh)
-            {
-                return false;
-            }
-
-            if (IgnoredEffectTypes.Contains(effect.Type))
-            {
-                return false;
-            }
-
-            if (IsEffectFromTargetItself(target, effect, context))
-            {
-                return false;
-            }
-
-            if (!target.IsFollower || !target.IsOnField)
-            {
-                return false;
-            }
-
-            var keywords = context.BuffService.GetEffectiveKeywords(target, context);
-            return keywords.Contains(CardKeyword.EffectImmune);
+            if (effect == null) return false; // Combat/system actions have no card ability effect.
+            var sourceId = effect.SourceCardId ?? context.SourceAbility?.SourceCardId ?? context.SourceCard?.InstanceId;
+            return IsImmuneToOtherCard(target, sourceId, context);
         }
-
-        private static bool IsEffectFromTargetItself(CardInstance target, Effect effect, GameContext context)
+        public static bool IsImmuneToOtherCard(CardInstance target, Guid? sourceId, GameContext context)
         {
-            if (context.SourceCard?.InstanceId == target.InstanceId)
-            {
-                return true;
-            }
-
-            return effect.SourceCardId.HasValue && effect.SourceCardId.Value == target.InstanceId;
+            if (target == null || !target.IsOnField || !sourceId.HasValue || sourceId == target.InstanceId) return false;
+            return context.BuffService.GetEffectiveKeywords(target, context).Contains(CardKeyword.EffectImmune);
         }
     }
 }

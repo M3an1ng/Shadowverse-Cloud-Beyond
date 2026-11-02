@@ -1,3 +1,4 @@
+import { confirmDialog } from './siteDialog.js';
 import { getUserSession, USER_SESSION_CHANGED_EVENT } from "./userSession.js";
 import {
     ensureDeckEnvironmentOptions,
@@ -977,7 +978,7 @@ class DevToolsCopyLimitPolicies {
         const owner = this.requestOwner;
         const query = this.queryRequest;
         const ownsQuery = () => this.ownsRequest(owner) && this.queryRequest === query;
-        const confirmed = window.confirm(`确认删除卡牌 ${cardDefinitionId} 的规则并恢复默认上限吗？`);
+        const confirmed = await confirmDialog(`确认删除卡牌 ${cardDefinitionId} 的规则并恢复默认上限吗？`);
         if (!confirmed) return;
 
         const environment = this.getQueryEnvironment();

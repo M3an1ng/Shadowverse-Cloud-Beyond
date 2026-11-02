@@ -159,11 +159,14 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
         }
 
-        [DslExposable("Spellboost", Description = "spellboost counter value.")]
+        [DslExposable("魔力增幅数", Description = "魔力增幅计数器数值")]
         public int Spellboost => Get(CardInstance.SpellboostCounterKey);
 
-        [DslExposable("Earthsigil", Description = "earthsigil counter value.")]
+        [DslExposable("土之印数", Description = "土之印计数器数值")]
         public int Earthsigil => Get(CardInstance.EarthsigilCounterKey);
+
+        [DslExposable("证据数", Description = "证据护符的证据数")]
+        public int Evidence => Get(CardInstance.EvidenceCounterKey);
 
         public int this[string key] => Get(key);
 

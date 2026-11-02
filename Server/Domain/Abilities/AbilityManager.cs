@@ -988,6 +988,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// </summary>
         private GameEventDto? ConvertEventToDto(IGameEvent gameEvent)
         {
+            if (gameEvent is AbilityTriggeredEvent hiddenTrigger && hiddenTrigger.TriggeredAbility is Ability hiddenAbility && !hiddenAbility.BroadcastOnTrigger) return null;
             var abilityTriggeredEvent = gameEvent as AbilityTriggeredEvent;
             var triggeredAbility = abilityTriggeredEvent?.TriggeredAbility;
             var concreteAbility = triggeredAbility as Ability;
@@ -1056,6 +1057,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 _logger?.LogDebug("[AbilityManager] Ability {AbilityKeywords} (RuntimeId: {RuntimeId}) conditions not met. Skipping.",
                     ability.KeywordSummary, ability.RuntimeId);
                 return AbilityProcessResult.Success(new List<Effect>(), auraEvents); // Return a successful result with no effects.
+            }
+
+            if (runsEffects && abilityConditionsPassed)
+            {
+                var intermezzoOwner = IntromezzoGate.Owner(ability, context);
+                if (intermezzoOwner != null)
+                {
+                    if (recordTrigger && !intermezzoOwner.ConsumeIntromezzo())
+                        return AbilityProcessResult.Success(new List<Effect>(), auraEvents);
+                    if (!recordTrigger && !intermezzoOwner.IsIntromezzoActive)
+                        return AbilityProcessResult.Success(new List<Effect>(), auraEvents, true);
+                }
             }
 
             var hasPlayerChoice = ability.Targets.Any(t => t.Config.PlayerChoiceOptions?.IsRequired == true);
@@ -1211,7 +1224,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
             if (ability is Ability concreteAbility)
             {
-                return concreteAbility.BroadcastOnTrigger;
+                // Gameplay trigger facts must not depend on the visual broadcast preference.
+                return concreteAbility.BroadcastOnTrigger || concreteAbility.Keywords.Any(k => k != AbilityKeyword.None);
             }
 
             return true;

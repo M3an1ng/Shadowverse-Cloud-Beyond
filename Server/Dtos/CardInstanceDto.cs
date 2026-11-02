@@ -18,8 +18,9 @@ namespace ShadowverseBeyond.Server.Dtos
     : ICard // Implement the interface
     {
         /// <summary>
-        /// Unique identifier for this specific card instance.
+        /// Corresponding alternate card faces visible in a card preview.
         /// </summary>
+        public List<AlternatePlayReferenceDto> AlternatePlayReferences { get; init; } = new();
         public Guid InstanceId { get; init; }
 
         /// <summary>
@@ -68,6 +69,7 @@ namespace ShadowverseBeyond.Server.Dtos
         /// Earthsigil counter value (for earth sigil cards).
         /// </summary>
         public int Earthsigil { get; init; }
+        public int Evidence { get; init; }
 
         /// <summary>
         /// Counter values attached to this card instance for preview display.
@@ -237,6 +239,7 @@ namespace ShadowverseBeyond.Server.Dtos
         /// <summary>
         /// The Player ID of the player who currently controls this instance on the field.
         /// </summary>
+        public bool IsIntromezzoActive { get; set; } = true;
         public Guid OwnerPlayerId { get; set; } = Guid.Empty;
 
         /// <summary>

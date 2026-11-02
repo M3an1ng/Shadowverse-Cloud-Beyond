@@ -515,6 +515,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         /// </summary>
         [Description("融合结算")]
         CardFused,
+        [Description("发现")]
+        Discover,
+        [Description("发现选择")]
+        DiscoverRequest,
 
     }
 

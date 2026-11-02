@@ -114,12 +114,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = $"TransformEvent.Commit: CardDefinition {NewCardDefinitionId} not found." };
             }
 
-            var transformResult = card.Transform(def, context);
+            var transformResult = card.Transform(def, context, out var transformedCard);
             if (!transformResult.Success)
             {
                 return transformResult;
             }
 
+            card = transformedCard;
+            Target.Clear();
+            Target.Add(TargetInfo.ForCard(card));
             if (CopySourceState)
             {
                 if (CopySourceStateSnapshot == null)

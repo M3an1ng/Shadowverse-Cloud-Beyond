@@ -25,10 +25,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("被破坏的卡牌", "被破坏的目标卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? DestroyTarget => Target.FirstOrDefault()?.Card;
 
-        [GameEventParameter("破坏来源快照", "提交破坏事件时记录的破坏来源快照。", Scope = GameEventParameterScope.Output)]
+        [GameEventParameter("破坏来源快照", "提交破坏事件时记录的破坏来源快照。", Scope = GameEventParameterScope.Both)]
         public CardInstanceSnapshot? DestroySourceSnapshot { get; private set; }
 
-        [GameEventParameter("被破坏目标快照", "提交破坏事件时记录的被破坏目标快照。", Scope = GameEventParameterScope.Output)]
+        [GameEventParameter("被破坏目标快照", "提交破坏事件时记录的被破坏目标快照。", Scope = GameEventParameterScope.Both)]
         public CardInstanceSnapshot? DestroyTargetSnapshot { get; private set; }
 
         public DestroyEvent(
@@ -44,8 +44,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
             Target.Add(TargetInfo.ForCard(target));
             Source = TargetInfo.ForCard(source);
             Reason = reason;
-            DestroyTargetSnapshot = destroyTargetSnapshot;
-            DestroySourceSnapshot = destroySourceSnapshot;
+            DestroyTargetSnapshot = destroyTargetSnapshot ?? CardSnapshotCapture.TryCapture(target);
+            DestroySourceSnapshot = destroySourceSnapshot ?? CardSnapshotCapture.TryCapture(source);
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -57,6 +57,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "Target or source card is null in DestroyEvent." };
             }
+
+            if (Reason == EventReasonSource.Ability && EffectTargetImmunityPolicy.IsImmuneToOtherCard(targetCard, sourceCard.InstanceId, context)) return new DomainOperationResult { Success = true };
 
             DestroyTargetSnapshot ??= CardSnapshotCapture.TryCapture(targetCard);
             DestroySourceSnapshot ??= CardSnapshotCapture.TryCapture(sourceCard);

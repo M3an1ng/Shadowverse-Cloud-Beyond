@@ -1,5 +1,7 @@
+import { getCardStylePresenter } from '../cardStyleDom.js';
+import { mountStylePicker } from '../cardStyles.js';
 import { renderDescriptionHtml } from '../descriptionParser.js';
-import { hydrateDescriptionReferences } from '../previewDescriptionReferences.js';
+import { hydrateAlternatePlayReferences, hydrateDescriptionReferences } from '../previewDescriptionReferences.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from '../enumLocalizationCache.js';
 import { showPreviewDescriptionTooltip } from '../previewDescriptionTooltip.js';
 import { getUserSession } from '../userSession.js';
@@ -123,9 +125,9 @@ function resolveArtUrl(path) {
     return encodeURI(path).replace(/'/g, '%27');
 }
 
-function buildAbilityHtml(description) {
+function buildAbilityHtml(description, isIntromezzoActive = null) {
     const contentHtml = description
-        ? renderDescriptionHtml(description)
+        ? renderDescriptionHtml(description, { isIntromezzoActive })
         : '<span class="text-dim"><暂无描述></span>';
     return `<div class="ability-text">${contentHtml}</div>`;
 }
@@ -335,6 +337,13 @@ export function showCardDetailImageModal(detailUrl) {
 }
 
 export function showCardDetailModal(card, options = {}) {
+    if (card && !options.originalCardMode && !options.stylePreferenceApplied && !card.OwnerPlayerId) {
+        void getCardStylePresenter().then(present => {
+            const styled = present(card.styleOriginalCard || card);
+            showCardDetailModal(styled, { ...options, styleOriginalCard: card.styleOriginalCard || card, previewUrl: styled.artPreview ?? styled.ArtPreview, detailUrl: styled.artDetail ?? styled.ArtDetail, stylePreferenceApplied: true });
+        }).catch(() => showCardDetailModal(card, { ...options, stylePreferenceApplied: true }));
+        return;
+    }
     if (!card) return;
     const navigationMode = normalizeDetailNavigationMode(options.navigationMode);
     const modalOptions = { ...options };
@@ -386,7 +395,7 @@ export function showCardDetailModal(card, options = {}) {
     const previewUrl = resolvedPreviewUrl || resolvedDetailUrl;
     const detailUrl = resolvedDetailUrl;
     const inspectDisabled = !detailUrl;
-    const abilityHtml = buildAbilityHtml(description);
+    const abilityHtml = buildAbilityHtml(description, card.isIntromezzoActive ?? card.IsIntromezzoActive);
     const artHtml = previewUrl
         ? `<img class="card-preview-image" src="${previewUrl}" alt="${escapeHtml(name)}">`
         : `
@@ -422,6 +431,7 @@ export function showCardDetailModal(card, options = {}) {
     const overlay = document.createElement('div');
     overlay.id = MODAL_ID;
     overlay.className = `card-detail-modal-overlay${hadOpenModal ? ' is-reopen' : ''}`;
+    overlay.style.zIndex=String(Math.max(100010,...[...document.querySelectorAll('.feature-overlay,.history-overlay,.discover-overlay')].map(el=>Number(getComputedStyle(el).zIndex)||0))+20);
     overlay.innerHTML = `
         <div class="card-detail-modal-shell">
             <div class="card-detail-modal" role="dialog" aria-modal="true" aria-label="Card detail">
@@ -595,6 +605,7 @@ export function showCardDetailModal(card, options = {}) {
         event.preventDefault();
         event.stopPropagation();
         const tooltipOptions = {
+            originalCardMode: options.originalCardMode,
             openCardDetail: showCardDetailModal,
             cards: modalOptions.cards,
             currentCardId,
@@ -604,6 +615,10 @@ export function showCardDetailModal(card, options = {}) {
     });
     document.addEventListener('keydown', onKeydown);
 
+    if (!options.originalCardMode) void mountStylePicker(overlay.querySelector('.inspect-btn').parentElement, options.styleOriginalCard || card, (appearance,base) => {
+        const original=base || options.styleOriginalCard || card;
+        showCardDetailModal(appearance ? {...original,...appearance} : original,{...modalOptions,previewUrl:appearance?.artPreview||original.artPreview,detailUrl:appearance?.artDetail||original.artDetail,styleOriginalCard:original,stylePreferenceApplied:true,navigationMode:'replace'});
+    },!options.stylePreferenceApplied).catch(console.warn);
     const inspectBtn = overlay.querySelector('.inspect-btn');
     if (inspectBtn && !inspectDisabled) {
         inspectBtn.addEventListener('click', (event) => {
@@ -913,7 +928,15 @@ export function showCardDetailModal(card, options = {}) {
 
     document.body.appendChild(overlay);
     ensureDetailEnumLocalization(overlay);
+    const openReferenceDetail = referencedCard => {
+        const referenceOptions = { ...modalOptions, navigationMode: DETAIL_NAVIGATION_PUSH };
+        for (const key of ['stylePreferenceApplied', 'styleOriginalCard', 'previewUrl', 'detailUrl']) delete referenceOptions[key];
+        showCardDetailModal(referencedCard, referenceOptions);
+    };
+    void hydrateAlternatePlayReferences(overlay.querySelector('.ability-box'), currentCardId, { originalCardMode: options.originalCardMode, fallbackPreviewUrl: previewUrl, cards: modalOptions.cards, openCardDetail: openReferenceDetail });
     void hydrateDescriptionReferences(overlay, {
+        originalCardMode: options.originalCardMode,
+        openCardDetail: openReferenceDetail,
         cards: modalOptions.cards,
         fallbackPreviewUrl: previewUrl,
         currentCardId,

@@ -64,7 +64,7 @@ namespace ShadowverseBeyond.Server.Services
             CardClass? SecondaryClass,
             DeckEnvironment Environment,
             DeckRule Rule,
-            Guid? UserDeckId);
+            Guid? UserDeckId, bool IsTakeTwo = false);
 
         // Dictionary to track the player whose action chain is currently being processed per game - Declaration moved/exists elsewhere
         // Removed duplicate declaration from line 57
@@ -796,6 +796,8 @@ namespace ShadowverseBeyond.Server.Services
             bool requireComplete,
             CancellationToken cancellationToken)
         {
+            if (selection.GeneratedDraftCardIds is { Length:30 } draftIds && selection.DeckClass.HasValue)
+                return new ResolvedDeckSelection(draftIds.ToList(), selection.DeckClass.Value, null, DeckEnvironment.Open, DeckRule.Standard, null, true);
             if (!selection.HasSelection)
             {
                 _logger.LogWarning("[GameService] Deck selection is empty.");
@@ -1219,7 +1221,9 @@ namespace ShadowverseBeyond.Server.Services
                 player1State.Environment = hostDeck.Environment;
                 player2State.Environment = opponentDeck.Environment;
                 player1State.Rule = hostDeck.Rule;
+                player1State.IsTakeTwo = hostDeck.IsTakeTwo;
                 player2State.Rule = opponentDeck.Rule;
+                player2State.IsTakeTwo = opponentDeck.IsTakeTwo;
                 player1State.UserDeckId = hostDeck.UserDeckId;
                 player2State.UserDeckId = opponentDeck.UserDeckId;
 
@@ -2199,6 +2203,22 @@ namespace ShadowverseBeyond.Server.Services
                 }
             }
             _logger.LogInformation("[GameService:{GameId}] Finished broadcasting {EventCount} events.", gameId, events.Count);
+        }
+
+        public async Task NotifyCardStylesChangedAsync(Guid ownerPlayerId)
+        {
+            await using var scope = _serviceScopeFactory.CreateAsyncScope();
+            var sp=scope.ServiceProvider;
+            foreach(var entry in _gameStates)
+            {
+                var state=entry.Value;
+                if(state.Player1.PlayerId!=ownerPlayerId && state.Player2.PlayerId!=ownerPlayerId) continue;
+                using var context=new GameContext(sp,sp.GetRequiredService<IMapper>(),sp.GetRequiredService<IGameContextAccessor>(),state,ownerPlayerId);
+                var field=state.AllCards.Where(c=>c.OwnerPlayerId==ownerPlayerId && c.CurrentZone==CardZone.Field).Select(c=>CardInstanceProjection.Create(c,context)).ToList();
+                if(field.Count>0) await BroadcastEventsAsync(entry.Key,new List<GameEventDto>{new CardInstanceUpdatedEventDto(Guid.Empty,field)});
+                var hand=state.AllCards.Where(c=>c.OwnerPlayerId==ownerPlayerId && c.CurrentZone==CardZone.Hand).Select(c=>CardInstanceProjection.Create(c,context)).ToList();
+                if(hand.Count>0) await BroadcastEventToPlayerAsync(entry.Key,ownerPlayerId,new CardInstanceUpdatedEventDto(Guid.Empty,hand));
+            }
         }
 
         public async Task NotifyCardDefinitionUpdatedAsync(int cardId)

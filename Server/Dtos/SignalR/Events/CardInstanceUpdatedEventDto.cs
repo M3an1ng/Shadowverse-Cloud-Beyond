@@ -13,6 +13,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// Updated card instance snapshots.
         /// </summary>
         public List<CardInstanceDto> UpdatedCards { get; init; } = new List<CardInstanceDto>();
+        public Dictionary<Guid, Guid> ReplacedCardInstanceIds { get; init; } = new();
 
         [SetsRequiredMembers]
         public CardInstanceUpdatedEventDto(Guid sourcePlayerId, List<CardInstanceDto> updatedCards)

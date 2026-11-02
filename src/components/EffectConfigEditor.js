@@ -1,3 +1,4 @@
+import { confirmDialog } from '../siteDialog.js';
 // src/components/EffectConfigEditor.js - 效果配置编辑器 (Refactored)
 //
 // 相关文档:
@@ -6,6 +7,7 @@
 //
 
 import { mergeInheritedTriggerFields, isDecisionAbilityEffect } from './grantedAbilityConfig.js';
+import { ConditionConfigEditor } from './ConditionConfigEditor.js';
 import { GrantedAbilityListEditor } from './GrantedAbilityListEditor.js';
 import { normalizeDurationType } from './buffDuration.js';
 import { unwrapStaticValueConfig } from './staticValueConfig.js';
@@ -50,6 +52,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             (effects || []).map(effect => this.normalizeEffectConfig(effect)),
             this.options?.trigger
         );
+        for (const editor of this._poolConditionEditors || []) editor.cleanup();
+        this._poolConditionEditors = [];
         this.outputEditorsByEffect.clear();
         this.closeChainedAbilityModal();
 
@@ -409,8 +413,18 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             triggerAbilityMode
         };
 
+        const isDiscoverEffect = String(effectMeta.effectTypeName || effectMeta.EffectTypeName || '').toLowerCase() === 'discover';
+        const discoverModeValue = this.getEffectParameterValue(parameters, effectMeta, 'Mode');
+        const discoverCopy = ['copy','1'].includes(String(discoverModeValue ?? 'Definition').toLowerCase());
+        if (isDiscoverEffect) container.addEventListener('change', () => requestAnimationFrame(() => {
+            const latest=getLatestParameters();
+            const copy=['copy','1'].includes(String(this.getEffectParameterValue(latest,effectMeta,'Mode') ?? 'Definition').toLowerCase());
+            if(copy !== discoverCopy && container.isConnected) container.replaceWith(this.createParametersPanel(effectMeta,latest,onChange,options));
+        }));
+
         effectiveParameters.forEach(paramMeta => {
             const paramName = this.getEffectParameterName(paramMeta);
+            if (isDiscoverEffect && ((paramName === 'CardDefinitionIds' && discoverCopy) || (paramName === 'CopySourceTargets' && !discoverCopy))) return;
             if (!paramName) {
                 return;
             }
@@ -527,6 +541,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 controlKey === 'valueconfigeditor' ||
                 controlKey === 'textarea' ||
                 controlKey === 'abilitylisteditor' ||
+                controlKey === 'conditionlisteditor' ||
                 inputMode === 'dsl') {
                 group.className += ' full-width';
             }
@@ -1446,6 +1461,15 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             return;
         }
 
+        if (controlKey === 'conditionlisteditor') {
+            const editor = new ConditionConfigEditor();
+            void editor.render(container, Array.isArray(scalarValue) ? scalarValue : [], value => setParam(value), {
+                title: '亡召池筛选', intro: '仅筛选已被破坏的随从。self 表示池中的候选随从，启用条件须全部满足。',
+                selfType: 'CardInstance', hideHelp: false
+            });
+            this._poolConditionEditors ??= []; this._poolConditionEditors.push(editor);
+            return;
+        }
         if (controlKey === 'abilitydefinitionpicker') {
             this.renderAbilityDefinitionIdEditor(container, {
                 values: scalarValue,
@@ -2718,8 +2742,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
                 deleteBtn.className = 'btn-icon delete-btn';
                 deleteBtn.title = '删除';
                 deleteBtn.setAttribute('aria-label', '删除');
-                deleteBtn.addEventListener('click', () => {
-                    if (!confirm('确定删除此连锁能力？')) {
+                deleteBtn.addEventListener('click', async () => {
+                    if (!await confirmDialog('确定删除此连锁能力？')) {
                         return;
                     }
                     const next = abilities.filter((_, i) => i !== index);
@@ -2935,8 +2959,8 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
         this.notifyChange();
     }
 
-    removeEffect(index) {
-        if (confirm('确定删除此效果？')) {
+    async removeEffect(index) {
+        if (await confirmDialog('确定删除此效果？')) {
             this.effects.splice(index, 1);
             this.renderEffectsList(this.container.querySelector('#effects-list-container'));
             this.notifyChange();

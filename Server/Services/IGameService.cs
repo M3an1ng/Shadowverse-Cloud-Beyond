@@ -1,4 +1,4 @@
-// File: Server/Services/IGameService.cs
+﻿// File: Server/Services/IGameService.cs
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using ShadowverseBeyond.Server.Domain.Entities; // Added for GameState domain entity
 using System.Threading.Tasks;
@@ -79,6 +79,7 @@ namespace ShadowverseBeyond.Server.Services
         /// Refreshes cached card definitions and broadcasts updated card instances for the specified card id.
         /// </summary>
         Task NotifyCardDefinitionUpdatedAsync(int cardId);
+        Task NotifyCardStylesChangedAsync(Guid ownerPlayerId);
 
         /// <summary>
         /// Refreshes hand playability for the specified player and broadcasts the update.

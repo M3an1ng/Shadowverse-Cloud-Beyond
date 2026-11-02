@@ -17,7 +17,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data; // Added ShadowverseBeyo
 /// <summary>
 /// Represents the database context for the application, interfacing with EF Core.
 /// </summary>
-public class ApplicationDbContext : DbContext
+public partial class ApplicationDbContext : DbContext
 {
   /// <summary>
   /// Initializes a new instance of the <see cref="ApplicationDbContext"/> class.

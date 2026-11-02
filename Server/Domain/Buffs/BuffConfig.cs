@@ -17,6 +17,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         public ValueConfig? DurationParameter { get; set; } = new StaticValueConfig { Value = 0 };
         public ConditionConfig? RemoveCondition { get; set; }
         public bool CanStack { get; set; } = false;
+        public bool RemoveAfterUse { get; set; } = false;
 
         public List<StatModifierConfig> StatModifiers { get; set; } = new();
         public List<KeywordModifierConfig> KeywordModifiers { get; set; } = new();
@@ -32,6 +33,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         public ValueConfig? DurationParameter { get; set; } = new StaticValueConfig { Value = 0 };
         public ConditionConfig? RemoveCondition { get; set; }
         public bool CanStack { get; set; } = false;
+        public bool RemoveAfterUse { get; set; } = false;
 
         public List<StatModifierConfig> StatModifiers { get; set; } = new();
         public List<KeywordModifierConfig> KeywordModifiers { get; set; } = new();
@@ -90,6 +92,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                     DurationParameter = template.DurationParameter,
                     RemoveCondition = template.RemoveCondition,
                     CanStack = template.CanStack,
+                    RemoveAfterUse = template.RemoveAfterUse,
                     StatModifiers = template.StatModifiers ?? new List<StatModifierConfig>(),
                     KeywordModifiers = template.KeywordModifiers ?? new List<KeywordModifierConfig>(),
                     TribeModifiers = template.TribeModifiers ?? new List<TribeModifierConfig>(),

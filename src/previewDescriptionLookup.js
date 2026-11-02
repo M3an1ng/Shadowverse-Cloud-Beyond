@@ -1,3 +1,5 @@
+import { buildReferenceNameIndex } from './cardReferenceIndex.js';
+import { getCardStylePresenter } from './cardStyleDom.js';
 import { loadCardDefinitions } from './cardDefinitionsLoader.js';
 import {
     CARD_CATALOG_INVALIDATED_EVENT,
@@ -80,6 +82,10 @@ const cardKeywordGlossary = {
     BanEvolve: {
         name: '无法进化',
         description: '该随从无法进化。'
+    },
+    Evidence: {
+        name: '证据',
+        description: '拥有证据的护符卡进入战场时，证据数为1，并以蓝色数字标记于卡片左下方。\n若自己战场上有其他证据护符，将使其全部消失并合计证据数。\n拥有证据的卡片无法被敌方的能力指定，但仍会被能力破坏。\n若证据数降至0，则会被破坏。'
     },
     EarthSigil: {
         name: '土之印',
@@ -168,9 +174,13 @@ const abilityKeywordGlossary = {
         name: '漫游',
         description: '满足漫游条件时触发。'
     },
+    Discover: {
+        name: '发现',
+        description: '从指定范围中随机展示最多3张卡片，由自己选择1张加入手牌。优先展示不同卡片数据ID的卡片，默认排除纹章和信仰。复制卡片时保留其附加效果。'
+    },
     Intromezzo: {
         name: '间奏',
-        description: '满足间奏条件时触发。'
+        description: '双方分别共享间奏状态，初始为激活。间奏能力触发时，激活则发动并转为未激活；未激活则跳过并重新激活。'
     },
     Wrath: {
         name: '狂乱',
@@ -319,29 +329,22 @@ function createEmptyIndex() {
     };
 }
 
-function buildCardIndex(cards) {
-    const index = createEmptyIndex();
-    (cards || []).forEach(card => {
-        const cardId = card?.id ?? card?.CardId ?? card?.Id;
-        if (cardId == null) return;
-        if (!index.cardsById.has(cardId)) {
-            index.cardsById.set(cardId, card);
+const buildCardIndex = buildReferenceNameIndex;
+// Reuse the style presenter as a revision key; switching preferences creates a new one.
+let styledIndexes = new WeakMap();
+async function findReferenceMatches(index, name, options) {
+    const original = getMatchesByName(index, name);
+    if (options.originalCardMode) return original;
+    try {
+        const present = await getCardStylePresenter();
+        let cached = styledIndexes.get(index);
+        if (!cached || cached.present !== present) {
+            cached = { present, index: buildCardIndex([...index.cardsById.values()].map(present)) };
+            styledIndexes.set(index, cached);
         }
-
-        const name = card?.name ?? card?.Name;
-        if (!name) return;
-        const normalized = normalizeCardName(name);
-        if (!normalized) return;
-        const list = index.idsByName.get(normalized);
-        if (list) {
-            if (!list.includes(cardId)) {
-                list.push(cardId);
-            }
-        } else {
-            index.idsByName.set(normalized, [cardId]);
-        }
-    });
-    return index;
+        const styled = getMatchesByName(cached.index, name);
+        return [...new Map([...original.map(present), ...styled].map(card => [Number(card.id ?? card.Id ?? card.CardId), card])).values()];
+    } catch { return original; }
 }
 
 function getLocalCardIndex(cards) {
@@ -412,12 +415,12 @@ export async function resolveDerivedCardInfo(rawText, options = {}) {
 
     if (Array.isArray(options.cards)) {
         const index = getLocalCardIndex(options.cards);
-        const match = getMatchesByName(index, normalizedName);
+        const match = await findReferenceMatches(index, normalizedName, options);
         if (match.length) return match;
     }
 
     const index = await loadCardIndex();
-    const matches = getMatchesByName(index, normalizedName);
+    const matches = await findReferenceMatches(index, normalizedName, options);
     return matches?.length ? matches : null;
 }
 
@@ -448,7 +451,7 @@ export async function resolveDerivedCardMatch(rawText, options = {}) {
     let matches = [];
     if (Array.isArray(options.cards)) {
         const index = getLocalCardIndex(options.cards);
-        const localMatches = getMatchesByName(index, normalizedName);
+        const localMatches = await findReferenceMatches(index, normalizedName, options);
         if (localMatches.length) {
             matches = localMatches;
         }
@@ -456,13 +459,16 @@ export async function resolveDerivedCardMatch(rawText, options = {}) {
 
     if (matches.length === 0) {
         const index = await loadCardIndex();
-        matches = getMatchesByName(index, normalizedName);
+        matches = await findReferenceMatches(index, normalizedName, options);
     }
 
     if (matches.length === 0) {
         return { match: null, matches: [], reason: 'not_found', requestedId: parsed.id };
     }
 
+    if (!options.originalCardMode) {
+        try { const present = await getCardStylePresenter(); matches = matches.map(present); } catch {}
+    }
     if (parsed.id) {
         const idValue = Number(parsed.id);
         const byId = matches.find(card => {

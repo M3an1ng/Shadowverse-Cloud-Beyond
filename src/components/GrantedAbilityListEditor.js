@@ -1,3 +1,5 @@
+import { confirmDialog } from '../siteDialog.js';
+import { showAlert } from '../siteDialog.js';
 import { copyGrantedAbilityConfig, createGrantedAbilityEditorInput, extractGrantedAbilityEditorConfig, normalizeInheritedTriggerFields, mergeInheritedTriggerFields, isDecisionAbilityEffect } from './grantedAbilityConfig.js';
 import { unwrapStaticValueConfig } from './staticValueConfig.js';
 
@@ -92,7 +94,7 @@ export class GrantedAbilityListEditor {
                 syncValue([...state.items, copied]);
             } catch (error) {
                 console.error('EffectConfigEditor: failed to copy ability', error);
-                alert(`复制能力失败: ${error.message}`);
+                showAlert(`复制能力失败: ${error.message}`);
             }
         });
 
@@ -185,8 +187,8 @@ export class GrantedAbilityListEditor {
                 deleteBtn.title = '删除';
                 deleteBtn.setAttribute('aria-label', '删除');
                 deleteBtn.textContent = '×';
-                deleteBtn.addEventListener('click', () => {
-                    if (!confirm('确定删除该授予能力？')) return;
+                deleteBtn.addEventListener('click', async () => {
+                    if (!await confirmDialog('确定删除该授予能力？')) return;
                     const next = state.items.filter((_, idx) => idx !== index);
                     syncValue(next);
                 });

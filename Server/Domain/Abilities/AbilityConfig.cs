@@ -101,6 +101,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
         public void NormalizeKeywords()
         {
+            // Accept Mini's effect-based declarations through the same native alternate-play path.
+            if (AlternatePlay == null)
+            {
+                foreach (var effect in Effects.Where(effect => effect.IsEnabled
+                    && effect.Type is ShadowverseBeyond.Server.Domain.Effects.EffectType.Accelerate or ShadowverseBeyond.Server.Domain.Effects.EffectType.Crystalize))
+                {
+                    var keyword = effect.Type == ShadowverseBeyond.Server.Domain.Effects.EffectType.Accelerate
+                        ? AbilityKeyword.Accelerate : AbilityKeyword.Crystalize;
+                    if (!HasKeyword(keyword) || !effect.Parameters.TryGetValue("CardDefinitionId", out var raw)
+                        || raw is not StaticValueConfig value) continue;
+                    var text = value.Value is global::System.Text.Json.JsonElement element ? element.ToString() : value.Value?.ToString();
+                    if (int.TryParse(text, out var id) && id > 0)
+                    {
+                        AlternatePlay = new AlternatePlayConfig { PlayAsCardDefinitionId = id };
+                        break;
+                    }
+                }
+            }
             if (!ActivateCost.HasValue)
             {
                 return;

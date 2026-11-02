@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -187,8 +188,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                         continue;
                     }
 
+                    var definition = ShadowverseBeyond.Server.Services.GameDataProvider.Instance.GetCardDefinition(playAsCardDefinitionId);
+                    if (definition == null || definition.Type != (keyword == AbilityKeyword.Accelerate ? ShadowverseBeyond.Server.Dtos.Enums.CardType.Spell : ShadowverseBeyond.Server.Dtos.Enums.CardType.Amulet))
+                        continue;
+                    if (ability.AlternatePlay?.AvailabilityConditions?.Any(condition => condition.IsEnabled
+                        && !context.ServiceProvider.GetRequiredService<ShadowverseBeyond.Server.Domain.Abilities.Conditions.IConditionEvaluator>()
+                            .Evaluate(condition, context with { SourceCard = card, SourceAbility = ability })) == true)
+                        continue;
                     var cost = GetAlternatePlayCostForAbility(card, keywordConfig, keyword, context);
-                    if (cost <= 0)
+                    if (cost < 0)
                     {
                         continue;
                     }

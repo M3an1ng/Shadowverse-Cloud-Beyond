@@ -1,4 +1,5 @@
-﻿import { getDeckOwnerQuery } from "../userSession.js";
+import { showAlert } from '../siteDialog.js';
+import { getDeckOwnerQuery } from "../userSession.js";
 import { createDeckPreviewModal } from "./deckPreviewModal.js";
 import { loadCardDefinitions } from "../cardDefinitionsLoader.js";
 import { getDeckEnvironmentLabel, getDeckRuleLabel } from "../deckPresentation.js";
@@ -318,7 +319,7 @@ export function createDeckSelectionPickerModal() {
 
         if (action === "preview") {
             openDeckPreview(deckId).catch((err) => {
-                alert(`预览失败：${err.message}`);
+                showAlert(`预览失败：${err.message}`);
             });
             return;
         }

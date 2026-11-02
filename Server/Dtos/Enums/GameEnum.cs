@@ -188,7 +188,9 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
         [Description("传统对战")]
         Standard = 0,
         [Description("混合职业")]
-        DualClass = 1
+        DualClass = 1,
+        [Description("双选对战")]
+        TakeTwo = 2
     }
 
     /// <summary>

@@ -1,0 +1,70 @@
+@font-face {
+  font-family: "MSE WeiBei";
+  src: url("/assets/fonts/mse-weibei-digits-0d0d42c4cc28.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+002D-0039;
+}
+.card-badge {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 56px;
+  aspect-ratio: 1;
+  color: #fff;
+  line-height: 1;
+  vertical-align: middle;
+  isolation: isolate;
+}
+.card-badge > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.card-badge-number {
+  position: relative;
+  z-index: 1;
+  display: block;
+  font-family: "MSE WeiBei", Georgia, serif;
+  font-weight: 400;
+  font-synthesis: none;
+  text-shadow:
+    0 2px 2px #000d,
+    1px 0 1px #0009,
+    -1px 0 1px #0009;
+  /* Optical centering for the supplied MSE font's numeral ink, rather than its line box. */
+  transform: translateY(-10%);
+  -webkit-text-stroke: 0.022em currentColor;
+  paint-order: stroke fill;
+}
+.card-badge-attack .card-badge-number,
+.card-badge-health .card-badge-number {
+  transform: translateY(-3%);
+}
+.card-badge[data-digits="2"] .card-badge-number {
+  font-size: 0.82em;
+}
+.card-badge[data-digits="3"] .card-badge-number {
+  font-size: 0.64em;
+}
+
+/* Align the visible, narrower stat sprites with the outside of their square slots. */
+.card-badge-attack .card-badge-number {
+  left: -6.87%;
+}
+.card-badge-health .card-badge-number {
+  left: 9.43%;
+}
+.card-badge-cost .card-badge-number {
+  font-size: 1.15em;
+  transform: translateY(-5%);
+}
+.card-badge-cost[data-digits="2"] .card-badge-number {
+  font-size: 0.94em;
+}
+.card-badge-cost[data-digits="3"] .card-badge-number {
+  font-size: 0.74em;
+}

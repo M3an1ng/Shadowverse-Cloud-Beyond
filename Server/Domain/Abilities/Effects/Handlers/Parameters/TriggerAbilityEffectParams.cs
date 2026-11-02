@@ -24,6 +24,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 
         [ParameterMetadata("自动随机选择目标", UiControlType.Checkbox, DefaultValue = false, Description = "当被触发能力需要玩家选目标时，改为自动随机选择合法目标。")]
         public bool AutoRandomTargetSelection { get; set; } = false;
+
+        [ParameterMetadata("跳过选择目标和模式", UiControlType.Checkbox, DefaultValue = false, Description = "被触发能力或其连锁包含玩家选择目标、选择模式时，整条能力不触发；优先于自动随机选择目标。")]
+        public bool SkipTargetAndModeSelection { get; set; } = false;
     }
 
 }

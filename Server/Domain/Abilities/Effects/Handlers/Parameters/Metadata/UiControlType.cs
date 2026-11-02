@@ -53,6 +53,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.
         /// <summary>
         /// 一个复合控件，用于配置一个 `ValueConfig` 对象，允许选择固定值或DSL公式。
         /// </summary>
-        ValueConfigEditor
+        ValueConfigEditor,
+        ConditionListEditor
     }
 }

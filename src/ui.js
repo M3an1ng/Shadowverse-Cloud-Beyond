@@ -1,3 +1,9 @@
+import { miniCardBadge } from './miniCardBadge.js';
+import { createCardInstance as createDiscoverPreviewCard } from './cardManager.js';
+import { createRevealAnimator } from './revealAnimation.js';
+import { playModeVisual } from './playModeVisual.js';
+import { summarizeAttachedNumericEffects, numericEffectTitle, renderAttachedNumericEffects, effectSourceHtml } from './liveEffectSummary.js';
+import { showAlert } from './siteDialog.js';
 // src/ui.js - UI渲染与交互处理
 //
 // 相关文档:
@@ -41,10 +47,14 @@ import {
     recordHandDragPerfFrame,
     summarizeHandDragPerfSession
 } from './debugDiagnostics.js';
+import { confirmDialog } from './siteDialog.js';
+import { shouldAutoConfirmChoice } from './choiceSettingsPolicy.js';
+import { readOperationSettings } from './operationSettings.js';
+import { renderDescriptionHtml } from './descriptionParser.js';
 import { buildPreviewSlateHtml } from './previewSlate.js';
 import { showPreviewDescriptionTooltip, hidePreviewDescriptionTooltip } from './previewDescriptionTooltip.js';
 import { showCardDetailModal } from './components/CardDetailMockup.js';
-import { hydrateDescriptionReferences } from './previewDescriptionReferences.js';
+import { hydrateAlternatePlayReferences, hydrateDescriptionReferences } from './previewDescriptionReferences.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from './enumLocalizationCache.js';
 import {
     renderGameLog,
@@ -1665,6 +1675,9 @@ function updateUnitCombatStats(unitInstance) {
         }
     }
     unitElement.classList.toggle('enhance-active', costInfo.enhanceActive === true);
+        unitElement.classList.toggle('alternate-active', costInfo.modeVisual.alternate);
+        unitElement.dataset.playModeLabel = costInfo.modeVisual.label;
+        unitElement.style.setProperty('--play-mode-label', JSON.stringify(costInfo.modeVisual.label));
 
     const attackValueRaw = Number(unitInstance.currentAttack ?? unitInstance.CurrentAttack ?? unitInstance.attack ?? unitInstance.Attack);
     if (Number.isFinite(attackValueRaw)) {
@@ -1766,6 +1779,9 @@ function refreshHandPlayabilityVisuals(playerId, handCards = null) {
             costEl.textContent = `${costInfo.displayCost ?? '?'}`;
         }
         cardElement.classList.toggle('enhance-active', costInfo.enhanceActive === true);
+        cardElement.classList.toggle('alternate-active', costInfo.modeVisual.alternate);
+        cardElement.dataset.playModeLabel = costInfo.modeVisual.label;
+        cardElement.style.setProperty('--play-mode-label', JSON.stringify(costInfo.modeVisual.label));
     });
 }
 
@@ -2220,7 +2236,9 @@ function endPlayerChoice(notifyBackendOfCancellation = true) {
 }
 // --- End UI State Management Functions ---
 
+let restoreDiscoverPreview = null;
 function removeChoiceOverlayUI() {
+    restoreDiscoverPreview?.(); restoreDiscoverPreview = null;
     document.getElementById('choice-overlay-root')?.remove();
     // Backward compatibility cleanup (older prompt overlay).
     document.getElementById('choice-prompt-overlay')?.remove();
@@ -2398,7 +2416,7 @@ async function handleChoiceTargetClick(targetUid) {
     renderHighlights(gameState);
     updateChoiceOverlayUI();
 
-    if (!fixedChoiceCount || currentChoiceSelectedTargetIds.size !== max) {
+    if (!fixedChoiceCount || !shouldAutoConfirmChoice(currentChoiceRequest, currentChoiceSelectedTargetIds.size, readOperationSettings())) {
         return;
     }
 
@@ -3054,21 +3072,24 @@ function resolveCardCostDisplay(cardInstance, context) {
     const baseCost = Number.isFinite(baseCostRaw) ? baseCostRaw : (baseCostRaw ?? '?');
     let displayCost = baseCost;
     let enhanceActive = false;
+    let modeVisual = playModeVisual(null);
 
     if (context === 'hand') {
         const cardUid = cardInstance.uid ?? cardInstance.InstanceId ?? cardInstance.instanceId;
         const ownerPlayerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId ?? gameState.localPlayerId;
         const playabilityInfo = cardUid ? getPlayabilityForCard(cardUid, ownerPlayerId) : null;
         const selectedCost = playabilityInfo?.selectedPlayCost;
+        modeVisual = playModeVisual(playabilityInfo?.selectedPlayMode, cardInstance.name ?? cardInstance.Name ?? '');
+        enhanceActive = !!modeVisual.label;
         if (playabilityInfo && !isBasePlayModeValue(playabilityInfo.selectedPlayMode) && Number.isFinite(selectedCost)) {
             displayCost = selectedCost;
             // Show Enhance visuals whenever Enhance mode is selected, even when
             // base cost equals enhance cost.
-            enhanceActive = isEnhanceModeValue(playabilityInfo.selectedPlayMode);
+            enhanceActive = !isBasePlayModeValue(playabilityInfo.selectedPlayMode);
         }
     }
 
-    return { displayCost, enhanceActive };
+    return { displayCost, enhanceActive, modeVisual };
 }
 
 function resolveCardContext(cardInstance, context) {
@@ -3383,6 +3404,10 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
         cardDiv.classList.add('enhance-active');
     }
 
+    cardDiv.classList.toggle('alternate-active', costInfo.modeVisual.alternate);
+    cardDiv.dataset.playModeLabel = costInfo.modeVisual.label;
+        cardDiv.style.setProperty('--play-mode-label', JSON.stringify(costInfo.modeVisual.label));
+
     // 基本的 Inner HTML 结构 - 需要根据 style.css 进行调整
     // 使用 ?? 提供默认值，防止属性缺失导致显示错误
     // 【修复】使用正确的属性名：Name（大写）而不是name（小写）
@@ -3407,6 +3432,9 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
         ?? cardInstance.Counters?.Earthsigil
         ?? 0;
     const showEarthsigil = isAmuletType && hasEarthsigilKeyword;
+    const showEvidence = isAmuletType && (cardInstance.keywords ?? cardInstance.Keywords ?? [])
+        .some(keyword => equalsIgnoreCase(keyword, 'Evidence'));
+    const evidenceValue = cardInstance.evidence ?? cardInstance.Evidence ?? cardInstance.counters?.evidence ?? cardInstance.Counters?.evidence ?? 0;
 
     const keywordBadgesHtml = buildKeywordBadgesHtml(cardInstance, context);
 
@@ -3422,8 +3450,9 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
                 <span class="attack">${cardInstance.CurrentAttack ?? cardInstance.currentAttack ?? '?'}</span>
                 <span class="health">${cardInstance.CurrentHealth ?? cardInstance.currentHealth ?? '?'}</span>
             </div>`
-            : (showCountdown || showEarthsigil) ?
+            : (showCountdown || showEarthsigil || showEvidence) ?
                 `<div class="stats stats-amulet">
+                ${showEvidence ? `<span class="evidence" title="证据数">${evidenceValue}</span>` : ''}
                 ${showEarthsigil ? `<span class="earthsigil">${earthsigilValue}</span>` : ''}
                 ${showCountdown ? `<span class="countdown">${countdownValue}</span>` : ''}
             </div>`
@@ -3870,6 +3899,7 @@ function applyAttackReadinessClasses(cardElement, cardInstance, context) {
 const previewCounterLabelMap = new Map([
     ['spellboost', '魔力增幅数'],
     ['earthsigil', '土之印数'],
+    ['evidence', '证据数'],
     ['combo', '连击数'],
     ['graveyard', '墓场数'],
     ['bloodpool', '血池'],
@@ -3879,6 +3909,9 @@ const previewCounterLabelMap = new Map([
 function getCounterLabel(labelMap, key) {
     const rawKey = String(key ?? '').trim();
     if (!rawKey) return '';
+    const systemLabel = previewCounterLabelMap.get(rawKey.toLowerCase());
+    if (systemLabel) return systemLabel;
+    if (rawKey.toLowerCase().startsWith('sequence.cursor.')) return '';
     if (labelMap && typeof labelMap === 'object') {
         const direct = labelMap[rawKey];
         if (typeof direct === 'string' && direct.trim()) {
@@ -3977,21 +4010,23 @@ function getCounterSummaryHtml(cardInstance) {
     `;
 }
 
-function getBuffSummaryHtml(cardInstance) {
+export function getBuffSummaryHtml(cardInstance) {
     if (!cardInstance) return '';
     const summaries = cardInstance.buffSummaries ?? cardInstance.BuffSummaries ?? [];
     const statSummary = cardInstance.buffStatSummary ?? cardInstance.BuffStatSummary ?? null;
     const rawKeywords = cardInstance.keywords ?? cardInstance.Keywords ?? [];
 
+    const numericGroups = summarizeAttachedNumericEffects(summaries);
+    const numericFields = new Set(numericGroups.map(group => group.field));
     const segments = [];
     if (statSummary) {
         const attackDelta = statSummary.attackDelta ?? statSummary.AttackDelta ?? 0;
         const healthDelta = statSummary.healthDelta ?? statSummary.HealthDelta ?? 0;
         const costDelta = statSummary.costDelta ?? statSummary.CostDelta ?? 0;
 
-        if (attackDelta !== 0) segments.push(`ATK ${attackDelta > 0 ? `+${attackDelta}` : attackDelta}`);
-        if (healthDelta !== 0) segments.push(`HP ${healthDelta > 0 ? `+${healthDelta}` : healthDelta}`);
-        if (costDelta !== 0) segments.push(`COST ${costDelta > 0 ? `+${costDelta}` : costDelta}`);
+        if (attackDelta !== 0 && !numericFields.has('Attack')) segments.push(`ATK ${attackDelta > 0 ? `+${attackDelta}` : attackDelta}`);
+        if (healthDelta !== 0 && !numericFields.has('Health') && !numericFields.has('Defense')) segments.push(`HP ${healthDelta > 0 ? `+${healthDelta}` : healthDelta}`);
+        if (costDelta !== 0 && !numericFields.has('Cost')) segments.push(`COST ${costDelta > 0 ? `+${costDelta}` : costDelta}`);
     }
 
     const summaryLine = segments.length > 0
@@ -4019,32 +4054,38 @@ function getBuffSummaryHtml(cardInstance) {
         }
     }
 
+    const numericHtml = renderAttachedNumericEffects(numericGroups);
     const lines = Array.isArray(summaries)
         ? summaries
             .map(summary => {
                 const sourceCardName = summary?.sourceCardName ?? summary?.SourceCardName;
                 const sourceCardArtPreview = summary?.sourceCardArtPreview ?? summary?.SourceCardArtPreview;
                 const sourceAbilityName = summary?.sourceAbilityName ?? summary?.SourceAbilityName;
-                if (!sourceCardName || !sourceAbilityName) {
+                if (!sourceCardName) {
                     return '';
                 }
-                const sourceCardLabel = escapeAttributeValue(sourceCardName);
                 const sourceCardArtUrl = resolveArtUrl(sourceCardArtPreview);
-                const sourceCardThumb = sourceCardArtUrl
-                    ? `<img class="buff-summary-source-art" src="${sourceCardArtUrl}" alt="${sourceCardLabel}" title="${sourceCardLabel}" loading="lazy" decoding="async">`
-                    : `<span class="buff-summary-source-art buff-summary-source-art--fallback" title="${sourceCardLabel}" aria-label="${sourceCardLabel}"></span>`;
-
-                return `<div class="buff-summary-line">${sourceCardThumb}<span class="buff-summary-ability">${escapeAttributeValue(sourceAbilityName)}</span></div>`;
+                const granted = summary.GrantedAbilities ?? summary.grantedAbilities ?? [];
+                const grantedTexts = granted.map(ability => ability.Description || ability.description || ability.Name || ability.name || '').filter(Boolean);
+                const description = grantedTexts.length ? '' : summary.description ?? summary.Description ?? '';
+                const details = summary.details ?? summary.Details ?? [];
+                const labels = { Attack:'攻击力', Health:'生命值', Defense:'生命值', Cost:'费用', Act:'启动费用', Reanimate:'亡召上限', Permanent:'永久', TurnEnd:'回合结束', TurnStart:'回合开始', NextTurnEnd:'下次回合结束', NextTurnStart:'下次回合开始', Ward:'守护', Rush:'突进', Storm:'疾驰', Shield:'屏障', EndOfTurn:'回合结束时', StartOfTurn:'下回合开始时', OwnerTurnStart:'我方回合开始时', OwnerTurnEnd:'我方回合结束时', OpponentTurnStart:'敌方回合开始时', OpponentTurnEnd:'敌方回合结束时', ConditionalRemoval:'满足条件时移除', UntilTurnEnd:'回合结束前', UntilTurnStart:'回合开始前' };
+                const localize = value => String(value).replace(/\b[A-Za-z]+\b/g, token => labels[token] || getCardKeywordLabel(token) || token);
+                const numericTexts = new Set((summary.NumericEffects ?? summary.numericEffects ?? []).map(entry => entry.DisplayText ?? entry.displayText));
+                const detailCounts = new Map();
+                if (Array.isArray(details)) for (const detail of details) if (!numericTexts.has(detail) && !grantedTexts.includes(detail)) detailCounts.set(detail, (detailCounts.get(detail) || 0) + 1);
+                if (detailCounts.size === 0 && !grantedTexts.length && (numericTexts.size || details.length)) return '';
+                return `<section class="battle-attached-effect"><b class="battle-attached-title">${renderDescriptionHtml(grantedTexts.join('\n') || [...detailCounts.keys()].map(localize).join(' / ') || description || '附加效果')}</b>${effectSourceHtml({id:summary.SourceCardDefinitionId ?? summary.sourceCardDefinitionId,name:sourceCardName,abilityName:sourceAbilityName,art:sourceCardArtUrl})}</section>`;
             })
             .filter(Boolean)
             .join('')
         : '';
 
-    if (!summaryLine && !keywordLine && !lines) {
+    if (!summaryLine && !keywordLine && !numericHtml && !lines) {
         return '';
     }
 
-    return `<div class="buff-summary-list">${summaryLine}${keywordLine}${lines}</div>`;
+    return `<div class="buff-summary-list">${summaryLine}${keywordLine}${numericHtml}${lines}</div>`;
 }
 
 function getBattlePreviewPlaceholderHtml() {
@@ -4113,6 +4154,9 @@ function buildBattlePreviewHtml(cardInstance) {
         ?? cardInstance.Counters?.Earthsigil
         ?? 0;
     const showEarthsigil = !isFollower && hasEarthsigilKeyword;
+    const showEvidence = equalsIgnoreCase(cardInstance.type ?? cardInstance.Type, 'Amulet')
+        && keywordList.some(keyword => equalsIgnoreCase(keyword, 'Evidence'));
+    const evidenceValue = cardInstance.evidence ?? cardInstance.Evidence ?? cardInstance.counters?.evidence ?? cardInstance.Counters?.evidence ?? 0;
 
     // Generate Action Buttons
     const actionsHtml = getActionButtonsHtml(cardInstance);
@@ -4127,6 +4171,8 @@ function buildBattlePreviewHtml(cardInstance) {
         name: cardInstance.name ?? cardInstance.Name ?? 'UNTITLED',
         costValue,
         enhanceActive: previewCostInfo.enhanceActive,
+        modeLabel: previewCostInfo.modeVisual.label,
+        alternateActive: previewCostInfo.modeVisual.alternate,
         isFollower,
         attackValue,
         healthValue,
@@ -4134,6 +4180,9 @@ function buildBattlePreviewHtml(cardInstance) {
         showCountdown,
         earthsigilValue,
         showEarthsigil,
+        evidenceValue,
+        showEvidence,
+        isIntromezzoActive: cardInstance.isIntromezzoActive ?? cardInstance.IsIntromezzoActive ?? false,
         description,
         hideEmptyDescriptionPlaceholder: isLeader,
         previewUrl,
@@ -4183,15 +4232,33 @@ function renderBattleCardPreview(cardInstance) {
         delete battleCardPreviewEl.dataset.previewCardName;
     }
     battleCardPreviewEl.innerHTML = buildBattlePreviewHtml(cardInstance);
+    for (const button of battleCardPreviewEl.querySelectorAll('.battle-effect-source-button[data-card-id]')) {
+        button.addEventListener('click', async event => {
+            event.preventDefault();event.stopPropagation();
+            try {
+                const response=await fetch(`/api/cards/${Number(button.dataset.cardId)}`);
+                if(!response.ok) throw new Error('来源卡牌详情加载失败');
+                showCardDetailModal(await response.json());
+            } catch(error) { showAlert(error.message); }
+        });
+    }
     const fallbackPreviewPath = cardInstance.artPreview
         ?? cardInstance.ArtPreview
         ?? '';
     const fallbackPreviewUrl = resolveArtUrl(fallbackPreviewPath);
+    void hydrateAlternatePlayReferences(battleCardPreviewEl, previewCardId, { fallbackPreviewUrl, openCardDetail: showCardDetailModal, references: cardInstance.alternatePlayReferences ?? cardInstance.AlternatePlayReferences ?? [] });
     void hydrateDescriptionReferences(battleCardPreviewEl, {
+        openCardDetail: showCardDetailModal,
         fallbackPreviewUrl,
         currentCardId: previewCardId || null,
         currentCardName: previewCardName
     });
+}
+
+export function replaceBattleCardPreviewIdentity(previousUid, cardInstance) {
+    if (String(battleCardPreviewEl?.dataset.previewUid).toLowerCase() === String(previousUid).toLowerCase()) {
+        renderBattleCardPreview(cardInstance);
+    }
 }
 
 function refreshBattleCardPreviewIfCurrent(cardInstance) {
@@ -5324,7 +5391,7 @@ async function showMatchHistoryCardPreview(historyRow) {
     return true;
 }
 
-function handleGameClick(event) {
+async function handleGameClick(event) {
     if (Date.now() < suppressGameClickUntil) {
         event.preventDefault();
         event.stopPropagation();
@@ -5436,7 +5503,7 @@ function handleGameClick(event) {
                 submitMulligan(selectedUids); // Call new SignalR wrapper
             } else {
                 // console.error("UI Error: submitMulligan function is not available/imported!"); // Log the correct function name in error
-                alert("错误：调度功能未加载（submitMulligan）"); // Clarify alert slightly for debugging
+                showAlert("错误：调度功能未加载（submitMulligan）"); // Clarify alert slightly for debugging
             }
             // Note: No need to manually remove 'selected-for-mulligan' class here,
             // as the next renderGame call after handleMulligan will redraw the hand.
@@ -5479,7 +5546,7 @@ function handleGameClick(event) {
     const clickedEndTurnButton = event.target.closest('#end-turn-button');
     if (clickedEndTurnButton) {
         if (gameState.isSpectator) return;
-        if (!confirmEndTurnAction()) return;
+        if (clickedEndTurnButton.disabled || !await confirmEndTurnAction()) return;
         // Correctly check for the imported endTurnRequest function
         if (typeof endTurnRequest === 'function') {
             endTurnButtonEl.disabled = true; // Disable button immediately on click
@@ -5487,7 +5554,7 @@ function handleGameClick(event) {
         } else {
             // This error should ideally not happen if imports are correct, but keep for safety
             console.error(`UI Error: endTurnRequest function is not available/imported!`);
-            alert("错误：结束回合功能未加载（endTurnRequest）"); // Update alert message
+            showAlert("错误：结束回合功能未加载（endTurnRequest）"); // Update alert message
         }
         return; // Stop processing this click further
     }
@@ -5499,7 +5566,7 @@ function handleGameClick(event) {
         if (typeof requestPpBoost === 'function') {
             requestPpBoost();
         } else {
-            alert("错误：PP+1功能未加载！");
+            showAlert("错误：PP+1功能未加载！");
         }
         return;
     }
@@ -5526,13 +5593,13 @@ function handleGameClick(event) {
         if (isAwaitingPlayerChoice) return;
         const superEvolveUid = clickedSuperEvolveButton.dataset.superEvolveUid;
         if (superEvolveUid) {
-            if (!confirmEvolutionAction(superEvolveUid, 'super')) {
+            if (!await confirmEvolutionAction(superEvolveUid, 'super')) {
                 return;
             }
             if (typeof superEvolveCard === 'function') {
                 superEvolveCard(superEvolveUid);
             } else {
-                alert("错误：超进化功能未加载！");
+                showAlert("错误：超进化功能未加载！");
             }
         }
         return;
@@ -5544,14 +5611,14 @@ function handleGameClick(event) {
         if (isAwaitingPlayerChoice) return;
         const evolveUid = clickedEvolveButton.dataset.evolveUid; // Get UID from button's data attribute
         if (evolveUid) {
-            if (!confirmEvolutionAction(evolveUid, 'evolve')) {
+            if (!await confirmEvolutionAction(evolveUid, 'evolve')) {
                 return;
             }
             if (typeof evolveCard === 'function') { // Check if function is imported
                 evolveCard(evolveUid); // Call the imported function from gameManager
             } else {
                 // console.error("UI Error: evolveCard function is not available/imported!");
-                alert("错误：进化功能未加载。");
+                showAlert("错误：进化功能未加载。");
             }
         } else {
             // console.warn("UI: Evolve button clicked but missing data-evolve-uid attribute.");
@@ -5568,6 +5635,7 @@ function handleGameClick(event) {
         const fusionUid = clickedFusionButton.dataset.fusionUid;
         const fusionAbilityId = clickedFusionButton.dataset.fusionAbilityId || null;
         if (!fusionUid) return;
+        if (readOperationSettings().fusionConfirmation && !await confirmDialog('确认发动融合吗？')) return;
         requestFusion(fusionUid, fusionAbilityId);
         return;
     }
@@ -5584,7 +5652,7 @@ function handleGameClick(event) {
             if (typeof requestAct === 'function') {
                 requestAct(actUid, actAbilityId);
             } else {
-                alert("错误：启用功能未加载。");
+                showAlert("错误：启用功能未加载。");
             }
         }
         return;
@@ -5713,7 +5781,7 @@ function handleCardClick(cardInstance) { // 需要传入卡牌实例
     if (!playerState) {
         // console.error("UI Error in handleCardClick: Could not get player state for normal interaction.");
         // Optionally alert the user or return to prevent further errors
-        alert("发生内部错误：无法获取玩家状态！");
+        showAlert("发生内部错误：无法获取玩家状态！");
         return;
     }
 
@@ -5802,7 +5870,7 @@ function tryUseHandCard(cardInstance, source = 'button') {
     if (useActionState.usePlayable === false) {
         const reason = useActionState.useFailureReason || "该卡牌当前无法使用。";
         console.warn(`UI: ${source} use rejected for card ${cardInstance?.name ?? ''} (${useActionState.useUid}). Reason: ${reason}`);
-        alert(reason);
+        showAlert(reason);
         return true;
     }
 
@@ -5810,25 +5878,27 @@ function tryUseHandCard(cardInstance, source = 'button') {
     return true;
 }
 
-function confirmEvolutionAction(cardUid, mode = 'evolve') {
+async function confirmEvolutionAction(cardUid, mode = 'evolve') {
+    if (!readOperationSettings().evolutionConfirmation) return true;
     const normalizedMode = mode === 'super' ? 'super' : 'evolve';
     const card = findCardInstanceByUid(cardUid);
     const cardName = String(card?.name || card?.Name || '').trim() || '该卡牌';
     const actionLabel = normalizedMode === 'super' ? '超进化' : '进化';
     const message = `确认要对【${cardName}】执行${actionLabel}吗？`;
 
-    if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
+    if (typeof window === 'undefined' || typeof confirmDialog !== 'function') {
         return true;
     }
-    return window.confirm(message);
+    return confirmDialog(message);
 }
 
-function confirmEndTurnAction() {
+async function confirmEndTurnAction() {
+    if (!readOperationSettings().endTurnConfirmation) return true;
     const message = '确认结束当前回合吗？';
-    if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
+    if (typeof window === 'undefined' || typeof confirmDialog !== 'function') {
         return true;
     }
-    return window.confirm(message);
+    return confirmDialog(message);
 }
 
 /**
@@ -6059,79 +6129,30 @@ document.addEventListener('cleanupGame', () => {
     clearTrackedVisualTimeouts();
     removeTransientVisualArtifacts();
     removeStrayBattleCardArtifacts();
-    revealQueue.length = 0;
-    revealIsShowing = false;
+    revealAnimator.clear();
 });
 
-// --- Reveal UI ---
-const revealQueue = [];
-let revealIsShowing = false;
-
-export function showRevealOverlay(cardDto, options = {}) {
-    if (!cardDto || !isGamePageActive()) return;
-    const durationMs = Number.isFinite(options.durationMs) ? options.durationMs : 1600;
-    revealQueue.push({ cardDto, durationMs });
-    void processRevealQueue();
-}
-
-async function processRevealQueue() {
-    if (revealIsShowing) return;
-    revealIsShowing = true;
-
-    try {
-        while (revealQueue.length > 0) {
-            if (!isGamePageActive()) {
-                revealQueue.length = 0;
-                break;
-            }
-            const { cardDto, durationMs } = revealQueue.shift();
-            renderRevealOverlay(cardDto);
-            await new Promise(r => setTimeout(r, durationMs));
-            document.getElementById('reveal-overlay-root')?.remove();
-            await new Promise(r => setTimeout(r, 120));
-        }
-    } finally {
-        revealIsShowing = false;
+// --- Reveal UI: Mini flight, flip, return, then conceal the whole hidden batch. ---
+const revealAnimator = createRevealAnimator({
+    getContainer: () => gameContainerEl ?? document.getElementById('game-container'),
+    isActive: isGamePageActive,
+    resolveArt: resolveArtUrl,
+    resolveOrigin(card, options) {
+        const container = gameContainerEl ?? document.getElementById('game-container');
+        if (!container) return null;
+        const uid = String(card.InstanceId ?? card.instanceId ?? card.uid ?? '');
+        const own = String(card.OwnerPlayerId ?? card.ownerId ?? options.playerId ?? '') === String(gameState.localPlayerId);
+        const hand = document.getElementById(own ? 'player1-hand' : 'player2-hand');
+        const direct = [...container.querySelectorAll('[data-uid]')].find(element => String(element.dataset.uid) === uid);
+        const index = Number(options.handIndex);
+        const element = direct ?? (Number.isInteger(index) && index >= 0 ? hand?.children[index] : null);
+        const bounds = container.getBoundingClientRect();
+        const origin = element?.getBoundingClientRect() ?? hand?.getBoundingClientRect() ?? {left:bounds.left+bounds.width/2-60,top:own?bounds.bottom-170:bounds.top,width:120,height:170};
+        const hidden = !own && !gameState.dualControl && !gameState.isSpectator && (!direct || direct.classList.contains('card-back'));
+        return {origin, element, hidden};
     }
-}
-
-function renderRevealOverlay(cardDto) {
-    if (!isGamePageActive()) {
-        return;
-    }
-
-    document.getElementById('reveal-overlay-root')?.remove();
-
-    const overlayRoot = document.createElement('div');
-    overlayRoot.id = 'reveal-overlay-root';
-    overlayRoot.className = 'reveal-overlay-root';
-
-    const name = cardDto?.Name ?? 'Unknown Card';
-    const cost = Number.isFinite(cardDto?.Cost) ? cardDto.Cost : '?';
-    const desc = cardDto?.Description ?? '';
-
-    overlayRoot.innerHTML = `
-        <div class="reveal-overlay-backdrop"></div>
-        <div class="reveal-overlay-content">
-            <div class="reveal-title">公开</div>
-            <div class="card reveal-card">
-                <div class="cost">${cost}</div>
-                <div class="name">${name}</div>
-                <div class="desc">${desc}</div>
-            </div>
-        </div>
-    `;
-
-    overlayRoot.addEventListener('click', () => {
-        document.getElementById('reveal-overlay-root')?.remove();
-        revealQueue.length = 0;
-        revealIsShowing = false;
-    }, { once: true });
-
-    const container = gameContainerEl ?? document.getElementById('game-container');
-    if (!container) return;
-    container.appendChild(overlayRoot);
-}
+});
+export function showRevealOverlay(cardDto, options = {}) { return revealAnimator.enqueue(cardDto, options); }
 
 // --- Fusion UI ---
 export function showFusionAnimation(fusingPlayerId, fusedCardInstanceIds = []) {
@@ -6223,7 +6244,45 @@ function renderChoiceOverlayUI() {
     const overlayRoot = document.createElement('div');
     overlayRoot.id = 'choice-overlay-root';
     overlayRoot.className = 'choice-overlay-root';
+    overlayRoot.dataset.choiceKind = currentChoiceRequest.TargetKey === 'decision' ? 'decision' : 'target';
     container.appendChild(overlayRoot);
+
+    if (currentChoiceRequest.TargetKey === 'discover') {
+        document.body.append(overlayRoot);
+        overlayRoot.classList.add('discover-overlay');
+        const dialog = document.createElement('section');
+        dialog.className = 'discover-dialog';dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','发现');
+        dialog.innerHTML = '<h2>发现</h2><p>请选择一张卡片加入手牌</p><div class="discover-candidates"></div>';
+        overlayRoot.append(dialog);
+        const list=dialog.querySelector('.discover-candidates');
+        for(const dto of currentChoiceRequest.SelectableCardInstances || []) {
+            const card=createDiscoverPreviewCard(dto); if(!card)continue;
+            const tile=document.createElement('article');tile.className='discover-candidate';
+            const preview=document.createElement('button');preview.type='button';preview.className='discover-card';
+            preview.setAttribute('aria-label', `预览${dto.Name || dto.name || '卡片'}`);
+            const art=document.createElement('img');art.src=resolveArtUrl(dto.ArtPreview ?? dto.artPreview ?? '');art.alt=dto.Name ?? dto.name ?? '';preview.append(art);
+            preview.append(miniCardBadge('cost', dto.CurrentCost ?? dto.Cost ?? dto.cost ?? 0));
+            if (String(dto.Type ?? dto.type ?? '').toLowerCase() === 'follower') {
+                preview.append(miniCardBadge('attack', dto.CurrentAttack ?? dto.Attack ?? dto.attack ?? 0), miniCardBadge('health', dto.CurrentHealth ?? dto.Health ?? dto.health ?? 0));
+            }
+            const name=document.createElement('button');name.type='button';name.className='discover-card-name';name.textContent=dto.Name ?? dto.name ?? '';
+            name.onclick=()=>showCardDetailModal(card);
+            preview.onclick=()=> {
+                renderBattleCardPreview(card);
+                const previewName=battleCardPreviewEl?.querySelector('.preview-detail-name');
+                if(previewName) previewName.onclick=event=>{event.preventDefault();event.stopPropagation();showCardDetailModal(card);};
+                if(battleCardPreviewEl && !restoreDiscoverPreview) {
+                    const parent=battleCardPreviewEl.parentNode,next=battleCardPreviewEl.nextSibling;
+                    overlayRoot.append(battleCardPreviewEl);battleCardPreviewEl.classList.add('discover-preview');
+                    restoreDiscoverPreview=()=>{battleCardPreviewEl.classList.remove('discover-preview');parent?.insertBefore(battleCardPreviewEl,next?.parentNode===parent?next:null);};
+                }
+            };
+            const select=document.createElement('button');select.type='button';select.className='discover-select';select.textContent='选择';
+            select.onclick=async()=>{for(const b of list.querySelectorAll('.discover-select'))b.disabled=true;currentChoiceSelectedTargetIds=new Set([String(dto.InstanceId)]);try{await confirmPlayerChoice();}finally{if(overlayRoot.isConnected)for(const b of list.querySelectorAll('.discover-select'))b.disabled=false;}};
+            tile.append(preview,name,select);list.append(tile);
+        }
+        return;
+    }
 
     const { min, max } = getChoiceMinMax(currentChoiceRequest);
     const hasSelectableTargets = Array.isArray(currentChoiceRequest.SelectableTargetIds)
@@ -6239,7 +6298,7 @@ function renderChoiceOverlayUI() {
         : (currentChoiceRequest.IsCancellable === true ? '当前无可选目标；点击确定提交空选择，或取消中止' : '当前无可选目标；点击确定继续');
 
     controls.innerHTML = `
-        <div class="choice-prompt-text">${message}</div>
+        <div class="choice-prompt-text">${escapeAttributeValue(message)}</div>
         <div class="choice-prompt-hint">${hint}</div>
         <div class="choice-controls-row">
             <div class="choice-selected-count">已选：<span id="choice-selected-count">0/${min}-${max}</span></div>
@@ -6285,6 +6344,10 @@ function renderChoiceOverlayUI() {
         });
 
     if (missingCardInstances.length > 0) {
+        overlayRoot.classList.add('choice-centered-modal');
+        document.body.appendChild(overlayRoot); // Escape the battlefield's stacking context and cover drag ghosts.
+        const dialog = document.createElement('section'); dialog.className = 'choice-centered-dialog'; dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true'); dialog.setAttribute('aria-label', currentChoiceRequest.TargetKey === 'decision' ? '选择模式' : '选择卡牌');
+        overlayRoot.append(dialog); dialog.append(controls);
         const panel = document.createElement('div');
         panel.className = 'choice-panel-overlay choice-overlay';
         panel.addEventListener('click', e => e.stopPropagation());
@@ -6292,16 +6355,18 @@ function renderChoiceOverlayUI() {
         const list = document.createElement('div');
         list.className = 'choice-card-list';
 
-        missingCardInstances.forEach(dto => {
+        allCardInstances.filter(dto => selectableIdSet.has(String(dto?.InstanceId))).forEach(dto => {
             const uid = dto.InstanceId;
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'choice-card';
             btn.dataset.uid = String(uid);
+            const choiceArt = resolveArtUrl(dto.ArtPreview ?? dto.artPreview ?? '');
             btn.innerHTML = `
+                ${choiceArt ? `<img class="choice-card-art" src="${escapeAttributeValue(choiceArt)}" alt="" loading="lazy" decoding="async">` : ''}
                 <div class="choice-card-cost">${dto.Cost ?? '?'}</div>
-                <div class="choice-card-name">${dto.Name ?? 'Unknown Card'}</div>
-                <div class="choice-card-desc">${dto.Description ?? ''}</div>
+                <div class="choice-card-name">${escapeAttributeValue(dto.Name ?? 'Unknown Card')}</div>
+                <div class="choice-card-desc">${renderDescriptionHtml(dto.Description ?? '')}</div>
             `;
             btn.addEventListener('click', e => {
                 e.stopPropagation();
@@ -6310,8 +6375,8 @@ function renderChoiceOverlayUI() {
             list.appendChild(btn);
         });
 
-        panel.innerHTML = `<div class="choice-panel-title">可选择的卡牌</div>`;
+        panel.innerHTML = currentChoiceRequest.TargetKey === 'decision' ? '' : '<div class="choice-panel-title">可选择的卡牌</div>';
         panel.appendChild(list);
-        overlayRoot.appendChild(panel);
+        dialog.appendChild(panel);
     }
 }

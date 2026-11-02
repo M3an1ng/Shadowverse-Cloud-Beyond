@@ -1868,11 +1868,22 @@
 .stat-mini.health { color: var(--accent-red); text-shadow: 0 0 8px rgba(255, 51, 51, 0.4); }
 .stat-mini.countdown { color: var(--accent-gold); text-shadow: 0 0 8px var(--accent-gold-dim); }
 .stat-mini.earthsigil { color: #f59e0b; text-shadow: 0 0 8px rgba(245, 158, 11, 0.35); }
+.stat-mini.evidence { color: #60a5fa; text-shadow: 0 0 8px rgba(96, 165, 250, 0.35); }
 .stat-mini .stat-icon.earthsigil-icon {
     width: 14px;
     height: 14px;
     display: inline-block;
     background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M12%203%20L16.5%2010.2%20L12%2018%20L7.5%2010.2%20Z'%20fill='%23f59e0b'/%3E%3Cpath%20d='M3.5%2011.2%20L7%2012.6%20L5.9%2016.8%20L2%2014.6%20Z'%20fill='%23d97706'/%3E%3Cpath%20d='M20.5%2011.2%20L22%2014.6%20L18.1%2016.8%20L17%2012.6%20Z'%20fill='%23d97706'/%3E%3C/svg%3E");
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    opacity: 0.9;
+}
+.stat-mini .stat-icon.evidence-icon {
+    width: 14px;
+    height: 14px;
+    display: inline-block;
+    background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M12%203%20L16.5%2010.2%20L12%2018%20L7.5%2010.2%20Z'%20fill='%2360a5fa'/%3E%3Cpath%20d='M3.5%2011.2%20L7%2012.6%20L5.9%2016.8%20L2%2014.6%20Z'%20fill='%233b82f6'/%3E%3Cpath%20d='M20.5%2011.2%20L22%2014.6%20L18.1%2016.8%20L17%2012.6%20Z'%20fill='%233b82f6'/%3E%3C/svg%3E");
     background-size: contain;
     background-repeat: no-repeat;
     background-position: center;
@@ -2360,4 +2371,64 @@
 
 .card-art-crop-file {
     display: none;
+}
+
+
+/* State treatment is restricted to the keyword letters. */
+.preview-description-keyword.intromezzo-keyword {
+    background: none;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+    color: inherit;
+    text-shadow: none;
+    animation: none;
+    filter: none;
+}
+:is(.slate-description, .card-detail-modal, .battle-card-preview, .preview-description-tooltip)
+.intromezzo-keyword .preview-description-text[data-intromezzo-state] {
+    background: none;
+    font-weight: inherit;
+    text-shadow: none;
+    -webkit-text-stroke: 0;
+    animation: none;
+    filter: none;
+}
+:is(.slate-description, .card-detail-modal, .battle-card-preview, .preview-description-tooltip)
+.intromezzo-keyword .preview-description-text[data-intromezzo-state="dormant"] {
+    color: #84a9c2;
+    -webkit-text-fill-color: #84a9c2;
+}
+:is(.slate-description, .card-detail-modal, .battle-card-preview, .preview-description-tooltip)
+.intromezzo-keyword .preview-description-text[data-intromezzo-state="active"] {
+    color: #ff8378;
+    -webkit-text-fill-color: #ff8378;
+    text-shadow: 0 0 4px #ff66554d;
+}
+
+
+/* Both states share a soft halo; only its intensity changes, never the glyph opacity. */
+:is(.slate-description, .card-detail-modal, .battle-card-preview, .preview-description-tooltip)
+.intromezzo-keyword .preview-description-text[data-intromezzo-state="active"] {
+    --intromezzo-glow: 255, 101, 85;
+    color: #ff9489;
+    -webkit-text-fill-color: #ff9489;
+    text-shadow: 0 0 4px rgba(var(--intromezzo-glow), .8), 0 0 11px rgba(var(--intromezzo-glow), .45);
+    animation: intromezzo-state-aura 3.6s ease-in-out infinite;
+}
+:is(.slate-description, .card-detail-modal, .battle-card-preview, .preview-description-tooltip)
+.intromezzo-keyword .preview-description-text[data-intromezzo-state="dormant"] {
+    --intromezzo-glow: 87, 170, 255;
+    color: #9bc8eb;
+    -webkit-text-fill-color: #9bc8eb;
+    text-shadow: 0 0 4px rgba(var(--intromezzo-glow), .8), 0 0 11px rgba(var(--intromezzo-glow), .45);
+    animation: intromezzo-state-aura 3.6s ease-in-out infinite;
+}
+@keyframes intromezzo-state-aura {
+    0%, 100% { text-shadow: 0 0 4px rgba(var(--intromezzo-glow), .65), 0 0 9px rgba(var(--intromezzo-glow), .32); }
+    50% { text-shadow: 0 0 5px rgba(var(--intromezzo-glow), .95), 0 0 14px rgba(var(--intromezzo-glow), .6); }
+}
+@media (prefers-reduced-motion: reduce) {
+    :is(.slate-description, .card-detail-modal, .battle-card-preview, .preview-description-tooltip)
+    .intromezzo-keyword .preview-description-text[data-intromezzo-state] { animation: none; }
 }

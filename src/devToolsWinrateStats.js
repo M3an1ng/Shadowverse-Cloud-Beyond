@@ -1,4 +1,4 @@
-﻿import { getUserSession, USER_SESSION_CHANGED_EVENT } from "./userSession.js";
+import { getUserSession, USER_SESSION_CHANGED_EVENT } from "./userSession.js";
 import { createDeckPreviewModal } from "./components/deckPreviewModal.js";
 import {
     ensureDeckEnvironmentOptions,
@@ -25,7 +25,8 @@ const CLASS_LABELS = {
 };
 const DECK_RULE_LABELS = {
     standard: "传统对战",
-    dualclass: "混合职业"
+    dualclass: "混合职业",
+    taketwo: "双选对战"
 };
 const DEFAULT_SORT = {
     card: { key: "deckWinRate", direction: "desc", type: "number" },
@@ -880,6 +881,7 @@ class DevToolsWinrateStats {
 
         const selectedEnvironment = normalizeEnvironment(this.environmentInput?.value || getDefaultDeckEnvironment());
         const selectedDeckRule = String(this.modeInput?.value || DEFAULT_DECK_RULE).trim() || DEFAULT_DECK_RULE;
+        if (this.environmentInput) this.environmentInput.disabled = selectedDeckRule.toLowerCase() === 'taketwo';
         const params = new URLSearchParams();
         params.set("userId", session.userId);
         params.set("environment", selectedEnvironment);
@@ -980,6 +982,7 @@ class DevToolsWinrateStats {
 
         const selectedEnvironment = normalizeEnvironment(this.environmentInput?.value || getDefaultDeckEnvironment());
         const selectedDeckRule = String(this.modeInput?.value || DEFAULT_DECK_RULE).trim() || DEFAULT_DECK_RULE;
+        if (this.environmentInput) this.environmentInput.disabled = selectedDeckRule.toLowerCase() === 'taketwo';
         let top = toInt(this.topInput?.value, DEFAULT_TOP);
         top = Math.min(Math.max(top, 1), MAX_TOP);
         if (this.topInput) {

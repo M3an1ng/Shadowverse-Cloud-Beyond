@@ -1,3 +1,4 @@
+import { showAlert } from './siteDialog.js';
 // src/gameManager.js - 核心游戏状态与逻辑管理
 //
 // 相关文档:
@@ -1098,13 +1099,13 @@ export async function playCard(cardUid, targetUid = null) {
     const cancelCommittedVisual = () => gameView.cancelCommittedHandPlayVisual(cardUid);
 
     if (gameState.isSpectator) {
-        alert("观战模式：不能进行操作。");
+        showAlert("观战模式：不能进行操作。");
         cancelCommittedVisual();
         return;
     }
     if (gameState.gameOver) {
         console.warn("GM: Cannot play card - Game is over.");
-        alert("游戏已经结束，无法出牌！"); // User feedback
+        showAlert("游戏已经结束，无法出牌！"); // User feedback
         cancelCommittedVisual();
         return;
     }
@@ -1112,7 +1113,7 @@ export async function playCard(cardUid, targetUid = null) {
     const cardInstance = findCardInstanceByUid(cardUid);
     if (!cardInstance) {
         console.error(`GM: PlayCard failed - Card instance ${cardUid} not found.`);
-        alert("内部错误：无法找到卡牌实例。");
+        showAlert("内部错误：无法找到卡牌实例。");
         cancelCommittedVisual();
         return;
     }
@@ -1136,7 +1137,7 @@ export async function playCard(cardUid, targetUid = null) {
         console.warn(
             `GM: PlayCard rejected - Card ${cardUid} (${cardInstance.name}) has CannotUse.`
         );
-        alert("该卡牌处于【无法使用】状态。");
+        showAlert("该卡牌处于【无法使用】状态。");
         cancelCommittedVisual();
         return;
     }
@@ -1148,7 +1149,7 @@ export async function playCard(cardUid, targetUid = null) {
         console.error(
             `GM: PlayCard failed - Player state not found for owner ${cardInstance.ownerId}.`
         );
-        alert("内部错误：无法找到玩家状态。");
+        showAlert("内部错误：无法找到玩家状态。");
         cancelCommittedVisual();
         return;
     }
@@ -1159,7 +1160,7 @@ export async function playCard(cardUid, targetUid = null) {
         console.warn(
             `GM: PlayCard rejected - Card ${cardUid} (${cardInstance.name}) is marked unplayable. Reason: ${failureReason}`
         );
-        alert(failureReason);
+        showAlert(failureReason);
         cancelCommittedVisual();
         return;
     }
@@ -1186,7 +1187,7 @@ export async function playCard(cardUid, targetUid = null) {
         console.warn(
             `GM: PlayCard rejected - Not local player's turn or local player ID mismatch (Local: ${gameState.localPlayerId}, Current: ${gameState.currentPlayerId}, CardOwner: ${playerState.id}).`
         );
-        alert("现在不是你的回合！");
+        showAlert("现在不是你的回合！");
         cancelCommittedVisual();
         return;
     }
@@ -1194,7 +1195,7 @@ export async function playCard(cardUid, targetUid = null) {
         console.warn(
             `GM: PlayCard rejected - Can only play cards during Main phase (Current: ${gameState.phase}).`
         );
-        alert("只能在你的回合主阶段出牌！");
+        showAlert("只能在你的回合主阶段出牌！");
         cancelCommittedVisual();
         return;
     }
@@ -1203,7 +1204,7 @@ export async function playCard(cardUid, targetUid = null) {
         console.warn(
             `GM: PlayCard rejected - Not enough PP for ${cardInstance.name} (Cost: ${effectiveCost}, Have: ${spendablePp}).`
         );
-        alert("PP不足！"); // UI should prevent this, but double check.
+        showAlert("PP不足！"); // UI should prevent this, but double check.
         cancelCommittedVisual();
         return;
     }
@@ -1215,7 +1216,7 @@ export async function playCard(cardUid, targetUid = null) {
             console.warn(
                 `GM: PlayCard rejected - Field is full (${playerState.field.length}/${MAX_FIELD_SIZE}).`
             );
-            alert("战场已满！");
+            showAlert("战场已满！");
             cancelCommittedVisual();
             return;
         }
@@ -1231,7 +1232,7 @@ export async function playCard(cardUid, targetUid = null) {
         console.warn(
             `GM: PlayCard rejected - Spell ${cardInstance.name} requires a target, but none provided.`
         );
-        alert("该法术需要指定一个目标！");
+        showAlert("该法术需要指定一个目标！");
         cancelCommittedVisual();
         return;
     }
@@ -1243,7 +1244,7 @@ export async function playCard(cardUid, targetUid = null) {
         console.error(
             "GM: PlayCard failed - SignalR connection not available or not connected."
         );
-        alert("与服务器连接丢失，无法出牌！");
+        showAlert("与服务器连接丢失，无法出牌！");
         // Optionally try to reconnect or inform the user more drastically
         cancelCommittedVisual();
         return;
@@ -1290,7 +1291,7 @@ export async function playCard(cardUid, targetUid = null) {
             errorMessage = err.message;
             // You might want to sanitize or simplify complex server error messages here
         }
-        alert(`出牌失败：${errorMessage}`);
+        showAlert(`出牌失败：${errorMessage}`);
 
         // Clear selection on error too
         gameState.selectedCardUid = null;
@@ -1311,7 +1312,7 @@ export function initiateAttack(attackerUid) {
         console.warn(
             `GM: Cannot initiate attack - Not in Main phase (Current: ${gameState.phase}).`
         );
-        // alert("只能在主阶段攻击！"); // Optional UI feedback
+        // showAlert("只能在主阶段攻击！"); // Optional UI feedback
         return;
     }
 
@@ -1348,7 +1349,7 @@ export function initiateAttack(attackerUid) {
         console.warn(
             `GM: InitiateAttack failed - Follower ${attackerUid} (${attackerInstance.name}) cannot attack (Summoning sickness or already attacked).`
         );
-        // alert("该随从本回合无法攻击！"); // Optional UI feedback
+        // showAlert("该随从本回合无法攻击！"); // Optional UI feedback
         return;
     }
 
@@ -1368,7 +1369,7 @@ export function initiateAttack(attackerUid) {
 // 选择攻击目标 (敌方随从或英雄)
 export async function selectAttackTarget(targetUid) {
     if (gameState.isSpectator) {
-        alert("观战模式：不能进行操作。");
+        showAlert("观战模式：不能进行操作。");
         return;
     }
     const attackerUid = gameState.selectedAttackerUid;
@@ -1475,7 +1476,7 @@ export async function selectAttackTarget(targetUid) {
             console.warn(
                 `GM: SelectTarget failed - Cannot target ${targetInstance.name} (${targetInstance.type}) because opponent has Ward follower(s). Must target a Ward follower first.`
             );
-            alert("必须先攻击带有【守护】的随从！");
+            showAlert("必须先攻击带有【守护】的随从！");
             return; // Reject the target selection
         }
         // If target is a follower with Ward, the check passes.
@@ -1492,7 +1493,7 @@ export async function selectAttackTarget(targetUid) {
              console.warn(
                 `GM: SelectTarget failed - Attacker ${attackerInstance.name} has Rush or no keyword and cannot attack the leader on the turn it enters play.`
             );
-            alert("该随从本回合无法攻击敌方主战者！");
+            showAlert("该随从本回合无法攻击敌方主战者！");
             return;
         }
     }
@@ -1501,7 +1502,7 @@ export async function selectAttackTarget(targetUid) {
         console.warn(
             `GM: SelectTarget failed - Attacker ${attackerInstance.name} cannot attack leaders due to CannotAttackLeader.`
         );
-        alert("该随从无法攻击敌方主战者！");
+        showAlert("该随从无法攻击敌方主战者！");
         return;
     }
 
@@ -1509,7 +1510,7 @@ export async function selectAttackTarget(targetUid) {
         console.warn(
             `GM: SelectTarget failed - Attacker ${attackerInstance.name} cannot attack followers due to CannotAttackFollower.`
         );
-        alert("该随从无法攻击敌方随从！");
+        showAlert("该随从无法攻击敌方随从！");
         return;
     }
 
@@ -1517,7 +1518,7 @@ export async function selectAttackTarget(targetUid) {
         console.warn(
             `GM: SelectTarget failed - Target ${targetInstance.name} cannot be targeted due to Ambush.`
         );
-        alert("该随从处于【潜行】状态，无法被攻击！");
+        showAlert("该随从处于【潜行】状态，无法被攻击！");
         return;
     }
 
@@ -1525,7 +1526,7 @@ export async function selectAttackTarget(targetUid) {
         console.warn(
             `GM: SelectTarget failed - Target ${targetInstance.name} cannot be targeted due to Pressure.`
         );
-        alert("该随从处于【威慑】状态，无法被攻击！");
+        showAlert("该随从处于【威慑】状态，无法被攻击！");
         return;
     }
 
@@ -1538,7 +1539,7 @@ export async function selectAttackTarget(targetUid) {
         console.error(
             "GM: SelectTarget failed - SignalR connection not available."
         );
-        alert("与服务器连接丢失，无法进行攻击！");
+        showAlert("与服务器连接丢失，无法进行攻击！");
         // Clear selection on connection error before trying to attack
         gameState.selectedAttackerUid = null;
         gameView.renderHighlights(gameState);
@@ -1567,7 +1568,7 @@ export async function selectAttackTarget(targetUid) {
         if (err && err.message) {
             errorMessage = err.message;
         }
-        alert(`攻击失败：${errorMessage}`);
+        showAlert(`攻击失败：${errorMessage}`);
 
         // Clear selection on error
         gameState.selectedAttackerUid = null;
@@ -1642,12 +1643,12 @@ function cardHasKeyword(cardInstance, keywordName) {
 
 export async function evolveCard(cardUid) {
     if (gameState.isSpectator) {
-        alert("观战模式：不能进行操作。");
+        showAlert("观战模式：不能进行操作。");
         return;
     }
     if (gameState.gameOver) {
         console.warn("GM: Cannot evolve card - Game is over.");
-        alert("游戏已经结束，无法进化！");
+        showAlert("游戏已经结束，无法进化！");
         return;
     }
 
@@ -1660,7 +1661,7 @@ export async function evolveCard(cardUid) {
         console.error(
             `GM: EvolveCard failed - Missing player state or card instance for UID ${cardUid}.`
         );
-        alert("内部错误：无法找到进化所需信息。");
+        showAlert("内部错误：无法找到进化所需信息。");
         return;
     }
 
@@ -1670,18 +1671,18 @@ export async function evolveCard(cardUid) {
         playerState.id !== gameState.currentPlayerId
     ) {
         console.warn(`GM: EvolveCard rejected - Not local player's turn.`);
-        alert("现在不是你的回合！");
+        showAlert("现在不是你的回合！");
         return;
     }
     if (gameState.phase !== "Main") {
         console.warn(`GM: EvolveCard rejected - Cannot evolve outside Main phase.`);
-        alert("只能在你的回合主阶段进化！");
+        showAlert("只能在你的回合主阶段进化！");
         return;
     }
     // Optimistic client-side checks (Server will re-validate)
     if (!playerState.canEvolve) {
         console.warn("GM: EvolveCard rejected - Local state indicates evolution already used or unavailable.");
-        alert("本回合已使用过进化权或无法进化。");
+        showAlert("本回合已使用过进化权或无法进化。");
         return;
     }
     const hasFreeEvolve = cardHasKeyword(cardInstance, "FreeEvolve");
@@ -1690,22 +1691,22 @@ export async function evolveCard(cardUid) {
         console.warn(
             "GM: EvolveCard rejected - Local state shows insufficient EP."
         );
-        alert("进化点不足！");
+        showAlert("进化点不足！");
         return;
     }
     if (cardInstance.zone !== "Field") {
         console.warn(`GM: EvolveCard rejected - Card not on field.`);
-        alert("只能进化场上的随从！");
+        showAlert("只能进化场上的随从！");
         return;
     }
     if (cardInstance.type !== "Follower") {
         console.warn(`GM: EvolveCard rejected - Cannot evolve non-Follower.`);
-        alert("只能进化随从！");
+        showAlert("只能进化随从！");
         return;
     }
     if (cardInstance.isEvolved === true) {
         console.warn(`GM: EvolveCard rejected - Card is already evolved.`);
-        alert("该随从已经进化！");
+        showAlert("该随从已经进化！");
         return;
     }
     // Check the canEvolve property directly on the instance, which is hydrated from the DTO.
@@ -1713,7 +1714,7 @@ export async function evolveCard(cardUid) {
         console.warn(
             "GM: EvolveCard rejected - Card definition does not allow evolution or lacks target."
         );
-        alert("该随从无法进化！");
+        showAlert("该随从无法进化！");
         return;
     }
     // --- End Client-Side Validations ---
@@ -1722,7 +1723,7 @@ export async function evolveCard(cardUid) {
     const connection = getActiveConnection();
     if (!connection || connection.state !== "Connected") {
         console.error("GM: EvolveCard failed - SignalR connection not available.");
-        alert("与服务器连接丢失，无法进化！");
+        showAlert("与服务器连接丢失，无法进化！");
         return;
     }
 
@@ -1732,7 +1733,6 @@ export async function evolveCard(cardUid) {
         await connection.invoke("PerformEvolve", actionDto); // Corrected Hub method name and pass DTO
 
         // Wait for server event 'UnitEvolved' via processGameEvent for state update.
-        alert(`正在进化 ${cardInstance.name}...`);
 
         // Optimistically update the local flag? Or wait for server confirmation?
         // Let's wait for server confirmation via event processing to keep client thin.
@@ -1743,7 +1743,7 @@ export async function evolveCard(cardUid) {
         if (err && err.message) {
             errorMessage = err.message;
         }
-        alert(`进化失败：${errorMessage}`);
+        showAlert(`进化失败：${errorMessage}`);
         // No state change locally on error
     }
 }
@@ -1751,12 +1751,12 @@ export async function evolveCard(cardUid) {
 // 超进化随从
 export async function superEvolveCard(cardUid) {
     if (gameState.isSpectator) {
-        alert("观战模式：不能进行操作。");
+        showAlert("观战模式：不能进行操作。");
         return;
     }
     if (gameState.gameOver) {
         console.warn("GM: Cannot super evolve card - Game is over.");
-        alert("游戏已经结束，无法超进化！");
+        showAlert("游戏已经结束，无法超进化！");
         return;
     }
 
@@ -1765,7 +1765,7 @@ export async function superEvolveCard(cardUid) {
 
     if (!playerState || !cardInstance) {
         console.error(`GM: SuperEvolveCard failed - Missing player state or card instance for UID ${cardUid}.`);
-        alert("内部错误：无法找到超进化所需信息。");
+        showAlert("内部错误：无法找到超进化所需信息。");
         return;
     }
 
@@ -1774,49 +1774,49 @@ export async function superEvolveCard(cardUid) {
         playerState.id !== gameState.currentPlayerId
     ) {
         console.warn(`GM: SuperEvolveCard rejected - Not local player's turn.`);
-        alert("现在不是你的回合！");
+        showAlert("现在不是你的回合！");
         return;
     }
     if (gameState.phase !== "Main") {
         console.warn(`GM: SuperEvolveCard rejected - Cannot super evolve outside Main phase.`);
-        alert("只能在你的回合主阶段超进化！");
+        showAlert("只能在你的回合主阶段超进化！");
         return;
     }
     if (!playerState.canSuperEvolve) {
         console.warn("GM: SuperEvolveCard rejected - Local state indicates super evolution already used or unavailable.");
-        alert("本回合已使用过超进化点或无法超进化。");
+        showAlert("本回合已使用过超进化点或无法超进化。");
         return;
     }
     if (playerState.sep < 1) {
         console.warn("GM: SuperEvolveCard rejected - Local state shows insufficient SEP.");
-        alert("超进化点不足！");
+        showAlert("超进化点不足！");
         return;
     }
     if (cardInstance.zone !== "Field") {
         console.warn(`GM: SuperEvolveCard rejected - Card not on field.`);
-        alert("只能超进化场上的随从！");
+        showAlert("只能超进化场上的随从！");
         return;
     }
     if (cardInstance.type !== "Follower") {
         console.warn(`GM: SuperEvolveCard rejected - Cannot super evolve non-Follower.`);
-        alert("只能超进化随从！");
+        showAlert("只能超进化随从！");
         return;
     }
     if (cardInstance.isEvolved === true) {
         console.warn(`GM: SuperEvolveCard rejected - Card is already evolved.`);
-        alert("该随从已经进化！");
+        showAlert("该随从已经进化！");
         return;
     }
     if (cardInstance.canEvolve !== true) {
         console.warn("GM: SuperEvolveCard rejected - Card definition does not allow evolution or lacks target.");
-        alert("该随从无法超进化！");
+        showAlert("该随从无法超进化！");
         return;
     }
 
     const connection = getActiveConnection();
     if (!connection || connection.state !== "Connected") {
         console.error("GM: SuperEvolveCard failed - SignalR connection not available.");
-        alert("与服务器连接丢失，无法超进化！");
+        showAlert("与服务器连接丢失，无法超进化！");
         return;
     }
 
@@ -1825,14 +1825,14 @@ export async function superEvolveCard(cardUid) {
         await connection.invoke("PerformSuperEvolve", actionDto);
     } catch (error) {
         console.error("GM: Error invoking PerformSuperEvolve:", error);
-        alert("超进化请求失败，请稍后再试。");
+        showAlert("超进化请求失败，请稍后再试。");
     }
 }
 
 // Act (Activated ability) request for a field card
 export async function requestAct(cardUid, abilityRuntimeId = null) {
     if (gameState.isSpectator) {
-        alert("观战模式：不能进行操作。");
+        showAlert("观战模式：不能进行操作。");
         return;
     }
     if (gameState.gameOver) {
@@ -1842,7 +1842,7 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
     const actConnection = getActiveConnection();
     if (!actConnection || actConnection.state !== "Connected") {
         console.error("GM: RequestAct failed - SignalR connection not available or not connected.");
-        alert("与服务器连接丢失，无法启动！");
+        showAlert("与服务器连接丢失，无法启动！");
         return;
     }
 
@@ -1855,17 +1855,17 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
     }
 
     if (playerState.id !== gameState.localPlayerId || playerState.id !== gameState.currentPlayerId) {
-        alert("现在不是你的回合！");
+        showAlert("现在不是你的回合！");
         return;
     }
 
     if (gameState.phase !== "Main") {
-        alert("只能在主阶段启动！");
+        showAlert("只能在主阶段启动！");
         return;
     }
 
     if (cardInstance.ownerId !== playerState.id || cardInstance.zone !== "Field") {
-        alert("只能启动自己场上的卡牌！");
+        showAlert("只能启动自己场上的卡牌！");
         return;
     }
 
@@ -1873,7 +1873,7 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
         || (Array.isArray(cardInstance.ActAbilities) && cardInstance.ActAbilities.length > 0)
         || Boolean(getActPlayabilityForCard(cardUid, playerState.id));
     if (!hasActCapability) {
-        alert("该卡牌没有启动能力。");
+        showAlert("该卡牌没有启动能力。");
         return;
     }
 
@@ -1881,7 +1881,7 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
     const isActKnown = Boolean(actCache);
     if (isActKnown && actCache.isPlayable !== true) {
         const reason = actCache.failureReason || "启动条件不满足。";
-        alert(reason);
+        showAlert(reason);
         return;
     }
 
@@ -1898,7 +1898,7 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
                 // UNKNOWN/过渡态下采用 fail-open：让服务器做最终权威校验。
             } else if (matchedAbility.isPlayable !== true) {
                 const reason = matchedAbility.failureReason || "启动条件不满足。";
-                alert(reason);
+                showAlert(reason);
                 return;
             }
         }
@@ -1907,7 +1907,7 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
     const actsThisTurn = Number(cardInstance.actsThisTurn ?? cardInstance.ActsThisTurn ?? 0);
     const maxActsPerTurn = Number(cardInstance.maxActsPerTurn ?? cardInstance.MaxActsPerTurn ?? 1);
     if (Number.isFinite(actsThisTurn) && Number.isFinite(maxActsPerTurn) && actsThisTurn >= maxActsPerTurn) {
-        alert("该卡牌本回合已启动过。");
+        showAlert("该卡牌本回合已启动过。");
         return;
     }
 
@@ -1919,14 +1919,14 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
         await actConnection.invoke("RequestAct", actionDto);
     } catch (err) {
         console.error("GM: SignalR 'RequestAct' invocation failed:", err);
-        alert(`启动失败：${err?.message || "服务器通信错误"}`);
+        showAlert(`启动失败：${err?.message || "服务器通信错误"}`);
     }
 }
 
 // Fusion request for a hand card
 export async function requestFusion(cardUid, abilityRuntimeId = null) {
     if (gameState.isSpectator) {
-        alert("观战模式：不能进行操作。");
+        showAlert("观战模式：不能进行操作。");
         return;
     }
     if (gameState.gameOver) {
@@ -1936,7 +1936,7 @@ export async function requestFusion(cardUid, abilityRuntimeId = null) {
     const fusionConnection = getActiveConnection();
     if (!fusionConnection || fusionConnection.state !== "Connected") {
         console.error("GM: RequestFusion failed - SignalR connection not available or not connected.");
-        alert("与服务器连接丢失，无法融合！");
+        showAlert("与服务器连接丢失，无法融合！");
         return;
     }
 
@@ -1949,24 +1949,24 @@ export async function requestFusion(cardUid, abilityRuntimeId = null) {
     }
 
     if (playerState.id !== gameState.localPlayerId || playerState.id !== gameState.currentPlayerId) {
-        alert("现在不是你的回合！");
+        showAlert("现在不是你的回合！");
         return;
     }
 
     if (gameState.phase !== "Main") {
-        alert("只能在主阶段进行融合！");
+        showAlert("只能在主阶段进行融合！");
         return;
     }
 
     if (cardInstance.ownerId !== playerState.id || cardInstance.zone !== "Hand") {
-        alert("只能融合自己手牌中的卡牌！");
+        showAlert("只能融合自己手牌中的卡牌！");
         return;
     }
 
     const fusionsThisTurn = Number(cardInstance.fusionsThisTurn ?? cardInstance.FusionsThisTurn ?? 0);
     const maxFusionsPerTurn = Number(cardInstance.maxFusionsPerTurn ?? cardInstance.MaxFusionsPerTurn ?? 1);
     if (Number.isFinite(fusionsThisTurn) && Number.isFinite(maxFusionsPerTurn) && fusionsThisTurn >= maxFusionsPerTurn) {
-        alert("该卡牌本回合已融合过。");
+        showAlert("该卡牌本回合已融合过。");
         return;
     }
 
@@ -1978,7 +1978,7 @@ export async function requestFusion(cardUid, abilityRuntimeId = null) {
         await fusionConnection.invoke("RequestFusion", actionDto);
     } catch (err) {
         console.error("GM: SignalR 'RequestFusion' invocation failed:", err);
-        alert(`融合失败：${err?.message || "服务器通信错误"}`);
+        showAlert(`融合失败：${err?.message || "服务器通信错误"}`);
     }
 }
 // Duplicate evolveCard function removed to fix SyntaxError
@@ -1990,7 +1990,7 @@ export async function requestFusion(cardUid, abilityRuntimeId = null) {
  */
 export async function submitMulligan(cardUidsToReplace = []) {
     if (gameState.isSpectator) {
-        alert("观战模式：不能进行操作。");
+        showAlert("观战模式：不能进行操作。");
         return;
     }
     const connection = getActiveConnection();
@@ -1998,7 +1998,7 @@ export async function submitMulligan(cardUidsToReplace = []) {
         console.error(
             "GM: SubmitMulligan failed - SignalR connection not available."
         );
-        alert("与服务器连接丢失，无法提交调度！");
+        showAlert("与服务器连接丢失，无法提交调度！");
         return;
     }
     if (gameState.phase !== "Mulligan") {
@@ -2012,7 +2012,6 @@ export async function submitMulligan(cardUidsToReplace = []) {
     try {
         // Pass the array directly, as expected by the Hub method List<string> parameter
         await connection.invoke("SubmitMulligan", cardUidsToReplace); // Pass the array directly
-        alert("正在提交调度决定...");
         // Do not modify local state (like player1MulliganComplete) here.
         // Server should send an event (e.g., MulliganEnded, TurnStarted) to confirm and update state.
     } catch (err) {
@@ -2021,7 +2020,7 @@ export async function submitMulligan(cardUidsToReplace = []) {
         if (err && err.message) {
             errorMessage = err.message;
         }
-        alert(`提交调度失败：${errorMessage}`);
+        showAlert(`提交调度失败：${errorMessage}`);
     }
 }
 
@@ -2032,7 +2031,7 @@ export async function endTurnRequest() {
     const timestamp = new Date().toISOString();
     // --- Proceed with checks ---
     if (gameState.isSpectator) {
-        alert("观战模式：不能进行操作。");
+        showAlert("观战模式：不能进行操作。");
         return;
     }
     const connection = getActiveConnection();
@@ -2040,7 +2039,7 @@ export async function endTurnRequest() {
         console.error(
             "GM: EndTurnRequest failed - SignalR connection not available."
         );
-        alert("与服务器连接丢失，无法结束回合！");
+        showAlert("与服务器连接丢失，无法结束回合！");
         return;
     }
     // Optional: Add phase check? Should EndTurn be allowed outside Main phase? Usually yes.
@@ -2068,7 +2067,6 @@ export async function endTurnRequest() {
 
         // Send the string directly, as expected by the Hub method string parameter
         await connection.invoke("EndTurn", requestId); // Send the string directly
-        alert("正在结束回合...");
         // Wait for TurnEnded event from server via processGameEvent.
     } catch (err) {
         // Re-enable the button on error
@@ -2081,7 +2079,7 @@ export async function endTurnRequest() {
         if (err && err.message) {
             errorMessage = err.message;
         }
-        alert(`结束回合失败：${errorMessage}`);
+        showAlert(`结束回合失败：${errorMessage}`);
     }
 }
 
@@ -2185,7 +2183,7 @@ export async function sendGameAction(actionData) {
             "GM: sendGameAction failed - Invalid actionData received:",
             actionData
         );
-        alert("内部错误：无效的游戏动作数据。");
+        showAlert("内部错误：无效的游戏动作数据。");
         return;
     }
 
@@ -2194,7 +2192,7 @@ export async function sendGameAction(actionData) {
         console.error(
             `GM: sendGameAction (${actionData.actionType}) failed - SignalR connection not available.`
         );
-        alert(`与服务器连接丢失，无法执行动作 (${actionData.actionType})！`);
+        showAlert(`与服务器连接丢失，无法执行动作 (${actionData.actionType})！`);
         return;
     }
 
@@ -2203,12 +2201,12 @@ export async function sendGameAction(actionData) {
     // Example:
     // if (gameState.localPlayerId !== gameState.currentPlayerId) {
     //     console.warn(`GM: sendGameAction (${actionData.actionType}) rejected - Not local player's turn.`);
-    //     alert("现在不是你的回合！");
+    //     showAlert("现在不是你的回合！");
     //     return;
     // }
     // if (gameState.phase !== 'Main' && actionData.actionType !== 'SomeActionAllowedOutsideMain') { // Adjust condition based on action
     //     console.warn(`GM: sendGameAction (${actionData.actionType}) rejected - Action not allowed during ${gameState.phase} phase.`);
-    //     alert(`无法在 ${gameState.phase} 阶段执行此动作！`);
+    //     showAlert(`无法在 ${gameState.phase} 阶段执行此动作！`);
     //     return;
     // }
 
@@ -2221,7 +2219,6 @@ export async function sendGameAction(actionData) {
         );
 
         // Wait for server events triggered by this action via processGameEvent.
-        alert(`正在执行动作: ${actionData.actionType}...`); // Generic feedback
     } catch (err) {
         console.error(
             `GM: SignalR 'SendGameAction' (${actionData.actionType}) invocation failed:`,
@@ -2232,7 +2229,7 @@ export async function sendGameAction(actionData) {
             // Try to extract a more specific error from potential HubException
             errorMessage = err.message.split(": ").pop() || err.message;
         }
-        alert(`执行动作 (${actionData.actionType}) 失败：${errorMessage}`);
+        showAlert(`执行动作 (${actionData.actionType}) 失败：${errorMessage}`);
         // Optionally clear selection state if applicable based on actionType (e.g., clear selected attacker on attack fail)
         // if(actionData.actionType === 'Attack') { gameState.selectedAttackerUid = null; renderGame(gameState); }
     }
@@ -2347,6 +2344,7 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
     playerInstance.pp = playerDto.CurrentPP ?? 0; // PascalCase
     playerInstance.maxPP = playerDto.MaxPP ?? 0; // PascalCase
     playerInstance.ppBoostUsesAvailable = playerDto.PpBoostUsesAvailable ?? 0;
+    playerInstance.isIntromezzoActive = playerDto.IsIntromezzoActive ?? playerDto.isIntromezzoActive ?? true;
     playerInstance.ppBoostArmed = playerDto.IsPpBoostArmed ?? playerDto.isPpBoostArmed ?? false;
     playerInstance.ep = playerDto.CurrentEP ?? 0; // PascalCase
     playerInstance.maxEP = playerDto.MaxEP ?? 0; // PascalCase
@@ -2493,7 +2491,7 @@ export function updateFullGameState(serverState) {
             "GAME MANAGER: Received invalid or incomplete full game state object:",
             serverState
         );
-        alert("错误：收到无效的游戏状态数据！");
+        showAlert("错误：收到无效的游戏状态数据！");
         return false;
     }
 
@@ -2787,7 +2785,7 @@ export function handleTurnStarted(eventData) {
         }
     } else {
         console.error("GM Error: TurnStarted event received without a valid nested GameState object:", eventData);
-        alert("错误：回合开始事件数据无效！");
+        showAlert("错误：回合开始事件数据无效！");
     }
 
     // No need for separate logic here to update currentPlayerId, phase, player turns, or render.
@@ -3074,13 +3072,13 @@ export function handleActPlayabilityUpdate(updateDto) {
  */
 export async function requestPpBoost() {
     if (gameState.isSpectator) {
-        alert("观战模式：不能进行操作。");
+        showAlert("观战模式：不能进行操作。");
         return;
     }
     const connection = getActiveConnection();
     if (!connection || connection.state !== "Connected") {
         console.error("GM: requestPpBoost failed - SignalR connection not available.");
-        alert("与服务器连接丢失，无法使用PP+1！");
+        showAlert("与服务器连接丢失，无法使用PP+1！");
         return;
     }
 
@@ -3091,18 +3089,18 @@ export async function requestPpBoost() {
     }
 
     if (playerState.id !== gameState.localPlayerId || playerState.id !== gameState.currentPlayerId) {
-        alert("现在不是你的回合！");
+        showAlert("现在不是你的回合！");
         return;
     }
 
     if (gameState.phase !== "Main" && gameState.phase !== "TurnStart") {
-        alert("只能在自己的回合使用PP+1！");
+        showAlert("只能在自己的回合使用PP+1！");
         return;
     }
 
     const isArmed = Boolean(playerState.ppBoostArmed);
     if (!isArmed && (playerState.ppBoostUsesAvailable ?? 0) <= 0) {
-        alert("没有可用的PP+1次数。");
+        showAlert("没有可用的PP+1次数。");
         return;
     }
 
@@ -3110,7 +3108,7 @@ export async function requestPpBoost() {
         await connection.invoke("PerformPpBoost");
     } catch (err) {
         console.error("GM: SignalR 'PerformPpBoost' invocation failed:", err);
-        alert(`PP+1使用失败：${err?.message || "服务器通信错误"}`);
+        showAlert(`PP+1使用失败：${err?.message || "服务器通信错误"}`);
     }
 }
 
@@ -3193,6 +3191,31 @@ export function handleCardInstanceUpdated(eventData) {
         return;
     }
 
+    const replacements = eventData.ReplacedCardInstanceIds || {};
+    let identityChanged = false;
+    for (const [previousUid, nextUid] of Object.entries(replacements)) {
+        const replacementDto = eventData.UpdatedCards.find(card => String(card.InstanceId).toLowerCase() === String(nextUid).toLowerCase());
+        if (!replacementDto) continue;
+        const replacement = createCardInstance(replacementDto);
+        for (const player of gameState.players) {
+            for (const zone of ['hand', 'deck', 'field', 'graveyard', 'extra', 'emblem']) {
+                const list = player[zone];
+                const index = Array.isArray(list) ? list.findIndex(card => String(card.uid).toLowerCase() === previousUid.toLowerCase()) : -1;
+                if (index >= 0) { list[index] = replacement; identityChanged = true; }
+            }
+            if (String(player.leaderCard?.uid).toLowerCase() === previousUid.toLowerCase()) { player.leaderCard = replacement; identityChanged = true; }
+            if (String(player.leader?.uid).toLowerCase() === previousUid.toLowerCase()) { player.leader = replacement; identityChanged = true; }
+        }
+        if (identityChanged) {
+            if (String(gameState.selectedCardUid).toLowerCase() === previousUid.toLowerCase()) gameState.selectedCardUid = null;
+            for (const cache of [gameState.playabilityCache, gameState.actPlayabilityCache]) {
+                for (const entries of Object.values(cache || {})) if (entries) delete entries[previousUid];
+            }
+            cancelSelection();
+            gameView.replaceBattleCardPreviewIdentity?.(previousUid, replacement);
+        }
+    }
+    if (identityChanged) gameView.renderGame(gameState);
     const handOwnersToRefresh = new Set();
     const emblemOwnersToRefresh = new Set();
     const updatedInstances = [];
@@ -3210,7 +3233,7 @@ export function handleCardInstanceUpdated(eventData) {
 
         const preservedZone = existingInstance.zone;
         const preservedOwnerId = existingInstance.ownerId;
-        const preservedTurnPlayed = existingInstance.turnPlayed;
+        const preservedTurnPlayed = Object.values(replacements).includes(updatedInstance.uid) ? updatedInstance.turnPlayed : existingInstance.turnPlayed;
         const preservedAttackCount = existingInstance.attackCount;
         const preservedCanAttack = existingInstance.canAttack;
         const preservedCurrentAttack = existingInstance.currentAttack;
@@ -3430,6 +3453,8 @@ export function handleCounterChanged(eventData) {
 
             if (normalizedCounter === 'earthsigil') {
                 cardInstance.earthsigil = newValue;
+            } else if (normalizedCounter === 'evidence') {
+                cardInstance.evidence = newValue;
             } else if (normalizedCounter === 'spellboost') {
                 cardInstance.spellboost = newValue;
             }
@@ -4057,7 +4082,7 @@ export function handlePlayerActionError(eventData) {
     // Use PascalCase: PlayerId
     if (eventData.PlayerId === gameState.localPlayerId) { // PascalCase
         // Use PascalCase: ActionType, Message
-        alert(`操作错误 (${eventData.ActionType || '未知'}): ${eventData.Message}`); // PascalCase (x2)
+        showAlert(`操作错误 (${eventData.ActionType || '未知'}): ${eventData.Message}`); // PascalCase (x2)
         // Optionally re-enable controls or clear selections if the action failed
         // e.g., if play card failed, maybe clear selectedCardUid
         // This depends on server guarantees and desired UX
@@ -4220,25 +4245,17 @@ export function handlePlayerChoiceRequested(eventData) {
  */
 export function handleCardRevealed(eventData) {
 
-    const revealedCard = eventData?.RevealedCard ?? null;
-    if (!revealedCard) {
-        console.warn("GM: CardRevealed event missing RevealedCard payload.");
-        return;
-    }
-
-    // Show a transient overlay; do not modify authoritative state.
-    try {
-        if (gameView.showRevealOverlay) {
-            gameView.showRevealOverlay(revealedCard);
-        }
-    } catch (error) {
-        console.error("GM Error: Failed to show reveal overlay:", error);
-    }
-
-    // Best-effort log entry.
-    const name = revealedCard.Name ?? 'Unknown';
-    const cost = Number.isFinite(revealedCard.Cost) ? revealedCard.Cost : '?';
-    appendGameLog("Reveal", { name, cost, instanceId: revealedCard.InstanceId, cardId: revealedCard.CardId });
+    const revealedCard = eventData?.RevealedCard ?? eventData?.revealedCard;
+    if (!revealedCard) return;
+    const playerId = eventData.RevealingPlayerId ?? eventData.revealingPlayerId ?? revealedCard.OwnerPlayerId ?? revealedCard.ownerId;
+    const completion = gameView.showRevealOverlay?.(revealedCard, { playerId, handIndex: eventData.HandIndex ?? eventData.handIndex });
+    // CardRevealed is not in the generic log stream; consume its server announcement here once.
+    const safe = value => String(value ?? '').replace(/\[\[|\]\]/g,'').replace(/\|/g,'/');
+    const name = safe(revealedCard.Name ?? revealedCard.name ?? '未知卡牌');
+    const uid = revealedCard.InstanceId ?? revealedCard.instanceId;
+    const cardToken = uid ? `[[card:${safe(uid)}|name:${name}|owner:${safe(playerId)}]]` : `[[cardname:${name}]]`;
+    appendGameLog('CardRevealed', eventData.Announcement || eventData.announcement || `[[player:${safe(playerId || 'unknown')}]] 公开了 ${cardToken}。`);
+    return completion;
 }
 
 function readAbilityParameter(parameters, keys) {
@@ -4479,7 +4496,7 @@ export async function submitPlayerChoice(pendingChoiceId, chosenTargetIds, sourc
     const connection = getActiveConnection();
     if (!connection || connection.state !== "Connected") {
         console.error("GM: SubmitPlayerChoice failed - SignalR connection not available.");
-        alert("与服务器连接丢失，无法提交选择！");
+        showAlert("与服务器连接丢失，无法提交选择！");
         return false;
     }
 
@@ -4499,7 +4516,7 @@ export async function submitPlayerChoice(pendingChoiceId, chosenTargetIds, sourc
         return true;
     } catch (err) {
         console.error("[CHOICE_DEBUG] GameManager: 'SubmitTargetChoice' invocation FAILED.", err);
-        alert(`提交选择失败：${err.message}`);
+        showAlert(`提交选择失败：${err.message}`);
         return false;
     }
     // --- END DIAGNOSTIC LOGGING ---

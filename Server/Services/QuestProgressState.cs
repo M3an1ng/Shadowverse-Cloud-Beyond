@@ -23,6 +23,13 @@ internal static class QuestProgressState
                     && item.PeriodKey == period.Key, cancellationToken);
         if (quest != null)
         {
+            // Existing UTC-calendar rows may share the Beijing date key. Keep their progress/reward state.
+            if (definition.Category is QuestCategory.Daily or QuestCategory.Weekly)
+            {
+                quest.PeriodStartUtc = period.StartUtc;
+                quest.PeriodEndUtc = period.EndUtc;
+                quest.ExpiresAt = period.EndUtc;
+            }
             return quest;
         }
 
@@ -48,7 +55,7 @@ internal static class QuestProgressState
         return category switch
         {
             QuestCategory.Daily => new QuestPeriod(
-                utc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), utc.Date, utc.Date.AddDays(1)),
+                utc.AddHours(8).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), utc.AddHours(8).Date.AddHours(-8), utc.AddHours(8).Date.AddDays(1).AddHours(-8)),
             QuestCategory.Weekly => ResolveWeeklyPeriod(utc),
             QuestCategory.Achievement => new QuestPeriod(
                 "achievement",
@@ -61,9 +68,10 @@ internal static class QuestProgressState
 
     private static QuestPeriod ResolveWeeklyPeriod(DateTime utc)
     {
-        var start = utc.Date.AddDays(-(((int)utc.DayOfWeek + 6) % 7));
+        var local = utc.AddHours(8);
+        var start = local.Date.AddDays(-(((int)local.DayOfWeek + 6) % 7));
         return new QuestPeriod(
-            $"{ISOWeek.GetYear(start):0000}-W{ISOWeek.GetWeekOfYear(start):00}", start, start.AddDays(7));
+            $"{ISOWeek.GetYear(start):0000}-W{ISOWeek.GetWeekOfYear(start):00}", start.AddHours(-8), start.AddDays(7).AddHours(-8));
     }
 
     private static QuestPeriod ResolveFixedIntervalPeriod(int intervalHours, DateTime utc)

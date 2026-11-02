@@ -51,6 +51,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
 
         /// <summary> Indicates if the buff is currently active. Can be set to false by Silence effects or other mechanics. </summary>
         public bool IsActive { get; set; } = true;
+        public bool RemoveAfterUse { get; set; } = false;
 
         /// <summary> Turn number when the buff was applied. </summary>
         public int AppliedTurn { get; init; }

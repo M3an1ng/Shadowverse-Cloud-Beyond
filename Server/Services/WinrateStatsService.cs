@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
@@ -105,7 +105,8 @@ public sealed class WinrateStatsService : IWinrateStatsService
 
                 await UpdateCardAggAsync(participant, isWinner, cancellationToken);
                 await UpdateDeckAggAsync(participant, isWinner, cancellationToken);
-                await UpdateUserClassAggAsync(participant.PlayerId, participant.DeckClass, isWinner, cancellationToken);
+                if (participant.Rule != DeckRule.TakeTwo)
+                    await UpdateUserClassAggAsync(participant.PlayerId, participant.DeckClass, isWinner, cancellationToken);
             }
         });
         _runtimeTracker.Clear(gameState.GameId);

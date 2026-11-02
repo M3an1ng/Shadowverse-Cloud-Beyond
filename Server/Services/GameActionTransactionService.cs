@@ -866,7 +866,8 @@ namespace ShadowverseBeyond.Server.Services
             var triggeredAbilities = new List<IAbility>();
             foreach (var ability in abilities)
             {
-                if (ability.TriggerConfig.Timing == timing && await ability.CanTrigger(gameEvent, gameContext))
+                if (ability.TriggerConfig.EventTypes.Contains(gameEvent.EventType)
+                    && ability.TriggerConfig.Timing == timing && await ability.CanTrigger(gameEvent, gameContext))
                 {
                     triggeredAbilities.Add(ability);
                 }
@@ -1554,6 +1555,7 @@ namespace ShadowverseBeyond.Server.Services
                         out var preflightGeneratedEvents,
                         out var preflightShouldEmitAbilityTriggeredEvent))
                 {
+                    if (preflightShouldEmitAbilityTriggeredEvent && !IntromezzoGate.Enter(ability, abilityContext)) continue;
                     if (preflightShouldEmitAbilityTriggeredEvent)
                     {
                         ability.RecordTrigger(abilityContext);
@@ -1736,7 +1738,8 @@ namespace ShadowverseBeyond.Server.Services
 
             if (ability is Ability concreteAbility)
             {
-                return concreteAbility.BroadcastOnTrigger;
+                // Gameplay trigger facts must not depend on the visual broadcast preference.
+                return concreteAbility.BroadcastOnTrigger || concreteAbility.Keywords.Any(k => k != AbilityKeyword.None);
             }
 
             return true;
@@ -1949,16 +1952,19 @@ namespace ShadowverseBeyond.Server.Services
                         continue;
                     }
 
-                    interceptedAbilityIds.Add(ability.RuntimeId);
-                    deferredEffects.AddRange(abilityResult.Effects.Where(effect => !IsInterceptEffect(effect)));
+                    // Inspection must not consume ordinary Before abilities or their shared Intromezzo state.
                     if (shouldRecordRuntimeState)
                     {
+                        if (!IntromezzoGate.Enter(ability, abilityContext)) continue;
                         ability.RecordTrigger(abilityContext);
                         if (ShouldEmitAbilityTriggeredEvent(ability, abilityContext))
                         {
                             generatedEvents.Add(new AbilityTriggeredEvent(ability, abilityContext.TriggeringEvent!));
                         }
                     }
+
+                    interceptedAbilityIds.Add(ability.RuntimeId);
+                    deferredEffects.AddRange(abilityResult.Effects.Where(effect => !IsInterceptEffect(effect)));
 
                     AppendGeneratedEvents(generatedEvents, generatedEventIds, abilityResult.GeneratedEvents);
 
@@ -3724,6 +3730,10 @@ namespace ShadowverseBeyond.Server.Services
                 return PausableTransactionResult.Failure(message);
             }
 
+            if (gameEvent is DiscoverRequestEvent discovering) await discovering.ResolveAsync(gameContext);
+            if (gameEvent is DiscoverEvent discovered && discovered.DiscoveredCard?.CurrentZone != CardZone.Hand)
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+
             var signature = BuildEventSignature(gameEvent);
             if (!string.IsNullOrWhiteSpace(signature))
             {
@@ -4760,6 +4770,12 @@ namespace ShadowverseBeyond.Server.Services
 
             foreach (var triggeredAbility in triggeredAbilities)
             {
+                if (parameters.SkipTargetAndModeSelection
+                    && triggeredAbility is Ability configuredAbility
+                    && AbilitySelectionPolicy.RequiresPlayerSelection(configuredAbility.Config))
+                {
+                    continue;
+                }
                 var abilityContext = context with
                 {
                     SourceCard = triggeredAbility.SourceCard,

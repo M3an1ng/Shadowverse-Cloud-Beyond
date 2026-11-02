@@ -13,6 +13,8 @@ export function buildPreviewSlateHtml(options) {
         name = 'UNTITLED',
         costValue = 0,
         enhanceActive = false,
+        modeLabel = 'ENH',
+        alternateActive = false,
         isFollower = false,
         attackValue = 0,
         healthValue = 0,
@@ -20,6 +22,8 @@ export function buildPreviewSlateHtml(options) {
         showCountdown = false,
         earthsigilValue = 0,
         showEarthsigil = false,
+        evidenceValue = 0,
+        showEvidence = false,
         description = '',
         hideEmptyDescriptionPlaceholder = false,
         previewUrl = '',
@@ -32,7 +36,7 @@ export function buildPreviewSlateHtml(options) {
     } = options;
 
     const descriptionHtml = description
-        ? renderDescriptionHtml(description)
+        ? renderDescriptionHtml(description, { isIntromezzoActive: options.isIntromezzoActive })
         : (hideEmptyDescriptionPlaceholder ? '' : DEFAULT_DESCRIPTION_HTML);
 
     const descriptionBlockHtml = descriptionHtml
@@ -67,9 +71,10 @@ export function buildPreviewSlateHtml(options) {
                     </div>
                 </div>
                 `
-        : (showCountdown || showEarthsigil)
+        : (showCountdown || showEarthsigil || showEvidence)
             ? `
                 <div class="header-stats">
+                    ${showEvidence ? `<div class="stat-mini evidence" title="证据数"><span class="stat-icon evidence-icon" aria-hidden="true"></span><span class="stat-value">${evidenceValue}</span></div>` : ''}
                     ${showEarthsigil
             ? `
                     <div class="stat-mini earthsigil">
@@ -90,7 +95,7 @@ export function buildPreviewSlateHtml(options) {
                 `
             : '';
 
-    const costClass = `slate-cost-badge-embedded${enhanceActive ? ' enhance-active' : ''}`;
+    const costClass = `slate-cost-badge-embedded${enhanceActive ? ' enhance-active' : ''}${alternateActive ? ' alternate-active' : ''}`;
     const nameClassAttr = nameClasses.join(' ');
     const nameAttr = nameDetailAttr ? ` ${nameDetailAttr}` : '';
     const artClass = previewUrl ? ' has-art' : '';
@@ -103,7 +108,7 @@ export function buildPreviewSlateHtml(options) {
               <div class="slate-header">
                       <div class="slate-identity">
                       <div class="identity-top">
-                          <div class="${costClass}">
+                          <div class="${costClass}" data-play-mode-label="${['ACC','CRY','ENH'].includes(modeLabel) ? modeLabel : ''}">
                               <span class="cost-value">${costValue}</span>
                           </div>
                           <h2 class="${nameClassAttr}"${nameAttr}>${name}</h2>

@@ -34,6 +34,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
         {
             const string effectName = "ModifyAbilityKeywordEffect";
 
+            if (parameters.RemoveAfterUse && parameters.Keyword != AbilityKeyword.Act && parameters.Keyword != AbilityKeyword.Reanimate)
+                return new GameStateActionResult { Success = false, ErrorMessage = "生效后移除仅支持启动／亡者召还数值修正。" };
             var modification = BuildModification(parameters);
             if (modification == null)
             {
@@ -53,6 +55,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
 
                     var target = targetInfo.Card;
                     var buff = CreateBuff(ctx, target, modification, parameters, effect.sourceAbilityId, effectKey);
+                    buff.RemoveAfterUse = parameters.RemoveAfterUse;
                     return ctx.BuffService.ApplyBuffProcess(buff, ctx, parameters.CanStack);
                 };
 

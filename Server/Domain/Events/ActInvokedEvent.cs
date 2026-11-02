@@ -84,6 +84,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             card.MarkActUsed();
+            result.Merge(global::ShadowverseBeyond.Server.Domain.Buffs.OneUseModifiers.Consume(card, AbilityKeyword.Act, context));
 
             result.Success = true;
             result.GeneratedEvents.Add(new ActStateUpdatedEvent(card, card.ActsThisTurn, card.MaxActsPerTurn));

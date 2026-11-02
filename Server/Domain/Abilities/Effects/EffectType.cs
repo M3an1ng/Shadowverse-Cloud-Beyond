@@ -423,6 +423,12 @@ namespace ShadowverseBeyond.Server.Domain.Effects
         [Description("土之印结算")]
         SettleEarthSigil = 152,
 
+        [Description("证据数修改")]
+        ModifyEvidence = 154,
+
+        [Description("证据结算")]
+        SettleEvidence = 155,
+
         /// <summary>
         /// 死灵术 - 消耗墓场计数
         /// 🔄 可实现：消耗玩家墓场计数

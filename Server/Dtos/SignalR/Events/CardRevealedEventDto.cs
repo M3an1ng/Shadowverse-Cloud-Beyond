@@ -8,6 +8,7 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
     public sealed class CardRevealedEventDto : GameEventDto
     {
         public Guid RevealingPlayerId { get; init; }
+        public int HandIndex { get; init; } = -1;
         public Guid RevealedCardInstanceId { get; init; }
         public CardInstanceDto RevealedCard { get; init; } = new();
 

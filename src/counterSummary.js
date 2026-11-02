@@ -38,7 +38,9 @@ function normalizeSummaryEntry(entry) {
         return null;
     }
 
-    const rawLabel = entry.label ?? entry.Label ?? key;
+    if (key.toLowerCase().startsWith("sequence.cursor.")) return null;
+    const systemLabels = { spellboost: "魔力增幅数", earthsigil: "土之印数" };
+    const rawLabel = systemLabels[key.toLowerCase()] ?? entry.label ?? entry.Label ?? key;
     const label = String(rawLabel ?? '').trim();
     if (!label) {
         return null;

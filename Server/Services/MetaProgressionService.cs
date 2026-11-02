@@ -84,6 +84,7 @@ public sealed class MetaProgressionService : IMetaProgressionService
                 reason: gameEndEvent.Reason,
                 coinRewardEligible: coinRewardEligible,
                 nonOfficialReason: officialMatch.NonOfficialReason,
+                isTakeTwo: participant.IsTakeTwo,
                 cancellationToken);
         }
     }
@@ -97,6 +98,7 @@ public sealed class MetaProgressionService : IMetaProgressionService
         string? reason,
         bool coinRewardEligible,
         string? nonOfficialReason,
+        bool isTakeTwo,
         CancellationToken cancellationToken)
     {
         await _transactionService.ExecuteInTransactionAsync(async () =>
@@ -171,10 +173,10 @@ public sealed class MetaProgressionService : IMetaProgressionService
                 };
                 _db.UserProfiles.Add(profile);
             }
-            profile.UpdateGameStats(isWin, gameDuration: durationSeconds);
+            if (!isTakeTwo) profile.UpdateGameStats(isWin, gameDuration: durationSeconds);
 
             // Rank + coin rewards (uses the same transaction when already in one).
-            if (!await _economyService.UpdateUserRankAsync(userId, isWin))
+            if (!isTakeTwo && !await _economyService.UpdateUserRankAsync(userId, isWin))
             {
                 throw new InvalidOperationException($"Failed to update rank for settlement {gameId}, user {userId}.");
             }

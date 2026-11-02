@@ -1,0 +1,14 @@
+using System.ComponentModel;
+using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Metadata;
+using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters.Metadata;
+namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
+public enum DiscoverMode { [Description("定义")] Definition, [Description("复制")] Copy }
+[EffectMetadata("发现", "从范围内随机展示最多3张不同候选，自己选择1张加入手牌。", AbilityEditorCategories.SpecialId)]
+public class DiscoverEffectParams : BaseEffectParams {
+ [ParameterMetadata("发现模式",UiControlType.Dropdown)] public DiscoverMode Mode {get;set;}
+ [ParameterMetadata("卡片数据ID列表",UiControlType.TextArea, DslMode=DslMode.Forced, Description="定义模式：返回卡片数据ID列表的DSL。")]
+ public List<int> CardDefinitionIds {get;set;} = new();
+ [ParameterMetadata("卡片实例列表",UiControlType.TextArea, DslMode=DslMode.Forced, Description="复制模式：返回卡片实例列表的DSL，保留被选卡片的附加效果。")]
+ public object? CopySourceTargets {get;set;}
+}

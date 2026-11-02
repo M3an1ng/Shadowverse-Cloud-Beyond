@@ -112,3 +112,42 @@ coverage/
 !/docs/07-*.md
 !/docs/08-*.md
 /文档/
+
+# Native Mini merge regression suite.
+!/tests/
+/tests/*
+!/tests/EngineMigration/
+
+# Small native Mini presentation assets, separate from the downloaded card library.
+!/assets/
+/assets/*
+!/assets/card-ui/
+/assets/card-ui/*
+!/assets/card-ui/mse-beyond-badges.png
+!/assets/fonts/
+/assets/fonts/*
+!/assets/fonts/mse-weibei-digits-0d0d42c4cc28.woff2
+!/assets/reference-cost/
+/assets/reference-cost/*
+!/assets/reference-cost/cost_*.png
+
+!/assets/reference-icons/
+/assets/reference-icons/*
+!/assets/reference-icons/class-*.png
+
+# Deployment exports may contain live player databases; never publish them.
+/exports/
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.p12
+# Native application is launched by the deployment scripts, not machine-specific profiles.
+/Server/Properties/launchSettings.local.json

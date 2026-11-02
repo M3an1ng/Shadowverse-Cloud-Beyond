@@ -1,0 +1,19 @@
+/* Reuse Mini's green printed cost frames for alternate references. */
+.preview-ref-card .preview-ref-icon.preview-ref-cost {
+    position: relative;
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+    flex: 0 0 34px;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    overflow: visible;
+}
+.preview-ref-cost img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.preview-ref-cost span:not(:empty) { position: absolute; inset: 6px; display: grid; place-items: center; color: white; background: #388b39; border-radius: 50%; font: bold 18px/1 Georgia, serif; }
+
+.preview-ref-header[role="button"] { cursor: pointer; border-radius: 6px; transition: background .15s; }
+.preview-ref-header[role="button"]:hover { background: #64afff16; }
+.preview-ref-header[role="button"]:focus-visible { outline: 2px solid #6aacf5; outline-offset: 3px; }

@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Dtos;
@@ -80,7 +80,7 @@ public class DevToolsWinrateStatsController : ControllerBase
             .AsNoTracking()
             .Where(item =>
                 item.IsOfficial &&
-                item.Environment == targetEnvironment &&
+                (targetDeckRule == DeckRule.TakeTwo || item.Environment == targetEnvironment) &&
                 item.Rule == targetDeckRule);
         if (rangeStartUtc.HasValue)
         {
@@ -287,7 +287,7 @@ public class DevToolsWinrateStatsController : ControllerBase
             .AsNoTracking()
             .Where(item =>
                 item.IsOfficial &&
-                item.Environment == targetEnvironment &&
+                (targetDeckRule == DeckRule.TakeTwo || item.Environment == targetEnvironment) &&
                 item.Rule == targetDeckRule &&
                 item.DeckShapeHash == normalizedHash)
             .OrderByDescending(item => item.EndedAtUtc)

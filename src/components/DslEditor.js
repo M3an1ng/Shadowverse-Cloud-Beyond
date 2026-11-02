@@ -1,3 +1,4 @@
+import { promptDialog } from '../siteDialog.js';
 import { normalizeLoadedAst } from "./dsl_editor/ast-normalize.js";
 import { normalizeDisplayTypeName } from "./dsl_editor/type-names.js";
 import { getAstChildSlots } from "./dsl_editor/ast-children.js";
@@ -1430,7 +1431,7 @@ export class DslEditor extends MetadataDrivenComponent {
         }
 
         const defaultLabel = this.getReadablePreviewText() || expression;
-        const label = window.prompt("请输入收藏名称", defaultLabel);
+        const label = await promptDialog("请输入收藏名称", defaultLabel);
         if (!label) {
             return;
         }

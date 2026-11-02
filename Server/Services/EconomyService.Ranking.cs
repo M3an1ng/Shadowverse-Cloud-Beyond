@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
 
@@ -102,7 +102,7 @@ public partial class EconomyService
     {
         if (string.IsNullOrWhiteSpace(deckRule))
         {
-            return null;
+            return (int)DeckRule.Standard;
         }
 
         var key = deckRule.Trim();

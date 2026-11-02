@@ -132,7 +132,7 @@ export function parseDescriptionTokens(input) {
     return tokens;
 }
 
-export function renderDescriptionHtml(input) {
+export function renderDescriptionHtml(input, { isIntromezzoActive = null } = {}) {
     const tokens = parseDescriptionTokens(input);
     if (!tokens.length) return '';
 
@@ -145,6 +145,10 @@ export function renderDescriptionHtml(input) {
                 const normalized = normalizeKeywordToken(token.text);
                 const value = escapeHtmlAttribute(normalized.base);
                 const suffix = normalized.renderSuffix;
+                if (normalized.base === '间奏' && typeof isIntromezzoActive === 'boolean') {
+                    const state = isIntromezzoActive ? 'active' : 'dormant';
+                    return `<span class="preview-description-token preview-description-keyword intromezzo-keyword">【<span class="preview-description-text" data-intromezzo-state="${state}" title="间奏：${isIntromezzoActive ? '激活' : '休眠'}" data-preview-token="keyword" data-preview-value="${value}">间奏</span>${suffix}】</span>`;
+                }
                 return `<span class="preview-description-token preview-description-keyword">【<span class="preview-description-text" data-preview-token="keyword" data-preview-value="${value}">${normalized.base}</span>${suffix}】</span>`;
             }
             if (token.type === 'derived') {

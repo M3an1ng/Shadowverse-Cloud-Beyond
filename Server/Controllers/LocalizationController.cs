@@ -100,6 +100,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "SequenceOrder", typeof(SequenceOrder) },
                 { "DeckInsertMode", typeof(DeckInsertMode) },
                 { "TriggerAbilityMode", typeof(TriggerAbilityMode) },
+                { "DiscoverMode", typeof(DiscoverMode) },
             };
 
             return enumTypes.TryGetValue(enumName, out var type) ? type : null;

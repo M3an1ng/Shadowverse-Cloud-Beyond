@@ -1,3 +1,22 @@
+import { loadStyles } from './cardStyles.js';
+import { historyRequest } from './cardHistory.js';
+import { getUserSession } from './userSession.js';
+import { createCardStylePresentation } from './cardStylePresentation.js';
+let presentDeckCard = card => card;
+async function refreshDeckCardStyles() {
+    try {
+        const [styles, preferences] = await Promise.all([loadStyles(), getUserSession().userId ? historyRequest('/api/card-styles/preferences') : {}]);
+        presentDeckCard = createCardStylePresentation(styles, preferences);
+    } catch { presentDeckCard = card => card; }
+}
+document.addEventListener('svb:card-style-changed', async () => {
+    await refreshDeckCardStyles();
+    if (document.getElementById('library-grid')) renderLibrary();
+    renderDeckList();
+});
+import { showCardGallery } from './cardGallery.js';
+import { confirmDialog } from './siteDialog.js';
+import { showAlert } from './siteDialog.js';
 // src/deckBuilder.js - Deck Builder Logic
 //
 // Implements the Deck Builder UI and logic.
@@ -239,7 +258,7 @@ export async function initializeDeckBuilder(routeCapabilities) {
     try {
         await loadEnvironmentOptions();
         await bootstrapDecks();
-        const outcomes = await Promise.allSettled([loadDecks(), loadCards()]);
+        const outcomes = await Promise.allSettled([loadDecks(), loadCards(), refreshDeckCardStyles()]);
         const failures = outcomes.filter(outcome => outcome.status === "rejected").map(outcome => outcome.reason);
         if (failures.length) throw new AggregateError(failures, "牌组或卡牌加载失败。");
     } catch (error) {
@@ -670,13 +689,13 @@ async function cleanupAbandonedPendingNewDeckCreation(pending, reason = 'discard
     }
 }
 
-function promptDeckEditorExitAction() {
-    const shouldSave = window.confirm('当前卡组已修改。点击“确定”保存并返回，点击“取消”选择是否放弃修改。');
+async function promptDeckEditorExitAction() {
+    const shouldSave = await confirmDialog('当前卡组已修改。点击“确定”保存并返回，点击“取消”选择是否放弃修改。');
     if (shouldSave) {
         return 'save';
     }
 
-    const shouldDiscard = window.confirm('是否放弃当前修改并返回？点击“确定”放弃，点击“取消”继续编辑。');
+    const shouldDiscard = await confirmDialog('是否放弃当前修改并返回？点击“确定”放弃，点击“取消”继续编辑。');
     if (shouldDiscard) {
         return 'discard';
     }
@@ -726,7 +745,7 @@ async function handleDeckEditorExit({ renderSelectionOnComplete = true } = {}) {
         return await discardCurrentDeckChanges({ renderSelectionOnComplete });
     }
 
-    const action = promptDeckEditorExitAction();
+    const action = await promptDeckEditorExitAction();
     if (action === 'save') {
         return await saveDeck({ closeEditorOnSuccess: renderSelectionOnComplete });
     }
@@ -1262,7 +1281,7 @@ function renderDeckSelection() {
                     <h2>Deck List</h2>
                 </div>
                 <div class="header-right">
-                    <!-- Placeholder for "Edit List" or other actions -->
+                    <button type="button" class="card-catalog-entry" id="open-card-gallery"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 5c-3-2-6-2-10-1v15c4-1 7-1 10 1 3-2 6-2 10-1V4c-4-1-7-1-10 1Zm0 0v15"/></svg><span><small>CARD GALLERY</small>卡片一览</span><span aria-hidden="true">↗</span></button>
                 </div>
             </div>
             <div class="deck-grid">
@@ -1628,7 +1647,7 @@ function renderDeckSelection() {
         onExport: () => {
             if (!previewDeckId) return;
             openDeckCodeById(previewDeckId, previewDeckName).catch(err => {
-                alert(`导出失败：${err.message}`);
+                showAlert(`导出失败：${err.message}`);
             });
         },
         onCardClick: (cardId) => {
@@ -1769,14 +1788,14 @@ function renderDeckSelection() {
         const secondaryClass = resolveSecondaryClass(deckRule, deckClass, state.deckCreation.secondaryClass);
         if (deckRule === 'dualClass' && !secondaryClass) return;
         closeDeckCreation();
-        createNewDeck(env, deckClass, deckRule, secondaryClass).catch(err => alert(`创建失败：${err.message}`));
+        createNewDeck(env, deckClass, deckRule, secondaryClass).catch(err => showAlert(`创建失败：${err.message}`));
     });
     importSubmit?.addEventListener('click', async () => {
         const code = state.deckCreation.importCode?.trim();
         if (!code) return;
         const importedRule = decodeDeckRuleFromCode(code);
         if (importedRule && !isDeckRuleUiVisible(importedRule)) {
-            alert('混合职业规则当前未开放，无法导入该卡组。');
+            showAlert('混合职业规则当前未开放，无法导入该卡组。');
             return;
         }
         const name = state.deckCreation.importName?.trim() || '';
@@ -1790,7 +1809,7 @@ function renderDeckSelection() {
             }
             renderDeckSelection();
         } catch (err) {
-            alert(`导入失败：${err.message}`);
+            showAlert(`导入失败：${err.message}`);
             importSubmit.disabled = false;
             syncDeckCreationUI();
         }
@@ -1799,28 +1818,28 @@ function renderDeckSelection() {
     document.querySelectorAll('.preview-deck-btn').forEach(btn => {
         btn.addEventListener('click', (event) => {
             event.stopPropagation();
-            openDeckPreview(btn.dataset.id).catch(err => alert(`预览失败：${err.message}`));
+            openDeckPreview(btn.dataset.id).catch(err => showAlert(`预览失败：${err.message}`));
         });
     });
     
     document.querySelectorAll('.edit-deck-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            editDeck(e.target.dataset.id).catch(err => alert(`加载失败：${err.message}`));
+            editDeck(e.target.dataset.id).catch(err => showAlert(`加载失败：${err.message}`));
         });
     });
     
     document.querySelectorAll('.delete-deck-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            deleteDeck(e.target.dataset.id).catch(err => alert(`删除失败：${err.message}`));
+            deleteDeck(e.target.dataset.id).catch(err => showAlert(`删除失败：${err.message}`));
         });
     });
 
     // Allow clicking the whole card to edit
     document.querySelectorAll('.deck-card.wide-banner').forEach(card => {
         card.addEventListener('click', () => {
-            editDeck(card.dataset.id).catch(err => alert(`加载失败：${err.message}`));
+            editDeck(card.dataset.id).catch(err => showAlert(`加载失败：${err.message}`));
         });
     });
 }
@@ -2003,7 +2022,7 @@ function renderDeckBuilder() {
 
     document.getElementById('back-to-selection-btn').addEventListener('click', () => {
         void handleDeckEditorExit({ renderSelectionOnComplete: true }).catch(err => {
-            alert(`返回失败：${err.message}`);
+            showAlert(`返回失败：${err.message}`);
         });
     });
 
@@ -2074,7 +2093,7 @@ function renderLibrary(skipCapacitySync = false) {
     if (state.pagination.currentPage > totalPages) state.pagination.currentPage = totalPages;
 
     const startIndex = (state.pagination.currentPage - 1) * state.pagination.itemsPerPage;
-    const paginatedCards = filteredCards.slice(startIndex, startIndex + state.pagination.itemsPerPage);
+    const paginatedCards = filteredCards.slice(startIndex, startIndex + state.pagination.itemsPerPage).map(presentDeckCard);
     paginatedCards.forEach(card => {
         const preview = card.artPreview ?? card.ArtPreview ?? '';
         if (preview) {
@@ -2168,7 +2187,7 @@ function renderDeckList() {
     const deckCards = entries
         .map(entry => ({
             entry,
-            card: getKnownCardDefinition(entry.cardDefinitionId)
+            card: presentDeckCard(getKnownCardDefinition(entry.cardDefinitionId))
         }))
         .filter(item => item.card)
         .sort((a, b) => compareCardsForEditorAndDeck(a.card, b.card));
@@ -2257,12 +2276,13 @@ function openCardDetailModal(card) {
         return;
     }
 
+    card = presentDeckCard(card);
     const preview = card.artPreview ?? card.ArtPreview ?? '';
     const detail = card.artDetail ?? card.ArtDetail ?? '';
     const previewUrl = preview ? encodeURI(preview).replace(/'/g, '%27') : '';
     const detailUrl = detail ? encodeURI(detail).replace(/'/g, '%27') : '';
 
-    showCardDetailModal(card, { previewUrl, detailUrl });
+    showCardDetailModal(card, { previewUrl, detailUrl, styleOriginalCard: card.styleOriginalCard || card, stylePreferenceApplied: true });
 }
 
 // --- Logic ---
@@ -2502,7 +2522,7 @@ function updateDeckCountDisplay() {
 async function deleteDeck(deckId, skipConfirm = false) {
     if (!deckId) return;
     if (!skipConfirm) {
-        const ok = window.confirm("确定要删除该卡组吗？");
+        const ok = await confirmDialog("确定要删除该卡组吗？");
         if (!ok) return;
     }
     const query = getDeckOwnerQuery();
@@ -2575,7 +2595,7 @@ async function editDeck(deckId) {
     const deckClass = deck.class ?? deck.Class;
     const deckRule = deck.rule ?? deck.Rule;
     if (!isDeckRuleUiVisible(deckRule)) {
-        alert('混合职业卡组当前已临时下线。');
+        showAlert('混合职业卡组当前已临时下线。');
         await loadDecks();
         renderDeckSelection();
         return;
@@ -2603,14 +2623,14 @@ function addCardToDeck(cardId) {
     if (!state.currentDeck) return;
     const totalCount = getDeckCardCount(state.currentDeck);
     if (totalCount >= 40) {
-        alert("牌组已满（最多 40 张）");
+        showAlert("牌组已满（最多 40 张）");
         return;
     }
 
     const entries = state.currentDeck.cards ?? [];
     const entry = entries.find(item => Number(item.cardDefinitionId) === cardId);
     if (entry && entry.count >= DEFAULT_MAX_COPIES_PER_CARD) {
-        alert(`同名卡最多 ${DEFAULT_MAX_COPIES_PER_CARD} 张`);
+        showAlert(`同名卡最多 ${DEFAULT_MAX_COPIES_PER_CARD} 张`);
         return;
     }
 
@@ -2652,7 +2672,7 @@ async function saveDeck({ closeEditorOnSuccess = true } = {}) {
     const validation = getDeckSaveValidation(state.currentDeck);
     const feedbackMessages = getDeckSaveFeedbackMessages(validation);
     if (feedbackMessages.length > 0) {
-        const shouldContinue = window.confirm(
+        const shouldContinue = await confirmDialog(
             `${feedbackMessages.join('\n')}\n是否继续保存？`
         );
         if (!shouldContinue) {
@@ -2718,3 +2738,5 @@ async function saveDeck({ closeEditorOnSuccess = true } = {}) {
     }
     return true;
 }
+
+ document.addEventListener("click",event=>{if(event.target.closest("#open-card-gallery")){const root=document.querySelector(".deck-selection-view")?.parentElement;if(root)void showCardGallery(root,()=>{renderDeckSelection();});}});

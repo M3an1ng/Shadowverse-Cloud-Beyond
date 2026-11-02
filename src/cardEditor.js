@@ -1,4 +1,8 @@
-﻿// src/cardEditor.js - 卡牌编辑器主模块
+import { mountStyleEditor } from './cardStyles.js';
+import { installCardHistoryActions } from './cardHistory.js';
+import { confirmDialog } from './siteDialog.js';
+import { showAlert } from './siteDialog.js';
+// src/cardEditor.js - 卡牌编辑器主模块
 //
 // 相关文档:
 // - UI设计: 文档/06-UI设计/01-卡牌编辑器原型设计.md
@@ -10,7 +14,8 @@ import { DynamicUIRenderer } from './dynamicUIRenderer.js';
 import { buildPreviewSlateHtml } from './previewSlate.js';
 import { showPreviewDescriptionTooltip } from './previewDescriptionTooltip.js';
 import { hydrateDescriptionReferences } from './previewDescriptionReferences.js';
-import { showCardDetailModal } from './components/CardDetailMockup.js';
+import { showCardDetailModal as openCardDetailModal } from './components/CardDetailMockup.js';
+const showCardDetailModal = (card, options = {}) => openCardDetailModal(card?.styleOriginalCard || card, { ...options, originalCardMode: true, stylePreferenceApplied: true });
 import { getBlockingLoader } from './components/blockingLoader.js';
 import { ensureEnumLocalizations, getCachedEnumLabel } from './enumLocalizationCache.js';
 import {
@@ -636,6 +641,7 @@ class CardEditor {
                     <button class="tab-button${this.cardTab === 'basic' ? ' active' : ''}" data-tab="basic">卡牌信息</button>
                     <button class="tab-button${this.cardTab === 'abilities' ? ' active' : ''}" data-tab="abilities">能力管理</button>
                     <button class="tab-button${this.cardTab === 'assets' ? ' active' : ''}" data-tab="assets">媒体资源</button>
+                    <button class="tab-button" data-tab="styles">卡片风格</button>
                 </div>
                 <div class="tab-content custom-scrollbar">
                     <div class="tab-panel${this.cardTab === 'basic' ? ' active' : ''}" id="basic-tab">
@@ -661,6 +667,7 @@ class CardEditor {
                             </div>
                         </div>
                     </div>
+                    <div class="tab-panel" id="styles-tab"></div>
                     <div class="tab-panel${this.cardTab === 'assets' ? ' active' : ''}" id="assets-tab">
                         <div class="assets-container" id="assets-container">
                             <div class="form-placeholder">
@@ -770,7 +777,10 @@ class CardEditor {
      * 绑定事件监听器
      */
     bindEventListeners() {
-        this.container.addEventListener('click', (event) => {
+        this.eventController?.abort();
+        this.eventController = new AbortController();
+        const listen = (target, type, handler) => target.addEventListener(type, handler, { signal: this.eventController.signal });
+        listen(this.container, 'click', (event) => {
             const tokenEl = event.target.closest('[data-preview-token]');
             if (!tokenEl) return;
             const tokenType = tokenEl.dataset.previewToken;
@@ -779,6 +789,7 @@ class CardEditor {
             event.preventDefault();
             event.stopPropagation();
             void showPreviewDescriptionTooltip(tokenEl, tokenType, tokenValue, {
+                originalCardMode: true,
                 openCardDetail: showCardDetailModal,
                 cards: this.allCardsData,
                 currentCardId: this.currentCard?.id ?? this.currentCard?.Id ?? this.currentCard?.CardId ?? null,
@@ -786,7 +797,7 @@ class CardEditor {
             });
         });
 
-        this.container.addEventListener('click', async (event) => {
+        listen(this.container, 'click', async (event) => {
             const settingsTabButton = event.target.closest('.settings-tab-button');
             if (settingsTabButton && this.container.contains(settingsTabButton)) {
                 await this.switchPlayerSettingsTab(settingsTabButton.dataset.settingsTab);
@@ -858,7 +869,7 @@ class CardEditor {
             }
         });
 
-        this.container.addEventListener('change', async (event) => {
+        listen(this.container, 'change', async (event) => {
             const target = event.target;
             if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
                 return;
@@ -918,6 +929,7 @@ class CardEditor {
             if (tabName === 'abilities' && this.currentCard) {
                 this.renderAbilitiesList();
             }
+            if (tabName === 'styles') void mountStyleEditor(this);
             if (tabName === 'assets') {
                 this.renderAssetsTab();
             }
@@ -1099,7 +1111,7 @@ class CardEditor {
             await this.renderEditorModeContent();
         } catch (error) {
             console.error('CardEditor: Failed to enter player settings mode:', error);
-            alert(`加载玩家设定失败: ${error.message}`);
+            showAlert(`加载玩家设定失败: ${error.message}`);
         } finally {
             loader?.hide();
         }
@@ -1398,7 +1410,7 @@ class CardEditor {
             };
 
             if (!request.name) {
-                alert('请输入种类名称。');
+                showAlert('请输入种类名称。');
                 return;
             }
 
@@ -1434,10 +1446,10 @@ class CardEditor {
             await this.loadTribeDefinitions({ force: true });
             await this.renderTribeManagementTab();
             this.renderTribeManagementPreview();
-            alert(isCreate ? '种类定义已创建。' : '种类定义已保存。');
+            showAlert(isCreate ? '种类定义已创建。' : '种类定义已保存。');
         } catch (error) {
             console.error('CardEditor: Failed to save tribe definition:', error);
-            alert(`保存种类定义失败: ${error.message}`);
+            showAlert(`保存种类定义失败: ${error.message}`);
         }
     }
 
@@ -1448,7 +1460,7 @@ class CardEditor {
                 return;
             }
 
-            if (!confirm(`确定要删除种类定义 "${active.name}" 吗？`)) {
+            if (!await confirmDialog(`确定要删除种类定义 "${active.name}" 吗？`)) {
                 return;
             }
 
@@ -1467,10 +1479,10 @@ class CardEditor {
             await this.loadTribeDefinitions({ force: true });
             await this.renderTribeManagementTab();
             this.renderTribeManagementPreview();
-            alert('种类定义已删除。');
+            showAlert('种类定义已删除。');
         } catch (error) {
             console.error('CardEditor: Failed to delete tribe definition:', error);
-            alert(`删除种类定义失败: ${error.message}`);
+            showAlert(`删除种类定义失败: ${error.message}`);
         }
     }
 
@@ -1534,6 +1546,8 @@ class CardEditor {
      * 清理资源
      */
     cleanup() {
+        this.eventController?.abort();
+        this.eventController = null;
         this.isInitialized = false;
         this.currentCard = null;
         if (this.cardCatalogInvalidationHandler) {
@@ -1567,7 +1581,14 @@ export async function initializeCardEditor(options = {}) {
     }
 
     cardEditorInstance = instance;
-    await instance.initialize();
+    const wasInitialized = instance.isInitialized;
+    instance.useDefaultCardSet = true;
+    if (!instance.initializationTask) instance.initializationTask = instance.initialize().finally(() => { instance.initializationTask = null; });
+    await instance.initializationTask;
+    if (wasInitialized && instance.filteredCardsData) {
+        instance.populateCardSetFilterOptions(instance.filteredCardsData);
+        instance.applyCardListFilters();
+    }
     return instance;
 }
 
@@ -2076,7 +2097,8 @@ CardEditor.prototype.populateCardSetFilterOptions = function(cards) {
         getEnvironmentLabel: getCardSetEnvironmentLabel,
         knownEnvironmentOptions: getDeckEnvironmentOptions()
     });
-    const currentValue = setFilter.value || '';
+    const currentValue = this.useDefaultCardSet ? '星云基础' : (setFilter.value || '');
+    this.useDefaultCardSet = false;
     const availableValues = new Set(
         groupedOptions.flatMap(group => group.options.map(option => option.value.toLowerCase()))
     );
@@ -2196,6 +2218,7 @@ CardEditor.prototype.updateCardPreview = function() {
         return;
     }
 
+    installCardHistoryActions(this);
     const card = this.currentCard;
     const isFollower = equalsIgnoreCase(normalizeEnumName(card.cardType), 'Follower');
     const rawRarity = card.rarity || 'Common';
@@ -2218,6 +2241,8 @@ CardEditor.prototype.updateCardPreview = function() {
     const hasEarthsigilKeyword = keywordList.some(keyword => equalsIgnoreCase(keyword, 'EarthSigil'));
     const earthsigilValue = hasEarthsigilKeyword ? 1 : 0;
     const showEarthsigil = !isFollower && hasEarthsigilKeyword;
+    const showEvidence = equalsIgnoreCase(typeKey, 'Amulet')
+        && keywordList.some(keyword => equalsIgnoreCase(keyword, 'Evidence'));
 
     const tribeList = Array.isArray(card.tribe) ? card.tribe : [];
     const tribeText = tribeList
@@ -2240,6 +2265,8 @@ CardEditor.prototype.updateCardPreview = function() {
         showCountdown,
         earthsigilValue,
         showEarthsigil,
+        evidenceValue: 1,
+        showEvidence,
         description: card.description || '',
         previewUrl: artPreviewUrl,
         detailUrl,
@@ -2253,6 +2280,8 @@ CardEditor.prototype.updateCardPreview = function() {
     };
     bindPreviewDetailHandler(previewContainer);
     void hydrateDescriptionReferences(previewContainer, {
+        originalCardMode: true,
+        openCardDetail: referencedCard => showCardDetailModal(referencedCard, { cards: this.allCardsData }),
         cards: this.allCardsData,
         fallbackPreviewUrl: artPreviewUrl,
         currentCardId: card?.id ?? card?.Id ?? card?.CardId ?? null,
@@ -2387,7 +2416,7 @@ CardEditor.prototype.bindAssetsTabEvents = function(options = {}) {
     }
 };
 
-CardEditor.prototype.openArtCropModal = function(kind) {
+CardEditor.prototype.openArtCropModal = function(kind, options = {}) {
     if (document.querySelector('.card-art-crop-modal')) return;
 
     const isPreview = kind === 'preview';
@@ -2718,7 +2747,8 @@ CardEditor.prototype.openArtCropModal = function(kind) {
             }
 
             const filename = isPreview ? 'preview.webp' : 'detail.webp';
-            await this.uploadCardArt(kind, blob, filename, { silent: true });
+            if(typeof options.onUpload === 'function')await options.onUpload(blob,filename);
+            else await this.uploadCardArt(kind, blob, filename, { silent: true });
             setModalStatus('上传完成。');
             setTimeout(closeModal, 400);
         } catch (error) {
@@ -2742,7 +2772,7 @@ CardEditor.prototype.uploadCardArt = async function(kind, file, filename, option
     const currentCardId = this.getCurrentCardId();
     if (!this.currentCard || currentCardId == null) {
         if (!options.silent) {
-            alert('请先保存卡牌，再上传图片。');
+            showAlert('请先保存卡牌，再上传图片。');
         }
         throw new Error('必须先保存卡牌，才能上传图片。');
     }
@@ -2802,7 +2832,7 @@ CardEditor.prototype.uploadCardArt = async function(kind, file, filename, option
     } catch (error) {
         console.error('CardEditor: Failed to upload art:', error);
         if (!options.silent) {
-            alert(`上传失败：${error.message}`);
+            showAlert(`上传失败：${error.message}`);
         }
         throw error;
     }
@@ -3296,24 +3326,28 @@ CardEditor.prototype.isKnownCardSetName = function(name) {
 };
 
 CardEditor.prototype.saveCurrentCard = async function(isSaveAs) {
+    if(this.cardTab==='styles' && !isSaveAs && this._saveStyleCardId===this.getCurrentCardId()){await this._saveStyle?.();return;}
+    if (this._savePending) return;
+    this._savePending = true;
+    try {
     if (this.editorMode !== 'card') {
-        alert('玩家设定模式下不允许修改卡牌数据。');
+        showAlert('玩家设定模式下不允许修改卡牌数据。');
         return;
     }
 
     if (!this.currentCard) {
-        alert('请先选择或创建一张卡牌');
+        showAlert('请先选择或创建一张卡牌');
         return;
     }
 
     if (!this.validateForm()) {
-        alert('请先修正表单错误后再保存');
+        showAlert('请先修正表单错误后再保存');
         return;
     }
 
     const rawSetName = (this.currentCard.cardSet || '').trim();
     if (rawSetName && !this.isKnownCardSetName(rawSetName)) {
-        const confirmed = confirm(`卡包 "${rawSetName}" 不存在，保存后将自动注册为新卡包。是否继续？`);
+        const confirmed = await confirmDialog(`卡包 "${rawSetName}" 不存在，保存后将自动注册为新卡包。是否继续？`);
         if (!confirmed) {
             return;
         }
@@ -3373,18 +3407,19 @@ CardEditor.prototype.saveCurrentCard = async function(isSaveAs) {
             this.highlightCardInList(savedId);
         }
 
-        alert(isCreate ? '卡牌创建成功！' : '卡牌保存成功！');
+        showAlert(isCreate ? '卡牌创建成功！' : '卡牌保存成功！');
     } catch (error) {
         console.error('CardEditor: Failed to save card:', error);
-        alert(`保存失败: ${error.message}`);
+        showAlert(`保存失败: ${error.message}`);
     } finally {
         loader?.hide();
     }
+    } finally { this._savePending = false; }
 };
 
 CardEditor.prototype.deleteCurrentCard = async function() {
     if (this.editorMode !== 'card') {
-        alert('玩家设定模式下不允许删除卡牌。');
+        showAlert('玩家设定模式下不允许删除卡牌。');
         return;
     }
 
@@ -3392,7 +3427,7 @@ CardEditor.prototype.deleteCurrentCard = async function() {
         return;
     }
 
-    if (!confirm(`确定要删除卡牌 "${this.currentCard.name}" 吗？此操作不可撤销。`)) {
+    if (!await confirmDialog(`确定要删除卡牌 "${this.currentCard.name}" 吗？此操作不可撤销。`)) {
         return;
     }
 
@@ -3433,10 +3468,10 @@ CardEditor.prototype.deleteCurrentCard = async function() {
 
         await this.loadCardList();
 
-        alert('卡牌已删除');
+        showAlert('卡牌已删除');
     } catch (error) {
         console.error('CardEditor: Failed to delete card:', error);
-        alert(`删除失败: ${error.message}`);
+        showAlert(`删除失败: ${error.message}`);
     }
 };
 
@@ -3577,9 +3612,10 @@ CardEditor.prototype.selectCard = async function(cardId) {
 
         // 更新预览
         this.updateCardPreview();
+        if(this.cardTab==='styles')void mountStyleEditor(this);
     } catch (error) {
         console.error('CardEditor: Failed to select card:', error);
-        alert(`加载卡牌失败: ${error.message}`);
+        showAlert(`加载卡牌失败: ${error.message}`);
     } finally {
         const editorRoot = this.container?.querySelector('.card-editor-layout') || this.container;
         const loader = editorRoot ? getBlockingLoader(editorRoot) : null;
@@ -3613,6 +3649,7 @@ CardEditor.prototype.updateTabAvailability = function() {
         }
     }
 
+    const stylesTab=this.container.querySelector('[data-tab=styles]');if(stylesTab)stylesTab.disabled=!canAccess;
     this.syncEditorModeUi();
 };
 
@@ -3797,7 +3834,7 @@ CardEditor.prototype.addTag = function(tagType, tagValue) {
 
     // 检查是否已存在
     if (this.currentCard[tagType].includes(tagValue)) {
-        alert(`标签 "${tagValue}" 已存在`);
+        showAlert(`标签 "${tagValue}" 已存在`);
         return;
     }
 
@@ -4139,7 +4176,7 @@ CardEditor.prototype.bindAbilityItemEvents = function() {
 
 CardEditor.prototype.showAddAbilityModal = async function() {
 if (!this.currentCard) {
-    alert('请先选择一张卡牌');
+    showAlert('请先选择一张卡牌');
     return;
 }
 
@@ -4149,7 +4186,7 @@ try {
 
 } catch (error) {
     console.error('CardEditor: Failed to show add ability modal:', error);
-    alert(`打开添加能力窗口失败: ${error.message}`);
+    showAlert(`打开添加能力窗口失败: ${error.message}`);
 }
 };
 
@@ -4311,11 +4348,11 @@ try {
     // 刷新能力列表
     await this.renderAbilitiesList();
     
-    alert('能力添加成功！');
+    showAlert('能力添加成功！');
 
 } catch (error) {
     console.error('CardEditor: Failed to create ability:', error);
-    alert(`添加能力失败: ${error.message}`);
+    showAlert(`添加能力失败: ${error.message}`);
 }
 };
 
@@ -4395,7 +4432,7 @@ CardEditor.prototype.getNextAbilitySequence = function() {
 CardEditor.prototype.showLinkExistingAbilityModal = async function() {
     const currentCardId = this.getCurrentCardId();
     if (!this.currentCard || currentCardId == null) {
-        alert('请先选择并保存一张卡牌');
+        showAlert('请先选择并保存一张卡牌');
         return;
     }
 
@@ -4728,10 +4765,10 @@ CardEditor.prototype.showLinkExistingAbilityModal = async function() {
                     await this.copyExistingAbilityById(this.selectedExistingAbilityId);
                     await this.renderAbilitiesList();
                     close();
-                    alert('能力复制成功！');
+                    showAlert('能力复制成功！');
                 } catch (error) {
                     console.error('CardEditor: Failed to copy ability:', error);
-                    alert(`复制能力失败: ${error.message}`);
+                    showAlert(`复制能力失败: ${error.message}`);
                 } finally {
                     modalLoader?.hide();
                     confirmBtn.disabled = false;
@@ -4740,7 +4777,7 @@ CardEditor.prototype.showLinkExistingAbilityModal = async function() {
         }
     } catch (error) {
         console.error('CardEditor: Failed to show copy ability modal:', error);
-        alert(`打开复制窗口失败: ${error.message}`);
+        showAlert(`打开复制窗口失败: ${error.message}`);
         this.closeLinkExistingAbilityModal();
     }
 };
@@ -4903,7 +4940,7 @@ CardEditor.prototype.confirmAddAbility = async function() {
 
     } catch (error) {
         console.error('CardEditor: Failed to add ability:', error);
-        alert(`添加能力失败: ${error.message}`);
+        showAlert(`添加能力失败: ${error.message}`);
     }
 };
 
@@ -4921,12 +4958,12 @@ CardEditor.prototype.createNewAbility = async function() {
 
     // 验证必填字段
     if (!name) {
-        alert('请输入能力名称');
+        showAlert('请输入能力名称');
         return;
     }
 
     if (!abilityTag) {
-        alert('请选择能力标签');
+        showAlert('请选择能力标签');
         return;
     }
 
@@ -4980,7 +5017,7 @@ CardEditor.prototype.createNewAbility = async function() {
 
 CardEditor.prototype.linkExistingAbility = async function() {
     if (!this.selectedExistingAbilityId) {
-        alert('请选择一个现有能力');
+        showAlert('请选择一个现有能力');
         return;
     }
 
@@ -5068,12 +5105,12 @@ CardEditor.prototype.editAbility = async function(abilityId) {
 
     } catch (error) {
         console.error('CardEditor: Failed to load ability for editing:', error);
-        alert(`加载能力失败: ${error.message}`);
+        showAlert(`加载能力失败: ${error.message}`);
     }
 };
 
 CardEditor.prototype.removeAbility = async function(abilityId) {
-    if (!confirm('确定要移除这个能力吗？')) {
+    if (!await confirmDialog('确定要移除这个能力吗？')) {
         return;
     }
 
@@ -5109,7 +5146,7 @@ CardEditor.prototype.removeAbility = async function(abilityId) {
         }
     } catch (error) {
         console.error('CardEditor: Failed to remove ability:', error);
-        alert(`移除能力失败: ${error.message}`);
+        showAlert(`移除能力失败: ${error.message}`);
     }
 };
 
@@ -5162,7 +5199,7 @@ CardEditor.prototype.showAbilityEditModal = async function(ability) {
 
     } catch (error) {
         console.error('CardEditor: Failed to show ability edit modal:', error);
-        alert(`打开能力编辑器失败: ${error.message}`);
+        showAlert(`打开能力编辑器失败: ${error.message}`);
     }
 };
 
@@ -5324,11 +5361,11 @@ CardEditor.prototype.saveAbilityChanges = async function(originalAbility, update
         // 刷新能力列表
         await this.renderAbilitiesList();
 
-        alert('能力保存成功！');
+        showAlert('能力保存成功！');
 
     } catch (error) {
         console.error('CardEditor: Failed to save ability changes:', error);
-        alert(`保存能力失败: ${error.message}`);
+        showAlert(`保存能力失败: ${error.message}`);
         throw error;
     }
 };
