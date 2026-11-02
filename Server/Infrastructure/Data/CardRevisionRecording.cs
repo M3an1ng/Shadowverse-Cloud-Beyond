@@ -72,6 +72,8 @@ public partial class ApplicationDbContext
                     !string.IsNullOrWhiteSpace(editor) && latest.Editor == editor &&
                     now >= latest.ModifiedAt && now - latest.ModifiedAt <= TimeSpan.FromMinutes(5))
                 {
+                    // Coalescing keeps one history entry, but every save must invalidate stale restore requests.
+                    latest.Revision = previousRevision + 1;
                     latest.Snapshot = JsonSerializer.Serialize(current, RevisionJson);
                     latest.ModifiedAt = now;
                 }

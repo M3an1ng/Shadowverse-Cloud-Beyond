@@ -18,12 +18,15 @@ export async function historyRequest(path, options = {}) {
   });
   if (!response.ok) {
     const error = await response.json().catch(() => null);
-    throw new Error(
-      error?.error ||
-        error?.message ||
-        (response.status === 403
-          ? "需要L10及以上权限"
-          : `请求失败：${response.status}`),
+    throw Object.assign(
+      new Error(
+        error?.error ||
+          error?.message ||
+          (response.status === 403
+            ? "需要L10及以上权限"
+            : `请求失败：${response.status}`),
+      ),
+      { code: error?.code, saved: error?.saved, card: error?.card },
     );
   }
   return response.status === 204 ? null : response.json();
@@ -197,12 +200,27 @@ export function showCardHistory(card, onRestored) {
           "确定回退到此版本？将创建新版本，保留回退前的记录，并放弃当前未保存的编辑。",
         ))
       ) {
-        const saved = await historyRequest(`${base}/${entryId}/restore`, {
-          method: "POST",
-          body: JSON.stringify({ revision }),
-        });
-        await onRestored?.(saved);
-        await load();
+        let saved, refreshFailure;
+        try {
+          saved = await historyRequest(`${base}/${entryId}/restore`, {
+            method: "POST",
+            body: JSON.stringify({ revision }),
+          });
+        } catch (error) {
+          if (error.code !== "CARD_RESTORE_CACHE_REFRESH_FAILED" || error.saved !== true) throw error;
+          saved = error.card;
+          refreshFailure = error;
+        }
+        try {
+          await onRestored?.(saved);
+          await load();
+        } catch (error) {
+          if (refreshFailure) {
+            throw new Error(`${refreshFailure.message} 重新读取已保存内容也失败：${error.message}`, { cause: error });
+          }
+          throw error;
+        }
+        if (refreshFailure) throw refreshFailure;
         status.textContent = "已回退，并创建新版本";
       }
     });
