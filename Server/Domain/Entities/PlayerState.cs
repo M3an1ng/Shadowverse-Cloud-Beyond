@@ -1,4 +1,4 @@
-﻿// File: Server/Domain/Entities/PlayerState.cs
+// File: Server/Domain/Entities/PlayerState.cs
 using AutoMapper;
 using System;
 using System.Collections.Generic;
@@ -21,6 +21,16 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     [DslExposable("玩家状态", Description = "代表游戏中一个玩家的完整状态信息")]
     public class PlayerState
     {
+        public bool IsTakeTwo { get; set; }
+        [DslExposable("间奏激活", Description = "该玩家共享的间奏状态，初始激活")]
+        public bool IsIntromezzoActive { get; set; } = true;
+        public bool ConsumeIntromezzo()
+        {
+            var active = IsIntromezzoActive;
+            IsIntromezzoActive = !active;
+            return active;
+        }
+
         public const string ComboCounterKey = "combo";
         public const string GraveyardCounterKey = "graveyard";
         public const string BloodPoolCounterKey = "bloodpool";

@@ -27,6 +27,9 @@ export default defineConfig({
     watch: {
       // Prevent frequent full reloads caused by backend/log file writes under the monorepo root.
       ignored: [
+        // Uploaded media is served directly; it must never participate in HMR.
+        '**/assets/cards/**',
+        '**/assets/catalog-media/**',
         '**/*.log',
         '**/Server/**',
         '**/tests/**',

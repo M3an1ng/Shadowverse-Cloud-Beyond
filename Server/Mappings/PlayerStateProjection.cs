@@ -15,6 +15,7 @@ namespace ShadowverseBeyond.Server.Mappings
         {
             return new PlayerStateDto
             {
+                IsIntromezzoActive = source.IsIntromezzoActive,
                 MaxPP = source.MaxPlayPoints,
                 CurrentPP = source.CurrentPlayPoints,
                 PpBoostUsesAvailable = source.PpBoostUsesAvailable,

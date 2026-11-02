@@ -36,7 +36,7 @@ export function buildPreviewSlateHtml(options) {
     } = options;
 
     const descriptionHtml = description
-        ? renderDescriptionHtml(description)
+        ? renderDescriptionHtml(description, { isIntromezzoActive: options.isIntromezzoActive })
         : (hideEmptyDescriptionPlaceholder ? '' : DEFAULT_DESCRIPTION_HTML);
 
     const descriptionBlockHtml = descriptionHtml

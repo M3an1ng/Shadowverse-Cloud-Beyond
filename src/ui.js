@@ -1,3 +1,5 @@
+import { miniCardBadge } from './miniCardBadge.js';
+import { createCardInstance as createDiscoverPreviewCard } from './cardManager.js';
 import { createRevealAnimator } from './revealAnimation.js';
 import { playModeVisual } from './playModeVisual.js';
 import { summarizeAttachedNumericEffects, numericEffectTitle, renderAttachedNumericEffects, effectSourceHtml } from './liveEffectSummary.js';
@@ -2234,7 +2236,9 @@ function endPlayerChoice(notifyBackendOfCancellation = true) {
 }
 // --- End UI State Management Functions ---
 
+let restoreDiscoverPreview = null;
 function removeChoiceOverlayUI() {
+    restoreDiscoverPreview?.(); restoreDiscoverPreview = null;
     document.getElementById('choice-overlay-root')?.remove();
     // Backward compatibility cleanup (older prompt overlay).
     document.getElementById('choice-prompt-overlay')?.remove();
@@ -4178,6 +4182,7 @@ function buildBattlePreviewHtml(cardInstance) {
         showEarthsigil,
         evidenceValue,
         showEvidence,
+        isIntromezzoActive: cardInstance.isIntromezzoActive ?? cardInstance.IsIntromezzoActive ?? false,
         description,
         hideEmptyDescriptionPlaceholder: isLeader,
         previewUrl,
@@ -6241,6 +6246,43 @@ function renderChoiceOverlayUI() {
     overlayRoot.className = 'choice-overlay-root';
     overlayRoot.dataset.choiceKind = currentChoiceRequest.TargetKey === 'decision' ? 'decision' : 'target';
     container.appendChild(overlayRoot);
+
+    if (currentChoiceRequest.TargetKey === 'discover') {
+        document.body.append(overlayRoot);
+        overlayRoot.classList.add('discover-overlay');
+        const dialog = document.createElement('section');
+        dialog.className = 'discover-dialog';dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','发现');
+        dialog.innerHTML = '<h2>发现</h2><p>请选择一张卡片加入手牌</p><div class="discover-candidates"></div>';
+        overlayRoot.append(dialog);
+        const list=dialog.querySelector('.discover-candidates');
+        for(const dto of currentChoiceRequest.SelectableCardInstances || []) {
+            const card=createDiscoverPreviewCard(dto); if(!card)continue;
+            const tile=document.createElement('article');tile.className='discover-candidate';
+            const preview=document.createElement('button');preview.type='button';preview.className='discover-card';
+            preview.setAttribute('aria-label', `预览${dto.Name || dto.name || '卡片'}`);
+            const art=document.createElement('img');art.src=resolveArtUrl(dto.ArtPreview ?? dto.artPreview ?? '');art.alt=dto.Name ?? dto.name ?? '';preview.append(art);
+            preview.append(miniCardBadge('cost', dto.CurrentCost ?? dto.Cost ?? dto.cost ?? 0));
+            if (String(dto.Type ?? dto.type ?? '').toLowerCase() === 'follower') {
+                preview.append(miniCardBadge('attack', dto.CurrentAttack ?? dto.Attack ?? dto.attack ?? 0), miniCardBadge('health', dto.CurrentHealth ?? dto.Health ?? dto.health ?? 0));
+            }
+            const name=document.createElement('button');name.type='button';name.className='discover-card-name';name.textContent=dto.Name ?? dto.name ?? '';
+            name.onclick=()=>showCardDetailModal(card);
+            preview.onclick=()=> {
+                renderBattleCardPreview(card);
+                const previewName=battleCardPreviewEl?.querySelector('.preview-detail-name');
+                if(previewName) previewName.onclick=event=>{event.preventDefault();event.stopPropagation();showCardDetailModal(card);};
+                if(battleCardPreviewEl && !restoreDiscoverPreview) {
+                    const parent=battleCardPreviewEl.parentNode,next=battleCardPreviewEl.nextSibling;
+                    overlayRoot.append(battleCardPreviewEl);battleCardPreviewEl.classList.add('discover-preview');
+                    restoreDiscoverPreview=()=>{battleCardPreviewEl.classList.remove('discover-preview');parent?.insertBefore(battleCardPreviewEl,next?.parentNode===parent?next:null);};
+                }
+            };
+            const select=document.createElement('button');select.type='button';select.className='discover-select';select.textContent='选择';
+            select.onclick=async()=>{for(const b of list.querySelectorAll('.discover-select'))b.disabled=true;currentChoiceSelectedTargetIds=new Set([String(dto.InstanceId)]);try{await confirmPlayerChoice();}finally{if(overlayRoot.isConnected)for(const b of list.querySelectorAll('.discover-select'))b.disabled=false;}};
+            tile.append(preview,name,select);list.append(tile);
+        }
+        return;
+    }
 
     const { min, max } = getChoiceMinMax(currentChoiceRequest);
     const hasSelectableTargets = Array.isArray(currentChoiceRequest.SelectableTargetIds)

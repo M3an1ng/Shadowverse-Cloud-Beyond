@@ -413,8 +413,18 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             triggerAbilityMode
         };
 
+        const isDiscoverEffect = String(effectMeta.effectTypeName || effectMeta.EffectTypeName || '').toLowerCase() === 'discover';
+        const discoverModeValue = this.getEffectParameterValue(parameters, effectMeta, 'Mode');
+        const discoverCopy = ['copy','1'].includes(String(discoverModeValue ?? 'Definition').toLowerCase());
+        if (isDiscoverEffect) container.addEventListener('change', () => requestAnimationFrame(() => {
+            const latest=getLatestParameters();
+            const copy=['copy','1'].includes(String(this.getEffectParameterValue(latest,effectMeta,'Mode') ?? 'Definition').toLowerCase());
+            if(copy !== discoverCopy && container.isConnected) container.replaceWith(this.createParametersPanel(effectMeta,latest,onChange,options));
+        }));
+
         effectiveParameters.forEach(paramMeta => {
             const paramName = this.getEffectParameterName(paramMeta);
+            if (isDiscoverEffect && ((paramName === 'CardDefinitionIds' && discoverCopy) || (paramName === 'CopySourceTargets' && !discoverCopy))) return;
             if (!paramName) {
                 return;
             }

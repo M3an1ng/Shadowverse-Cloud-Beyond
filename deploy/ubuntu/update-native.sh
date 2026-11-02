@@ -40,6 +40,11 @@ with sqlite3.connect(source.as_uri() + '?mode=ro', uri=True) as db:
         db.backup(target)
         assert target.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
 PY
+if [[ -f app/data/about-changelog.json ]]; then
+    cp -a "$base/shared/data/about-changelog.json" "$backup/about-changelog.json" 2>/dev/null || true
+    cp app/data/about-changelog.json "$base/shared/data/about-changelog.json"
+    chown svnebula:svnebula "$base/shared/data/about-changelog.json"
+fi
 ln -s "$release" "$base/switch-$$"
 mv -Tf "$base/switch-$$" "$base/current"
 systemctl start svnebula

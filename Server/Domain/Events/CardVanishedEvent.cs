@@ -58,6 +58,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public DomainOperationResult Commit(GameContext context)
         {
+            if (VanishReason == EventReasonSource.Ability && VanishedCard != null && EffectTargetImmunityPolicy.IsImmuneToOtherCard(VanishedCard, VanishSource?.InstanceId ?? context.SourceAbility?.SourceCardId ?? context.SourceCard?.InstanceId, context)) return new DomainOperationResult { Success = true };
+
             var card = VanishedCard;
             if (card == null)
             {

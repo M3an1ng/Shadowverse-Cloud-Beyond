@@ -125,9 +125,9 @@ function resolveArtUrl(path) {
     return encodeURI(path).replace(/'/g, '%27');
 }
 
-function buildAbilityHtml(description) {
+function buildAbilityHtml(description, isIntromezzoActive = null) {
     const contentHtml = description
-        ? renderDescriptionHtml(description)
+        ? renderDescriptionHtml(description, { isIntromezzoActive })
         : '<span class="text-dim"><暂无描述></span>';
     return `<div class="ability-text">${contentHtml}</div>`;
 }
@@ -395,7 +395,7 @@ export function showCardDetailModal(card, options = {}) {
     const previewUrl = resolvedPreviewUrl || resolvedDetailUrl;
     const detailUrl = resolvedDetailUrl;
     const inspectDisabled = !detailUrl;
-    const abilityHtml = buildAbilityHtml(description);
+    const abilityHtml = buildAbilityHtml(description, card.isIntromezzoActive ?? card.IsIntromezzoActive);
     const artHtml = previewUrl
         ? `<img class="card-preview-image" src="${previewUrl}" alt="${escapeHtml(name)}">`
         : `
@@ -431,7 +431,7 @@ export function showCardDetailModal(card, options = {}) {
     const overlay = document.createElement('div');
     overlay.id = MODAL_ID;
     overlay.className = `card-detail-modal-overlay${hadOpenModal ? ' is-reopen' : ''}`;
-    overlay.style.zIndex=String(Math.max(100010,...[...document.querySelectorAll('.feature-overlay,.history-overlay')].map(el=>Number(getComputedStyle(el).zIndex)||0))+20);
+    overlay.style.zIndex=String(Math.max(100010,...[...document.querySelectorAll('.feature-overlay,.history-overlay,.discover-overlay')].map(el=>Number(getComputedStyle(el).zIndex)||0))+20);
     overlay.innerHTML = `
         <div class="card-detail-modal-shell">
             <div class="card-detail-modal" role="dialog" aria-modal="true" aria-label="Card detail">

@@ -2372,3 +2372,63 @@
 .card-art-crop-file {
     display: none;
 }
+
+
+/* State treatment is restricted to the keyword letters. */
+.preview-description-keyword.intromezzo-keyword {
+    background: none;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+    color: inherit;
+    text-shadow: none;
+    animation: none;
+    filter: none;
+}
+:is(.slate-description, .card-detail-modal, .battle-card-preview, .preview-description-tooltip)
+.intromezzo-keyword .preview-description-text[data-intromezzo-state] {
+    background: none;
+    font-weight: inherit;
+    text-shadow: none;
+    -webkit-text-stroke: 0;
+    animation: none;
+    filter: none;
+}
+:is(.slate-description, .card-detail-modal, .battle-card-preview, .preview-description-tooltip)
+.intromezzo-keyword .preview-description-text[data-intromezzo-state="dormant"] {
+    color: #84a9c2;
+    -webkit-text-fill-color: #84a9c2;
+}
+:is(.slate-description, .card-detail-modal, .battle-card-preview, .preview-description-tooltip)
+.intromezzo-keyword .preview-description-text[data-intromezzo-state="active"] {
+    color: #ff8378;
+    -webkit-text-fill-color: #ff8378;
+    text-shadow: 0 0 4px #ff66554d;
+}
+
+
+/* Both states share a soft halo; only its intensity changes, never the glyph opacity. */
+:is(.slate-description, .card-detail-modal, .battle-card-preview, .preview-description-tooltip)
+.intromezzo-keyword .preview-description-text[data-intromezzo-state="active"] {
+    --intromezzo-glow: 255, 101, 85;
+    color: #ff9489;
+    -webkit-text-fill-color: #ff9489;
+    text-shadow: 0 0 4px rgba(var(--intromezzo-glow), .8), 0 0 11px rgba(var(--intromezzo-glow), .45);
+    animation: intromezzo-state-aura 3.6s ease-in-out infinite;
+}
+:is(.slate-description, .card-detail-modal, .battle-card-preview, .preview-description-tooltip)
+.intromezzo-keyword .preview-description-text[data-intromezzo-state="dormant"] {
+    --intromezzo-glow: 87, 170, 255;
+    color: #9bc8eb;
+    -webkit-text-fill-color: #9bc8eb;
+    text-shadow: 0 0 4px rgba(var(--intromezzo-glow), .8), 0 0 11px rgba(var(--intromezzo-glow), .45);
+    animation: intromezzo-state-aura 3.6s ease-in-out infinite;
+}
+@keyframes intromezzo-state-aura {
+    0%, 100% { text-shadow: 0 0 4px rgba(var(--intromezzo-glow), .65), 0 0 9px rgba(var(--intromezzo-glow), .32); }
+    50% { text-shadow: 0 0 5px rgba(var(--intromezzo-glow), .95), 0 0 14px rgba(var(--intromezzo-glow), .6); }
+}
+@media (prefers-reduced-motion: reduce) {
+    :is(.slate-description, .card-detail-modal, .battle-card-preview, .preview-description-tooltip)
+    .intromezzo-keyword .preview-description-text[data-intromezzo-state] { animation: none; }
+}

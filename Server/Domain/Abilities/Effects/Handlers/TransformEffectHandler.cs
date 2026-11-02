@@ -125,7 +125,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                 effectName);
         }
 
-        private static bool TryResolveCopySourceCards(object? value, GameContext context, out List<CardInstance> cards, out string? errorMessage)
+        internal static bool TryResolveCopySourceCards(object? value, GameContext context, out List<CardInstance> cards, out string? errorMessage)
         {
             var resolvedCards = new List<CardInstance>();
             errorMessage = null;

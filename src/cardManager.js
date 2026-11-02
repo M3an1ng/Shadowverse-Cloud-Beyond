@@ -29,6 +29,7 @@ export function createCardInstance(cardDto) {
         // 静态数据 (由服务器在DTO中提供)
         // NOTE: CardId is serialized as `id` in CardInstanceDto.
         id: cardDto.CardId ?? cardDto.id,
+        isIntromezzoActive: cardDto.IsIntromezzoActive ?? cardDto.isIntromezzoActive ?? true,
         name: cardDto.Name,
         cost: cardDto.Cost,
         attack: cardDto.Attack,

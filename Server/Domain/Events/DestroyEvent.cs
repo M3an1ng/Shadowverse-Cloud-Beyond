@@ -58,6 +58,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "Target or source card is null in DestroyEvent." };
             }
 
+            if (Reason == EventReasonSource.Ability && EffectTargetImmunityPolicy.IsImmuneToOtherCard(targetCard, sourceCard.InstanceId, context)) return new DomainOperationResult { Success = true };
+
             DestroyTargetSnapshot ??= CardSnapshotCapture.TryCapture(targetCard);
             DestroySourceSnapshot ??= CardSnapshotCapture.TryCapture(sourceCard);
 

@@ -135,7 +135,7 @@ export function setupUserInfoUI({ apiGetJson, apiPostJson, syncTopNavHoverLock }
         fetchedAt: 0
     };
     const DEFAULT_WIN_STATS_ENVIRONMENT = getDefaultDeckEnvironment();
-    const FIXED_WIN_STATS_DECK_RULE = 'standard';
+    let activeWinStatsRule = 'standard';
     let activeWinStatsEnvironment = DEFAULT_WIN_STATS_ENVIRONMENT;
     let winStatsEnvironmentsLoaded = false;
     let winStatsEnvironments = [];
@@ -175,7 +175,7 @@ export function setupUserInfoUI({ apiGetJson, apiPostJson, syncTopNavHoverLock }
         return resolveWinStatsEnvironmentOption(environment)?.label
             || getDeckEnvironmentLabelFromOptions(environment);
     };
-    const getWinStatsTitleText = (environment) => `位阶对战：${getWinStatsEnvironmentLabel(environment)}`;
+    const getWinStatsTitleText = (environment) => activeWinStatsRule === 'taketwo' ? '双选对战' : `位阶对战：${getWinStatsEnvironmentLabel(environment)}`;
     const getEnvironmentToggleAriaLabel = (environment) => {
         if (winStatsEnvironments.length <= 1) {
             return `当前环境：${getWinStatsEnvironmentLabel(environment)}`;
@@ -214,7 +214,7 @@ export function setupUserInfoUI({ apiGetJson, apiPostJson, syncTopNavHoverLock }
         if (!winStatsEnvironmentToggleBtn) return;
         winStatsEnvironmentToggleBtn.dataset.environment = normalizedEnvironment;
         winStatsEnvironmentToggleBtn.setAttribute('aria-label', getEnvironmentToggleAriaLabel(normalizedEnvironment));
-        winStatsEnvironmentToggleBtn.disabled = winStatsEnvironments.length <= 1;
+        winStatsEnvironmentToggleBtn.disabled = activeWinStatsRule === 'taketwo' || winStatsEnvironments.length <= 1;
         const nextEnvironment = getNextWinStatsEnvironment(normalizedEnvironment);
         const nextEnvironmentText = getWinStatsEnvironmentLabel(nextEnvironment);
         winStatsEnvironmentToggleBtn.setAttribute('title', winStatsEnvironments.length <= 1 ? `当前仅支持${getWinStatsEnvironmentLabel(normalizedEnvironment)}` : `切换到${nextEnvironmentText}`);
@@ -431,8 +431,8 @@ export function setupUserInfoUI({ apiGetJson, apiPostJson, syncTopNavHoverLock }
         winStatsRequest = (async () => {
             try {
                 const query = new URLSearchParams();
-                query.set('environment', activeEnvironment);
-                query.set('deckRule', FIXED_WIN_STATS_DECK_RULE);
+                query.set('environment', activeWinStatsRule === 'taketwo' ? 'all' : activeEnvironment);
+                query.set('deckRule', activeWinStatsRule);
                 const state = await apiGetJson(`/api/economy/state/${session.userId}?${query.toString()}`);
                 const classWins = normalizeClassWins(state);
                 const classWinsTotal = Object.values(classWins).reduce((sum, item) => sum + toSafeInt(item, 0), 0);
@@ -457,6 +457,25 @@ export function setupUserInfoUI({ apiGetJson, apiPostJson, syncTopNavHoverLock }
         await winStatsRequest;
     };
 
+    const statisticsMode = document.createElement('button');
+    statisticsMode.type = 'button';
+    statisticsMode.textContent = '普通';
+    statisticsMode.className = 'win-stats-format-toggle';
+    statisticsMode.title = '切换到双选战绩';
+    statisticsMode.setAttribute('aria-label', '切换普通与双选战绩');
+    winStatsEnvironmentToggleBtn?.parentElement?.append(statisticsMode);
+    statisticsMode.addEventListener('click', async () => {
+        if (statisticsMode.disabled) return;
+        statisticsMode.disabled = true;
+        try {
+            if (winStatsRequest) await winStatsRequest;
+            activeWinStatsRule = activeWinStatsRule === 'standard' ? 'taketwo' : 'standard';
+            statisticsMode.textContent = activeWinStatsRule === 'taketwo' ? '双选' : '普通';
+            statisticsMode.title = activeWinStatsRule === 'taketwo' ? '切换到普通战绩' : '切换到双选战绩';
+            winStatsCache.fetchedAt = 0;
+            setWinStatsEnvironment(activeWinStatsEnvironment, true);
+        } finally { statisticsMode.disabled = false; }
+    });
     winStatsEnvironmentToggleBtn?.addEventListener('click', () => {
         const nextEnvironment = getNextWinStatsEnvironment(activeWinStatsEnvironment);
         setWinStatsEnvironment(nextEnvironment, true);

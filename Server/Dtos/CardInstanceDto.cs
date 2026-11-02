@@ -239,6 +239,7 @@ namespace ShadowverseBeyond.Server.Dtos
         /// <summary>
         /// The Player ID of the player who currently controls this instance on the field.
         /// </summary>
+        public bool IsIntromezzoActive { get; set; } = true;
         public Guid OwnerPlayerId { get; set; } = Guid.Empty;
 
         /// <summary>

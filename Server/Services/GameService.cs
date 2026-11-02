@@ -1,4 +1,4 @@
-﻿using ShadowverseBeyond.Server.Mappings;
+using ShadowverseBeyond.Server.Mappings;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
@@ -64,7 +64,7 @@ namespace ShadowverseBeyond.Server.Services
             CardClass? SecondaryClass,
             DeckEnvironment Environment,
             DeckRule Rule,
-            Guid? UserDeckId);
+            Guid? UserDeckId, bool IsTakeTwo = false);
 
         // Dictionary to track the player whose action chain is currently being processed per game - Declaration moved/exists elsewhere
         // Removed duplicate declaration from line 57
@@ -797,7 +797,7 @@ namespace ShadowverseBeyond.Server.Services
             CancellationToken cancellationToken)
         {
             if (selection.GeneratedDraftCardIds is { Length:30 } draftIds && selection.DeckClass.HasValue)
-                return new ResolvedDeckSelection(draftIds.ToList(), selection.DeckClass.Value, null, DeckEnvironment.Open, DeckRule.Standard, null);
+                return new ResolvedDeckSelection(draftIds.ToList(), selection.DeckClass.Value, null, DeckEnvironment.Open, DeckRule.Standard, null, true);
             if (!selection.HasSelection)
             {
                 _logger.LogWarning("[GameService] Deck selection is empty.");
@@ -1221,7 +1221,9 @@ namespace ShadowverseBeyond.Server.Services
                 player1State.Environment = hostDeck.Environment;
                 player2State.Environment = opponentDeck.Environment;
                 player1State.Rule = hostDeck.Rule;
+                player1State.IsTakeTwo = hostDeck.IsTakeTwo;
                 player2State.Rule = opponentDeck.Rule;
+                player2State.IsTakeTwo = opponentDeck.IsTakeTwo;
                 player1State.UserDeckId = hostDeck.UserDeckId;
                 player2State.UserDeckId = opponentDeck.UserDeckId;
 

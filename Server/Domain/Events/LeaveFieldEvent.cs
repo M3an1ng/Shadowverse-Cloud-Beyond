@@ -102,6 +102,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         private LeaveFieldKind ResolveRoutedKind(GameContext context, CardInstance targetCard)
         {
+            if (ReasonSource == EventReasonSource.Ability && EffectTargetImmunityPolicy.IsImmuneToOtherCard(targetCard, LeaveSource?.InstanceId ?? context.SourceAbility?.SourceCardId ?? context.SourceCard?.InstanceId, context)) return LeaveFieldKind.NoOp;
             if (RequestedKind == LeaveFieldKind.NoOp)
             {
                 return LeaveFieldKind.NoOp;

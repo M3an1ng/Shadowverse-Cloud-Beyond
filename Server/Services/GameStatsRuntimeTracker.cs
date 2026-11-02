@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -136,7 +136,7 @@ public sealed class GameStatsRuntimeTracker : IGameStatsRuntimeTracker
             player.IsFirst,
             player.Class,
             player.Environment,
-            player.Rule,
+            player.IsTakeTwo ? DeckRule.TakeTwo : player.Rule,
             player.UserDeckId,
             BuildDeckShapeHash(player.Class, counts),
             counts,

@@ -174,9 +174,13 @@ const abilityKeywordGlossary = {
         name: '漫游',
         description: '满足漫游条件时触发。'
     },
+    Discover: {
+        name: '发现',
+        description: '从指定范围中随机展示最多3张卡片，由自己选择1张加入手牌。优先展示不同卡片数据ID的卡片，默认排除纹章和信仰。复制卡片时保留其附加效果。'
+    },
     Intromezzo: {
         name: '间奏',
-        description: '满足间奏条件时触发。'
+        description: '双方分别共享间奏状态，初始为激活。间奏能力触发时，激活则发动并转为未激活；未激活则跳过并重新激活。'
     },
     Wrath: {
         name: '狂乱',

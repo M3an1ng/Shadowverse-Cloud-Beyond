@@ -22,6 +22,8 @@ for runtime in ('linux-x64', 'win-x64'):
 assert (server / 'runtimes/linux-x64/native/libe_sqlite3.so').is_file()
 shutil.copytree(root / 'dist/assets', stage / 'app/assets')
 shutil.copy2(root / 'dist/index.html', stage / 'app/index.html')
+(stage / 'app/data').mkdir()
+shutil.copy2(root / 'data/about-changelog.json', stage / 'app/data/about-changelog.json')
 entry = re.search(r'<script\b[^>]*\bsrc="([^"]+)"', (stage / 'app/index.html').read_text(encoding='utf-8')).group(1)
 (stage / 'entry-script.txt').write_text(entry + '\n', encoding='utf-8')
 (stage / 'update.sh').write_text((root / 'deploy/ubuntu/update-native.sh').read_text(encoding='utf-8'), encoding='utf-8', newline='\n')
