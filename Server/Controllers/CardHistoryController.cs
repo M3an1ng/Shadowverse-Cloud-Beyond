@@ -86,7 +86,23 @@ public sealed class CardHistoryController(ApplicationDbContext db, IGameDataProv
         }
         db.RevisionOperation = "restore";
         await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
-        await games.NotifyCardDefinitionUpdatedAsync(cardId);
+        try
+        {
+            await games.NotifyCardDefinitionUpdatedAsync(cardId);
+        }
+        catch (Exception exception)
+        {
+            HttpContext.RequestServices.GetRequiredService<ILogger<CardHistoryController>>()
+                .LogError(exception, "Card {CardId} restore was saved, but its cache refresh failed", cardId);
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                error = "卡牌回退已保存，但运行时缓存刷新失败，尚未生效。请勿重复提交，请排查服务端错误并刷新游戏数据缓存。",
+                code = "CARD_RESTORE_CACHE_REFRESH_FAILED",
+                saved = true,
+                cardId,
+                card = mapper.Map<CardDefinitionDto>(card)
+            });
+        }
         Response.Headers["X-Data-Revision"] = data.DataRevision.ToString();
         return Ok(mapper.Map<CardDefinitionDto>(card));
     }

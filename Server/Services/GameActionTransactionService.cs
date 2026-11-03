@@ -1940,7 +1940,7 @@ namespace ShadowverseBeyond.Server.Services
                         abilityContext,
                         false,
                         true,
-                        recordTrigger: shouldRecordRuntimeState);
+                        recordTrigger: false);
 
                     if (!abilityResult.IsSuccess)
                     {
@@ -1959,6 +1959,17 @@ namespace ShadowverseBeyond.Server.Services
                         sameNameTriggered))
                     {
                         continue;
+                    }
+
+                    // Inspection must not consume ordinary Before abilities or their shared Intromezzo state.
+                    if (shouldRecordRuntimeState)
+                    {
+                        if (!IntromezzoGate.Enter(ability, abilityContext)) continue;
+                        ability.RecordTrigger(abilityContext);
+                        if (ShouldEmitAbilityTriggeredEvent(ability, abilityContext))
+                        {
+                            generatedEvents.Add(new AbilityTriggeredEvent(ability, abilityContext.TriggeringEvent!));
+                        }
                     }
 
                     interceptedAbilityIds.Add(ability.RuntimeId);
