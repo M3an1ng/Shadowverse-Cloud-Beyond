@@ -409,6 +409,10 @@ export class ConditionConfigEditor extends MetadataDrivenComponent {
     /**
      * 清理资源
      */
+    flushDslEditors() {
+        for (const editor of this.dslEditors.values()) editor?.updateExpressionFromAST?.();
+    }
+
     cleanup() {
         // 清理所有DSL编辑器实例
         this.dslEditors.clear();

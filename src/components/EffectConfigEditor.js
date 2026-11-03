@@ -1,3 +1,4 @@
+import { isActiveDiscoverParameter } from '../discoverParameters.js';
 import { confirmDialog } from '../siteDialog.js';
 // src/components/EffectConfigEditor.js - 效果配置编辑器 (Refactored)
 //
@@ -3389,9 +3390,18 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             const effectMeta = getEffectMeta(effect.type);
             const withDefaults = this.applyDefaultParameters(effect, effectMeta);
             const cleanParams = this.sanitizeParameters(withDefaults.parameters);
+            for (const key of Object.keys(cleanParams)) {
+                if (!isActiveDiscoverParameter(effect.type, withDefaults.parameters, key)) delete cleanParams[key];
+            }
             const cleanOutputs = this.sanitizeOutputs(withDefaults.outputs ?? withDefaults.Outputs);
             return { ...withDefaults, parameters: cleanParams, outputs: cleanOutputs };
         });
+    }
+
+    flushPoolConditionEditors() {
+        for (const editor of this._poolConditionEditors || []) {
+            if (editor.container?.isConnected) editor.flushDslEditors();
+        }
     }
 
     validateEffects() {

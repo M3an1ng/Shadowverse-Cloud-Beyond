@@ -4023,3 +4023,11 @@ img.badge-icon {
 
 .discover-card-name {background:none;border:0;color:inherit;font:inherit;font-weight:700;cursor:pointer;padding:0;}
 .discover-card-name:hover {color:#e7d39a;}
+
+/* Fold discovery away without releasing the pending player choice. */
+.discover-board-toggle { position:absolute;right:max(28px,calc((100vw - 850px)/2 - 60px));top:max(24px,calc(50% - 255px));padding:10px 18px;border:1px solid #8c7a50;border-radius:6px;background:linear-gradient(145deg,#29261f,#14181d);color:#e8d7ad;font-family:inherit;font-size:16px;line-height:1.4;cursor:pointer;box-shadow:0 4px 18px #0005;pointer-events:auto; }
+.discover-board-toggle:hover { border-color:#dfc384;background:#353126; }
+.discover-board-toggle:focus-visible { outline:2px solid #e1c78d;outline-offset:3px; }
+.discover-overlay.discover-viewing-board { background:transparent;backdrop-filter:none;pointer-events:none!important; }
+.discover-viewing-board .discover-dialog { display:none; }
+@media(max-width:900px){.discover-board-toggle{right:18px;top:22px;font-size:14px;}}

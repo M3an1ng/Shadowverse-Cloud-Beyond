@@ -1925,6 +1925,15 @@ namespace ShadowverseBeyond.Server.Services
                         continue;
                     }
 
+                    // Inspect configuration before processing: a normal Before ability must not
+                    // consume its trigger count (or Intermezzo state) during interception probing.
+                    // The ordinary Before phase below owns its one and only execution.
+                    if (ability is Ability configuredAbility
+                        && !configuredAbility.Config.Effects.Any(effect => effect.IsEnabled && IsInterceptEffectType(effect.Type)))
+                    {
+                        continue;
+                    }
+
                     var abilityContext = gameContext with { SourceCard = ability.SourceCard, TriggeringEvent = currentEvent };
                     var abilityResult = await gameContext.AbilityManager.ProcessSingleAbilityAsync(
                         ability,

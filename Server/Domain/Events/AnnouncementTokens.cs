@@ -14,7 +14,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return CardName(UnknownCard);
             }
 
-            var name = SanitizeTokenValue(card.Name);
+            // Resolve the owner's appearance when recording the event, including bound derivatives.
+            // Keep the instance ID so log links still open the same card.
+            var appearance = ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.Resolve(card.OwnerPlayerId, card.CurrentDefinitionId);
+            var name = SanitizeTokenValue(appearance?.Name ?? card.Name);
             return $"[[card:{card.InstanceId}|name:{name}|owner:{card.OwnerPlayerId}]]";
         }
 

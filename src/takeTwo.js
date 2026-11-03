@@ -1,3 +1,4 @@
+import { exportPoolCode, importPoolCode } from './takeTwoPoolCode.js';
 import { createPoolEnvironmentPicker } from "./poolEnvironmentPicker.js";
 import {
   formatRoomHandshake,
@@ -160,6 +161,38 @@ export async function editTakeTwoPool({
         }
       }),
     );
+    if (!admin) {
+      const shareActions = document.createElement('div');
+      shareActions.className = 'pool-share-actions';
+      const shareDialog = exporting => {
+        const share = createFeatureModal(exporting ? '导出卡池' : '导入卡池');
+        share.body.classList.add('pool-code-dialog');
+        const info=document.createElement('p');
+        info.textContent=exporting ? '复制分享代码，即可分享当前卡包、单卡调整与职业重抽次数。' : '粘贴卡池分享代码。导入将替换当前编辑内容，不会覆盖已保存卡池。';
+        const field=document.createElement('textarea');
+        field.setAttribute('aria-label','卡池分享代码');
+        field.spellcheck=false;
+        field.readOnly=exporting;
+        if(exporting) field.value=exportPoolCode(config);
+        const actions=document.createElement('div');actions.className='pool-code-actions';
+        const status=document.createElement('p');status.setAttribute('role','status');
+        actions.append(button('取消',()=>share.close()),button(exporting ? '复制代码' : '导入卡池',async()=>{
+          try {
+            if(exporting) {
+              field.focus();field.select();
+              try { await navigator.clipboard.writeText(field.value);status.textContent='分享代码已复制'; }
+              catch { status.textContent='请按 Ctrl+C 复制已选中的分享代码'; }
+            } else {
+              const imported=importPoolCode(field.value);
+              config=imported;selectedPoolId='';share.close();await render();
+            }
+          } catch(e) {status.textContent=e.message;}
+        }));
+        share.body.append(info,field,status,actions);field.focus();if(exporting)field.select();
+      };
+      shareActions.append(button('导入卡池',()=>shareDialog(false)),button('导出卡池',()=>shareDialog(true)));
+      toolbar.append(shareActions);
+    }
     modal.body.append(toolbar);
     if (mode === "as2p") {
       const rules = document.createElement("p");

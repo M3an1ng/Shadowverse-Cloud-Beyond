@@ -22,8 +22,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     public class PlayerState
     {
         public bool IsTakeTwo { get; set; }
-        [DslExposable("间奏激活", Description = "该玩家共享的间奏状态，初始激活")]
-        public bool IsIntromezzoActive { get; set; } = true;
         public bool ConsumeIntromezzo()
         {
             var active = IsIntromezzoActive;
@@ -175,6 +173,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         [DslExposable("变量", Description = "玩家上的系统与临时计数器")]
         public IReadOnlyDictionary<string, int> CounterMap => _counters;
+
+        [DslExposable("间奏激活", Description = "该玩家共享的间奏状态，初始休眠")]
+        public bool IsIntromezzoActive { get; set; } = false;
 
         public Counters Counters => _counters;
 

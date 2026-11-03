@@ -12,7 +12,7 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
     /// </summary>
     public record PlayerStateDto // Remove IBoardEntityState implementation
     {
-        public bool IsIntromezzoActive { get; set; } = true;
+        public bool IsIntromezzoActive { get; set; } = false;
 
         public Guid PlayerId { get; init; } = Guid.Empty;
         public bool IsAI { get; init; } // Flag to indicate if the player is AI controlled

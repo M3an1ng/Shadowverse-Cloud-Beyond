@@ -2344,7 +2344,7 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
     playerInstance.pp = playerDto.CurrentPP ?? 0; // PascalCase
     playerInstance.maxPP = playerDto.MaxPP ?? 0; // PascalCase
     playerInstance.ppBoostUsesAvailable = playerDto.PpBoostUsesAvailable ?? 0;
-    playerInstance.isIntromezzoActive = playerDto.IsIntromezzoActive ?? playerDto.isIntromezzoActive ?? true;
+    playerInstance.isIntromezzoActive = playerDto.IsIntromezzoActive ?? playerDto.isIntromezzoActive ?? false;
     playerInstance.ppBoostArmed = playerDto.IsPpBoostArmed ?? playerDto.isPpBoostArmed ?? false;
     playerInstance.ep = playerDto.CurrentEP ?? 0; // PascalCase
     playerInstance.maxEP = playerDto.MaxEP ?? 0; // PascalCase

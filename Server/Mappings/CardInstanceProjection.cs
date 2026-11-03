@@ -66,7 +66,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 MaxAttacksPerTurn = source.GetActionUsageLimit(CardActionUsageType.Attack, context),
                 Zone = source.CurrentZone,
                 OwnerPlayerId = source.OwnerPlayerId,
-                IsIntromezzoActive = context?.CurrentGameState.GetPlayerState(source.OwnerPlayerId)?.IsIntromezzoActive ?? true,
+                IsIntromezzoActive = context?.CurrentGameState.GetPlayerState(source.OwnerPlayerId)?.IsIntromezzoActive ?? false,
                 Keywords = source.GetKeywords(context).ToList(),
                 BuffSummaries = BuildBuffSummaries(source, context),
                 AlternatePlayReferences = BuildAlternatePlayReferences(source, context),

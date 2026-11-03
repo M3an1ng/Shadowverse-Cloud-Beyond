@@ -294,8 +294,16 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
             var traceSettings = _serviceProvider.GetService<IConditionTraceSettings>();
             var traceEntries = traceSettings?.IsEffectEnabledFor(gameContext) == true ? new List<ConditionTraceEntryDto>() : null;
 
+            var discoverCopy = false;
+            if (effectConfig.Type == EffectType.Discover)
+            {
+                var mode = effectConfig.Parameters.FirstOrDefault(p => string.Equals(p.Key, "Mode", StringComparison.OrdinalIgnoreCase)).Value;
+                var resolvedMode = mode is ValueConfig config ? _valueSourceResolver.Resolve(config, gameContext) : mode;
+                discoverCopy = string.Equals(resolvedMode?.ToString(), "Copy", StringComparison.OrdinalIgnoreCase) || resolvedMode?.ToString() == "1";
+            }
             foreach (var paramKvp in effectConfig.Parameters)
             {
+                if (effectConfig.Type == EffectType.Discover && string.Equals(paramKvp.Key, discoverCopy ? "CardDefinitionIds" : "CopySourceTargets", StringComparison.OrdinalIgnoreCase)) continue;
                 if (effectConfig.Type == EffectType.Draw
                     && string.Equals(paramKvp.Key, "SearchTargets", StringComparison.OrdinalIgnoreCase))
                 {
@@ -444,6 +452,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                             {
                                 _logger.LogWarning(ex, "Failed to deserialize JsonElement for property {PropertyName} to type {PropertyType}.", property.Name, property.PropertyType.Name);
                             }
+                        }
+
+                        // Static JSON arrays may already have been resolved into List<object>.
+                        // Rehydrate nested condition objects instead of silently dropping the pool filter.
+                        if (value != null && property.PropertyType == typeof(List<ShadowverseBeyond.Server.Domain.Abilities.Conditions.ConditionConfig>)
+                            && !property.PropertyType.IsInstanceOfType(value))
+                        {
+                            value = JsonSerializer.Deserialize(JsonSerializer.Serialize(value), property.PropertyType,
+                                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                         }
 
                         // Handle null values first, especially for nullable property types.
