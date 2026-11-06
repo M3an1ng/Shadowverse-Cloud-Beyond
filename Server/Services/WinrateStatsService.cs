@@ -37,7 +37,7 @@ public sealed class WinrateStatsService : IWinrateStatsService
         CancellationToken cancellationToken)
     {
         var gameState = gameContext.CurrentGameState;
-        if (gameState == null || string.IsNullOrWhiteSpace(gameState.GameId))
+        if (gameState == null || gameState.IsLocalAiTraining || string.IsNullOrWhiteSpace(gameState.GameId))
         {
             return;
         }

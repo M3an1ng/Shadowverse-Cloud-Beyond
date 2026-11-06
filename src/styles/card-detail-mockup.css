@@ -93,6 +93,7 @@
 /* --- Header Bar --- */
 .card-detail-modal .modal-header-bar {
     height: 60px;
+    flex-shrink: 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     display: grid;
     grid-template-columns: 56px 1fr 56px;
@@ -178,7 +179,8 @@
 
 /* --- Main Content Grid --- */
 .card-detail-modal .detail-content-frame {
-    flex: 1;
+    flex: 1 1 0;
+    min-height: 0;
     padding: 24px 40px 32px;
     box-sizing: border-box;
     overflow: visible;
@@ -188,7 +190,8 @@
     width: 100%;
     height: 100%;
     display: grid;
-    grid-template-columns: 44% 56%;
+    grid-template-columns: minmax(0, 44fr) minmax(0, 56fr);
+    grid-template-rows: minmax(0, 1fr);
     gap: 12px;
     overflow: visible;
     align-items: start;
@@ -209,7 +212,7 @@
 .card-detail-modal .card-preview-wrapper {
     position: relative;
     width: 100%;
-    max-width: 360px;
+    max-width: min(360px, calc(max(0px, min(650px, 86vh) - 140px) * 0.714));
     aspect-ratio: 0.714;
     margin-left: 10px;
     transform: none;
@@ -387,6 +390,7 @@
 /* 1. Name Row */
 .card-detail-modal .name-row {
     height: 50px;
+    flex-shrink: 0;
     border: 1px solid rgba(255, 255, 255, 0.1);
     background: rgba(0, 0, 0, 0.2);
     display: flex;
@@ -416,6 +420,7 @@
 /* 2. Meta Row */
 .card-detail-modal .meta-row {
     height: 60px;
+    flex-shrink: 0;
     border: 1px solid rgba(255, 255, 255, 0.1);
     background: rgba(0, 0, 0, 0.2);
     padding: 8px 16px;
@@ -497,6 +502,7 @@
     background: rgba(0, 0, 0, 0.2);
     padding: 20px;
     overflow-y: auto;
+    overscroll-behavior: contain;
     min-width: 0;
 }
 
@@ -689,6 +695,7 @@
     display: flex;
     gap: 16px;
     height: 64px;
+    flex-shrink: 0;
 }
 
 .card-detail-modal .action-btn {

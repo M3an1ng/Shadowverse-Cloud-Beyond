@@ -4257,6 +4257,13 @@ function renderBattleCardPreview(cardInstance) {
     });
 }
 
+export function clearSelfReturnVisuals(cardUid) {
+    cancelCommittedHandPlayVisual(cardUid, { animateBack: false });
+    if (String(battleCardPreviewEl?.dataset.previewUid).toLowerCase() === String(cardUid).toLowerCase()) {
+        renderBattleCardPreview(null);
+    }
+}
+
 export function replaceBattleCardPreviewIdentity(previousUid, cardInstance) {
     if (String(battleCardPreviewEl?.dataset.previewUid).toLowerCase() === String(previousUid).toLowerCase()) {
         renderBattleCardPreview(cardInstance);

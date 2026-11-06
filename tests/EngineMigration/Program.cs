@@ -1,3 +1,5 @@
+using ShadowverseBeyond.Server.Domain.Query;
+using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using ShadowverseBeyond.Server.Infrastructure.Data;
@@ -32,6 +34,9 @@ using ShadowverseBeyond.Server.Services.Abstractions;
 var results = new List<object>();
 void Test(string name, Action action) { try { action(); results.Add(new { name, passed = true }); } catch(Exception e) { results.Add(new {name,passed=false,error=e.ToString()}); } }
 void Check(bool yes, string reason) { if(!yes) throw new Exception(reason); }
+Test("AI searches combat, evolution and Storm routes", AiPolicyTests.Search);
+Test("AI scores damage, healing and removal targets", AiPolicyTests.Targets);
+Test("AI values Act resources and Fusion materials", AiPolicyTests.Abilities);
 Test("startup preserves shared original card art and explicit remote art", () => {
  var root=Path.Combine(Path.GetTempPath(),"sv-art-"+Guid.NewGuid());
  var source=Path.Combine(root,"assets","cards","1");var target=Path.Combine(root,"assets","cards","2");
@@ -225,6 +230,20 @@ var p1=new PlayerState(Guid.NewGuid());var p2=new PlayerState(Guid.NewGuid());
 var game=new GameState("migration-tests",p1,p2,p1.PlayerId){AbilityManager=abilityManager,BuffManager=buffs};
 p1.Leader=factory.CreateAndRegisterNewCard(game,1,p1.PlayerId,CardZone.Staging);p2.Leader=factory.CreateAndRegisterNewCard(game,1,p2.PlayerId,CardZone.Staging);
 using var context=new GameContext(services,new MapperConfiguration(cfg=>{}).CreateMapper(),accessor,game,p1.PlayerId,sourceCard:p1.Leader);
+Test("inverse of all candidates resolves to an explicit empty target list", () => {
+ var query = Proxy<IQueryExecutor>.Make((m,a) => new QueryResult { Results = new object[] { p1.Leader } });
+ var pending = Proxy<IPendingActionService>.Make((m,a) => throw new Exception("automatic targets should not prompt"));
+ var selection = new TargetSelectionService(NullLogger<TargetSelectionService>.Instance, query, pending);
+ using var provider = new ServiceCollection().AddSingleton(query).AddSingleton<IBuffService>(buffService).AddSingleton<IEventHistoryService>(Proxy<IEventHistoryService>.Make((m,a)=>null)).BuildServiceProvider();
+ using var ctx = new GameContext(provider, new MapperConfiguration(cfg=>{}).CreateMapper(),accessor,game,p1.PlayerId,sourceCard:p1.Leader);
+ foreach (var (required, inverse, expected) in new[] { (false, false, 1), (false, true, 0), (true, true, 0) }) {
+  var config = new TargetConfig { PlayerChoiceOptions = new() { IsRequired = required, MinCount = 2, MaxCount = 2, IsInverseSelection = inverse } };
+  var target = new Target("cards", config, selection, NullLogger<Target>.Instance);
+  var ability = Proxy<IAbility>.Make((m,a) => m.Name switch { "get_Targets" => new List<Target> { target }, "HasKeyword" => false, _ => null });
+  var resolved = selection.ResolveTargetsForAbilityAsync(ability,ctx,false).GetAwaiter().GetResult();
+  Check(resolved.Status == ResolutionStatus.Completed && resolved.ResolvedTargets["cards"].Count == expected, "wrong complement or missing pool");
+ }
+});
 CardInstance Destroyed(int id) {var card=factory.CreateAndRegisterNewCard(game,id,p1.PlayerId,CardZone.Graveyard); typeof(CardInstance).GetMethod("SetLastMoveReason",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(card,new object[]{CardMoveReason.Destroyed});return card;}
 var reanimate=new ReanimateEffectHandler(NullLogger<ReanimateEffectHandler>.Instance,new TargetProcessingService(NullLogger<TargetProcessingService>.Instance),factory);
 GameStateActionResult Reanimate(int maximum,List<ConditionConfig>? conditions=null) => reanimate.Apply(new Effect(p1.PlayerId),context,new(){MaxCost=maximum,PoolConditions=conditions??new()});

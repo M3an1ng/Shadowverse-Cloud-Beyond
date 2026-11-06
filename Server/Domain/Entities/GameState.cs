@@ -34,6 +34,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public InGameIdRegistry InGameIds { get; } = new();
 
         public string GameId { get; set; }
+        public bool IsLocalAiTraining { get; set; }
+        internal Guid? LegacyAiPlayerId { get; set; }
 
         public GameStatus Status { get; set; } = GameStatus.Starting;
 

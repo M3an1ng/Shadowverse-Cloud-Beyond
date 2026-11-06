@@ -430,17 +430,20 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
 
             var relevantAbilities = GetAbilitiesForEvent(eventTypeString);
 
-            // NOTE: Do not hard-filter abilities by a single runtime ability id here.
-            // Let DSL conditions decide whether a specific ability should trigger.
-            // if (targetedAbilityRuntimeId.HasValue && targetedAbilityRuntimeId.Value != Guid.Empty)
-            // {
-            //     relevantAbilities = relevantAbilities
-            //         .Where(ability => ability.RuntimeId == targetedAbilityRuntimeId.Value)
-            //         .ToList();
-            // }
+            // Restrict the chosen card's action ability while retaining other cards' reactions.
+            var (selectedId, sourceId, actionKeyword) = gameEvent switch
+            {
+                ActInvokedEvent act => (act.TriggeredAbilityRuntimeId, act.ActCard?.InstanceId, AbilityKeyword.Act),
+                FusionInvokedEvent fusion => (fusion.TriggeredAbilityRuntimeId, fusion.FusionCard?.InstanceId, AbilityKeyword.Fusion),
+                _ => ((Guid?)null, (Guid?)null, default(AbilityKeyword))
+            };
 
             foreach (var ability in relevantAbilities)
             {
+                if (selectedId.HasValue && ability.RuntimeId != selectedId
+                    && ability.SourceCard?.InstanceId == sourceId && ability.HasKeyword(actionKeyword))
+                    continue;
+
                 try
                 {
                     if (IsAbilitySuppressed(ability, context))

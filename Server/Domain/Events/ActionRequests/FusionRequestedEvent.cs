@@ -117,7 +117,7 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
 
             // Fusion request only invokes the fusion action root.
             // Material selection and follow-up effects are handled by Fusion-triggered abilities.
-            result.GeneratedEvents.Add(new FusionInvokedEvent(owner, card));
+            result.GeneratedEvents.Add(new FusionInvokedEvent(owner, card, triggeredAbilityRuntimeId: selectedAbility?.RuntimeId));
             result.Success = true;
             return result;
         }

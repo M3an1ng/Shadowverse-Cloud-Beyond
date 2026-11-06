@@ -151,3 +151,7 @@ coverage/
 *.p12
 # Native application is launched by the deployment scripts, not machine-specific profiles.
 /Server/Properties/launchSettings.local.json
+
+# AI artifacts are uploaded independently of code and player data.
+/data/ai-model/
+/exports/

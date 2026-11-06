@@ -1,3 +1,5 @@
+import { installLocalAiTraining } from './localAiTraining.js';
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installLocalAiTraining, {once:true}); else void installLocalAiTraining();
 import { createRevealPresentationGate } from "./revealPresentationGate.js";
 import { formatRoomHandshake } from "./multiplayerRoomPresentation.js";
 import "./styles/mini-feature-theme.css";

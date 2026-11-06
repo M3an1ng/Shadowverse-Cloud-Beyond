@@ -1,3 +1,4 @@
+using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Constants; // Add missing using for CardKeyword
 using ShadowverseBeyond.Server.Domain.Extensions; // 【BUG-017修复】添加扩展方法的using指令
@@ -30,11 +31,13 @@ namespace ShadowverseBeyond.Server.Services
     public class AiService : IAiService
     {
         private readonly ILogger<AiService> _logger;
+        private readonly AiLearningModel _learned;
         private readonly IServiceScopeFactory _serviceScopeFactory; // To resolve IGameService if needed, avoiding circular dependency
 
-        public AiService(ILogger<AiService> logger, IServiceScopeFactory serviceScopeFactory)
+        public AiService(ILogger<AiService> logger, IServiceScopeFactory serviceScopeFactory, AiLearningModel learned)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _learned = learned;
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
         }
 
@@ -87,9 +90,18 @@ namespace ShadowverseBeyond.Server.Services
                 return null;
             }
 
+            if (_learned.Current != null)
+            {
+                var w = LearnedWeights(gameId, aiPlayerId);
+                var card = playableCards.OrderByDescending(c => _learned.Score(gameState!, aiPlayerId, "play", c, weights:w)
+                        + c.CurrentCost*w.Tempo + (c.Type==CardType.Follower ? (c.CurrentAttack+c.CurrentHealth)*.35*w.Board : w.Utility))
+                    .FirstOrDefault();
+                return card == null ? null : new PlayCardActionDto { CardUid=card.InstanceId };
+            }
+
             // V1 Logic: Prioritize playing the highest-cost follower if possible
             var playableFollowers = playableCards
-                .Where(c => c.Type == CardType.Follower)
+                .Where(c => c.Type is CardType.Follower or CardType.Amulet)
                 .OrderByDescending(c => c.Cost)
                 .ToList();
 
@@ -179,8 +191,8 @@ namespace ShadowverseBeyond.Server.Services
 
             var canEnablePlay = aiState.Hand.Any(card =>
                 card != null &&
-                card.Cost > aiState.CurrentPP &&
-                card.Cost <= aiState.CurrentPP + GameConstants.PlayPoints.PpBoostAmount);
+                card.CurrentCost > aiState.CurrentPP &&
+                card.CurrentCost <= aiState.CurrentPP + GameConstants.PlayPoints.PpBoostAmount);
 
             if (!canEnablePlay)
             {
@@ -233,7 +245,7 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             // 3. Simple V2 Logic: Evolve the highest attack evolvable unit
-            var unitToEvolve = evolvableUnits.OrderByDescending(u => u.CurrentAttack).First();
+            var unitToEvolve = evolvableUnits.OrderByDescending(u => u.CurrentAttack + _learned.Score(gameState!, aiPlayerId, "evolve", u, weights:LearnedWeights(gameId,aiPlayerId))).First();
 
             _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} decided to evolve Unit: {UnitName} ({UnitUid}), Attack: {Attack}.",
                 gameId, aiPlayerId, unitToEvolve.Name, unitToEvolve.InstanceId, unitToEvolve.CurrentAttack);
@@ -254,6 +266,27 @@ namespace ShadowverseBeyond.Server.Services
                 return Task.FromResult<AttackActionDto?>(null);
             }
             var (aiState, opponentState) = states.Value;
+
+            if (_learned.Current != null && opponentState != null)
+            {
+                var w=LearnedWeights(gameId,aiPlayerId);
+                var options=new List<(CardInstanceDto source,CardInstanceDto target,double score)>();
+                foreach(var attacker in aiState.Field.Where(u=>u.CanPerformAttackDto(aiPlayerId,gameState!.CurrentPlayerId==aiPlayerId)))
+                {
+                    foreach(var target in LegalAttackTargets(attacker,opponentState))
+                    {
+                        var face=target.Type==CardType.Leader;
+                        var lethal=face&&attacker.CurrentAttack>=target.CurrentHealth;
+                        var kill=!face&&(attacker.CurrentAttack>=target.CurrentHealth||attacker.Keywords.Contains(CardKeyword.Bane));
+                        var survives=face||target.CurrentAttack<attacker.CurrentHealth;
+                        var baseline=lethal?10000:face?attacker.CurrentAttack*w.Face:((kill?target.CurrentAttack+target.CurrentHealth:attacker.CurrentAttack)*w.Board+(survives?2:-attacker.CurrentAttack)*w.Survival);
+                        options.Add((attacker,target,baseline+_learned.Score(gameState!,aiPlayerId,"attack",attacker,target,w)));
+                    }
+                }
+                if(options.Count==0)return Task.FromResult<AttackActionDto?>(null);
+                var best=options.OrderByDescending(o=>o.score).First();
+                return Task.FromResult<AttackActionDto?>(new AttackActionDto{AttackerUid=best.source.InstanceId,TargetUid=best.target.InstanceId});
+            }
 
             var readyUnit = aiState.Field
                 .Where(u => u != null && u.CanPerformAttackDto(aiState.PlayerId, gameState.CurrentPlayerId == aiState.PlayerId))
@@ -282,6 +315,21 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogDebug("[AiService:{GameId}] No valid target found for AI attacker {AttackerUid}.", gameId, readyUnit.InstanceId);
                 return Task.FromResult<AttackActionDto?>(null);
             }
+        }
+
+        private AiWeights LearnedWeights(string gameId,Guid playerId)
+        {
+            using var scope=_serviceScopeFactory.CreateScope();
+            var initial=scope.ServiceProvider.GetRequiredService<IGameService>().GetGameState(gameId)?.GetPlayerState(playerId)?.InitialDeckDefinitionIds;
+            return _learned.Weights(initial);
+        }
+        internal static IEnumerable<CardInstanceDto> LegalAttackTargets(CardInstanceDto attacker,PlayerStateDto opponent)
+        {
+            if(attacker.HasKeyword(CardKeyword.Shackle))yield break;
+            var targets=opponent.Field.Where(c=>c.Type==CardType.Follower&&!c.HasKeyword(CardKeyword.Ambush)&&!c.HasKeyword(CardKeyword.Pressure)).ToList();
+            var ward=targets.Any(c=>c.HasKeyword(CardKeyword.Ward))&&!attacker.HasKeyword(CardKeyword.IgnoreWard);
+            if(!attacker.HasKeyword(CardKeyword.CannotAttackFollower))foreach(var target in targets.Where(c=>!ward||c.HasKeyword(CardKeyword.Ward)))yield return target;
+            if(!ward&&!attacker.HasKeyword(CardKeyword.CannotAttackLeader)&&(attacker.ZoneStayTurn>0||attacker.HasStorm())&&opponent.LeaderCard!=null)yield return opponent.LeaderCard;
         }
 
         #region Helper Methods
@@ -325,13 +373,8 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogWarning("[AiService:Helper] AI state or hand is null in GetPlayableCards.");
                 return new List<CardInstanceDto>();
             }
-            // Return playable CardInstanceDto directly
-            var spendablePp = aiState.CurrentPP + (aiState.IsPpBoostArmed ? GameConstants.PlayPoints.PpBoostAmount : 0);
-            var costPlayable = aiState.Hand
-                .Where(card => card != null && card.Cost <= spendablePp)
-                .ToList();
-
-            if (!costPlayable.Any())
+            // The engine checks the effective cost and alternate play modes.
+            if (aiState.Hand.Count == 0)
             {
                 return new List<CardInstanceDto>();
             }
@@ -340,14 +383,15 @@ namespace ShadowverseBeyond.Server.Services
             var gameService = scope.ServiceProvider.GetRequiredService<IGameService>();
             var playable = new List<CardInstanceDto>();
 
-            foreach (var card in costPlayable)
+            foreach (var card in aiState.Hand)
             {
                 try
                 {
                     var result = await gameService.GetCardPlayabilityAsync(gameId, aiPlayerId, card.InstanceId, CancellationToken.None);
                     if (result.IsPlayable)
                     {
-                        playable.Add(card);
+                        var mode = result.PlayModes.FirstOrDefault(m => m.Mode == result.SelectedPlayMode);
+                        playable.Add(mode == null ? card : card with { CurrentCost = mode.EffectiveCost });
                     }
                 }
                 catch (Exception ex)
@@ -521,13 +565,20 @@ namespace ShadowverseBeyond.Server.Services
             var aiPlayerId = request.RequestingPlayerId;
             _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} is deciding for choice {ChoiceId}.", gameId, aiPlayerId, request.PendingChoiceId);
 
-            // V1 Logic: For now, the AI will make a very simple choice.
-            // If the minimum selection is 0, it means choosing is optional or not applicable (like Goblin's Fanfare).
-            // In this case, the AI will choose nothing.
-            // Otherwise, it will randomly pick the minimum required number of targets.
             var chosenIds = new List<Guid>();
             var minSelectionCount = Math.Max(0, request.MinSelectionCount);
             var selectableTargetIds = request.SelectableTargetIds ?? new List<Guid>();
+
+            using var scope = _serviceScopeFactory.CreateScope();
+            var game = scope.ServiceProvider.GetRequiredService<IGameService>().GetGameState(gameId);
+            var source = game?.AbilityManager?.GetAbilityByRuntimeId(request.SourceAbilityRuntimeId);
+            var player = gameState.Players.FirstOrDefault(p => p.PlayerId == aiPlayerId);
+            var hand = player?.Hand;
+            var choosesFusionMaterials = source?.HasKeyword(AbilityKeyword.Fusion) == true
+                && hand != null && selectableTargetIds.Count > 0
+                && selectableTargetIds.All(id => hand.Any(card => card.InstanceId == id));
+            if (choosesFusionMaterials && request.MaxSelectionCount > 0)
+                minSelectionCount = Math.Max(1, minSelectionCount);
 
             if (minSelectionCount > 0 && selectableTargetIds.Count == 0 && request.IsCancellable)
             {
@@ -536,16 +587,38 @@ namespace ShadowverseBeyond.Server.Services
                 return Task.FromResult(PlayerChoiceResult.Cancelled);
             }
 
+            var useLegacyPolicy = game?.LegacyAiPlayerId == aiPlayerId;
+            var effects = !useLegacyPolicy && source is Ability ability
+                ? AiTargetScoring.FindEffects(ability.Config.Effects, request.TargetKey)
+                : Array.Empty<AiTargetScoring.Effect>();
+            var playerTargets = gameState.Players.Where(p => p.LeaderCard != null)
+                .ToDictionary(p => p.PlayerId, p => p.LeaderCard!);
+
             if (minSelectionCount > 0 && selectableTargetIds.Any())
             {
-                // Simple random selection
                 var random = new Random();
+                var w=LearnedWeights(gameId,aiPlayerId);
                 chosenIds = selectableTargetIds
-                                   .OrderBy(x => random.Next())
+                                   .OrderByDescending(id => {
+                                       var card=request.SelectableCardInstances.FirstOrDefault(c=>c.InstanceId==id)??gameState.FindCardInstanceById(id.ToString());
+                                       if (choosesFusionMaterials && card != null && !useLegacyPolicy && player != null)
+                                           return -AiAbilityScoring.MaterialValue(player, card);
+                                       if (choosesFusionMaterials && card != null)
+                                           return _learned.Score(gameState, aiPlayerId, "choose", null, card, w)
+                                               - card.CurrentCost - (card.CurrentAttack + card.CurrentHealth) * .1;
+                                       if (card == null && !useLegacyPolicy) playerTargets.TryGetValue(id, out card);
+                                       if (effects.Count > 0 && card != null)
+                                       {
+                                           var learned = _learned.Current == null ? 0 : _learned.Score(gameState, aiPlayerId, "choose", null, card, w);
+                                           return AiTargetScoring.Score(card, aiPlayerId, effects) + .04 * Math.Clamp(learned, -8, 8);
+                                       }
+                                       if (_learned.Current == null) return random.NextDouble();
+                                       return _learned.Score(gameState,aiPlayerId,"choose",null,card,w)+(card==null?0:(card.CurrentAttack+card.CurrentHealth)*.1);
+                                   })
                                    .Take(minSelectionCount)
                                    .ToList();
 
-                _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} randomly selected {Count} targets: [{Targets}]",
+                _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} selected {Count} targets: [{Targets}]",
                     gameId, aiPlayerId, chosenIds.Count, string.Join(", ", chosenIds));
             }
             else

@@ -282,7 +282,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 cardUid: card.InstanceId,
                 returnedCard: cardDto,
                 reason: e.Reason.ToString()
-            );
+            ) { IsSelfReturn = e.ReturnSourceSnapshot?.InstanceId == card.InstanceId };
         }
 
         private GameEventDto? ConvertTuckEvent(IGameEvent gameEvent, GameContext context)

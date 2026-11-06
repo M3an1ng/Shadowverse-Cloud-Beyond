@@ -3820,6 +3820,11 @@ export function handleCardReturned(eventData) {
         return;
     }
 
+    if (eventData.IsSelfReturn ?? eventData.isSelfReturn) {
+        gameView.clearSelfReturnVisuals(cardUid);
+        return;
+    }
+
     const returnedCard = findCardInstanceByUid(cardUid);
     if (returnedCard) {
         // Placeholder for return visual effects.

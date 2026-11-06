@@ -80,6 +80,12 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
     /// </summary>
     public class TargetSelectionService
     {
+        private static List<TargetInfo> ExcludeTargets(List<TargetInfo> pool, List<TargetInfo> selected)
+        {
+            var excludedIds = selected.Select(t => t.InstanceId).ToHashSet();
+            return pool.Where(t => !excludedIds.Contains(t.InstanceId)).ToList();
+        }
+
         private readonly ILogger<TargetSelectionService> _logger;
         private readonly IQueryExecutor _cardQueryExecutor;
         private readonly IPendingActionService _pendingActionService;
@@ -156,6 +162,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 
                 var candidateTargets = ApplyAbilityTargetKeywordRules(potentialTargets, target.Config, context, applyChoiceRestrictions: false);
 
+                var inverseSelection = target.Config.PlayerChoiceOptions?.IsInverseSelection == true;
                 // Check if this specific target requires player choice.
                 if (target.Config.PlayerChoiceOptions?.IsRequired == true)
                 {
@@ -211,7 +218,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                             requiredMinSelectionCount,
                             ability.KeywordSummary,
                             target.Key);
-                        target.SetResolvedTargets(selectableTargets, triggeringEventId);
+                        var fallbackTargets = inverseSelection
+                            ? ExcludeTargets(resolutionPoolTargets, selectableTargets)
+                            : selectableTargets;
+                        target.SetResolvedTargets(fallbackTargets, triggeringEventId);
                         resolvedTargetsForQuery[target.Key] = target.ResolvedTargets;
                         continue;
                     }
@@ -240,18 +250,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                             randomSelectionCount,
                             context);
 
-                        var randomSelectedIdSet = new HashSet<Guid>(randomlySelectedTargets.Select(target => target.InstanceId));
-                        List<TargetInfo> randomChosenTargets;
-                        if (target.Config.PlayerChoiceOptions?.IsInverseSelection == true)
-                        {
-                            randomChosenTargets = resolutionPoolTargets
-                                .Where(t => !randomSelectedIdSet.Contains(t.InstanceId))
-                                .ToList();
-                        }
-                        else
-                        {
-                            randomChosenTargets = randomlySelectedTargets;
-                        }
+                        var randomChosenTargets = inverseSelection
+                            ? ExcludeTargets(resolutionPoolTargets, randomlySelectedTargets)
+                            : randomlySelectedTargets;
 
                         target.SetResolvedTargets(randomChosenTargets, triggeringEventId);
                         resolvedTargetsForQuery[target.Key] = randomChosenTargets;
@@ -305,17 +306,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                         return finalResult;
                     }
 
-                    List<TargetInfo> chosenTargets;
-                    if (target.Config.PlayerChoiceOptions?.IsInverseSelection == true)
-                    {
-                        chosenTargets = resolutionPoolTargets
-                            .Where(t => !chosenTargetIdSet.Contains(t.InstanceId))
-                            .ToList();
-                    }
-                    else
-                    {
-                        chosenTargets = playerSelectedTargets;
-                    }
+                    var chosenTargets = inverseSelection
+                        ? ExcludeTargets(resolutionPoolTargets, playerSelectedTargets)
+                        : playerSelectedTargets;
 
                     target.SetResolvedTargets(chosenTargets, triggeringEventId);
                     resolvedTargetsForQuery[target.Key] = chosenTargets;
@@ -324,8 +317,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 else
                 {
                     // Auto-select targets and, crucially, update the state of the Target object itself.
-                    target.SetResolvedTargets(candidateTargets, triggeringEventId);
-                    resolvedTargetsForQuery[target.Key] = candidateTargets;
+                    target.SetResolvedTargets(inverseSelection ? [] : candidateTargets, triggeringEventId);
+                    resolvedTargetsForQuery[target.Key] = target.ResolvedTargets;
                 }
             }
 

@@ -235,8 +235,8 @@ namespace ShadowverseBeyond.Server.Services
                                         var turnStartEvent = transactionResult.ProcessedEvents.OfType<TurnStartEvent>().FirstOrDefault();
                                         if (turnStartEvent?.Source?.Player != null)
                                         {
-                                            StartTurnTimer(gameId, turnStartEvent.Source.Player.PlayerId);
-                                            if (turnStartEvent.Source.Player.IsAI)
+                                            if (!gameState.IsLocalAiTraining) StartTurnTimer(gameId, turnStartEvent.Source.Player.PlayerId);
+                                            if (turnStartEvent.Source.Player.IsAI && !gameState.IsLocalAiTraining)
                                             {
                                                 _logger.LogInformation("🤖 [AI TURN TRIGGER] Turn started for AI Player {PlayerId}. Triggering AI turn.", turnStartEvent.Source.Player.PlayerId);
                                                 var aiPlayerId = turnStartEvent.Source.Player.PlayerId;
@@ -1083,7 +1083,18 @@ namespace ShadowverseBeyond.Server.Services
                     return null;
                 }
 
-                bool player1IsFirst = _firstPlayerSelector.IsPlayer1First();
+                var roomResult = _matchService.GetByGameId(gameId);
+                if (!roomResult.Success || roomResult.Room == null)
+                {
+                    _logger.LogWarning("[GameService] Match room not found while creating game state. GameId={GameId}", gameId);
+                    return null;
+                }
+
+                var room = roomResult.Room;
+
+                var devConfig = room.DevMatchConfig;
+                var benchmark = devConfig?.IsLocalAiTraining == true ? devConfig : null;
+                bool player1IsFirst = benchmark?.BenchmarkHostGoesFirst ?? _firstPlayerSelector.IsPlayer1First();
                 var player1State = new PlayerState(player1Id) { IsFirst = player1IsFirst };
                 var player2State = new PlayerState(player2Id) { IsFirst = !player1IsFirst, IsAI = createAi };
                 await ApplyPlayerIdentityAsync(scopeServiceProvider, player1State, player2State);
@@ -1112,15 +1123,8 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogInformation("[GameService] Created and assigned AbilityManager for Game {GameId}.", gameId);
                 // --- End Manual Manager Creation ---
 
-                var roomResult = _matchService.GetByGameId(gameId);
-                if (!roomResult.Success || roomResult.Room == null)
-                {
-                    _logger.LogWarning("[GameService] Match room not found while creating game state. GameId={GameId}", gameId);
-                    return null;
-                }
-
-                var room = roomResult.Room;
-                var devConfig = room.DevMatchConfig;
+                newGameState.IsLocalAiTraining = devConfig?.IsLocalAiTraining == true;
+                if (newGameState.IsLocalAiTraining) { player1State.IsAI = true; player2State.IsAI = true; }
                 var requireCompleteDecks = devConfig?.AllowIncompleteDecks != true;
 
                 var maxPp = GameConstants.PlayPoints.InitialPlayPoints;
@@ -1237,8 +1241,9 @@ namespace ShadowverseBeyond.Server.Services
                     cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player2Id, CardZone.Deck);
                 }
 
-                ShuffleDeck(player1State.Deck);
-                ShuffleDeck(player2State.Deck);
+                var benchmarkRandom = benchmark?.BenchmarkShuffleSeed is { } seed ? new Random(seed) : null;
+                ShuffleDeck(player1State.Deck, benchmarkRandom);
+                ShuffleDeck(player2State.Deck, benchmarkRandom);
 
                 player1State.InitialDeck = new List<CardInstance>(player1State.Deck);
                 player2State.InitialDeck = new List<CardInstance>(player2State.Deck);
@@ -1299,7 +1304,7 @@ namespace ShadowverseBeyond.Server.Services
                     var loopTokenSource = _gameLoopCancellationTokens.TryGetValue(gameId, out var cts) ? cts.Token : CancellationToken.None;
                     // 【FIX】Do not pass a scoped service provider to a background task.
                     // The task will create its own scope.
-                    _ = Task.Run(() => TriggerAiMulliganIfNeededAsync(gameId, newGameState, loopTokenSource), loopTokenSource);
+                    if (!newGameState.IsLocalAiTraining) _ = Task.Run(() => TriggerAiMulliganIfNeededAsync(gameId, newGameState, loopTokenSource), loopTokenSource);
                     return newGameState;
                 }
 
@@ -2157,7 +2162,7 @@ namespace ShadowverseBeyond.Server.Services
         // --- Existing Methods Below ---
         // --- Helper Methods for End Turn Logic ---
 
-        private void ShuffleDeck(List<CardInstance> deck) // Changed parameter type to Domain Entity
+        private void ShuffleDeck(List<CardInstance> deck, Random? random = null) // Changed parameter type to Domain Entity
         {
             _logger.LogWarning("[GameService] Placeholder ShuffleDeck called."); // Original line 725 content
                                                                                  // Placeholder: Simple Fisher-Yates shuffle
@@ -2165,7 +2170,7 @@ namespace ShadowverseBeyond.Server.Services
             /// Helper method to draw the initial hand from the deck at the start of the game (before mulligan).
             /// Modifies the input deck list directly by removing drawn cards.
             /// </summary>
-            Random rng = new Random();
+            Random rng = random ?? new Random();
             int n = deck.Count;
             while (n > 1)
             {
