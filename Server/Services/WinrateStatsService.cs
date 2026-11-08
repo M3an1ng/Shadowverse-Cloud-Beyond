@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Dtos.Enums;
@@ -37,11 +38,13 @@ public sealed class WinrateStatsService : IWinrateStatsService
         CancellationToken cancellationToken)
     {
         var gameState = gameContext.CurrentGameState;
-        if (gameState == null || gameState.IsLocalAiTraining || string.IsNullOrWhiteSpace(gameState.GameId))
+        if (gameState == null || string.IsNullOrWhiteSpace(gameState.GameId))
         {
             return;
         }
 
+        gameContext.ServiceProvider.GetService<AiStrategyPlanner>()?.ObserveCommittedEvents(gameState, processedEvents);
+        if (gameState.IsLocalAiTraining) return;
         _runtimeTracker.TrackCommittedEvents(gameState, processedEvents);
 
         var gameEndEvent = processedEvents.LastOrDefault(e => e is GameEndEvent) as GameEndEvent;

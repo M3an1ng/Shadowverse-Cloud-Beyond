@@ -1,4 +1,5 @@
 using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Extensions;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
@@ -14,27 +15,84 @@ internal static class AiTacticalSearch
     private const int MaxNodes = 256;
 
     internal sealed record Move(string Type, object Data, CardInstanceDto Source, CardInstanceDto? Target = null);
-    internal sealed record Plan(Move First, double Gain, bool ProjectsLethal);
-    private sealed record Node(GameStateDto State, Move? First, double Value, bool PlayedCard = false, double AbilityValue = 0);
+    internal sealed record Plan(Move First, double Gain, bool ProjectsLethal, bool PreventsVisibleLethal, bool SpendsSep = false)
+    {
+        public int Priority => ProjectsLethal ? 2 : PreventsVisibleLethal ? 1 : 0;
+    }
+    internal sealed record PendingDamage(Guid SourceId, Guid[] TargetIds, int Amount, int HandCount);
+    internal sealed record EndTurnForecast(IReadOnlyList<PendingDamage> Damage, IReadOnlySet<Guid> UnsafeAttackers);
+    private sealed record Node(GameStateDto State, Move? First, double Value, bool PlayedCard = false, double AbilityValue = 0,
+        bool InvalidatesEndTurn = false);
 
     public static Plan? Find(GameStateDto state, Guid actor, CancellationToken token, IReadOnlyList<Move>? stormPlays = null,
         IReadOnlyDictionary<Guid, (double Evolve, double SuperEvolve)>? evolutionValues = null)
+        => FindWithEndTurn(state, actor, token, stormPlays, evolutionValues, null);
+
+    internal static Plan? FindWithEndTurn(GameStateDto state, Guid actor, CancellationToken token,
+        IReadOnlyList<Move>? stormPlays, IReadOnlyDictionary<Guid, (double Evolve, double SuperEvolve)>? evolutionValues,
+        EndTurnForecast? ending)
+        => FindWithIntent(state, actor, token, stormPlays, evolutionValues, ending, null);
+
+    internal static Plan? FindWithIntent(GameStateDto state, Guid actor, CancellationToken token,
+        IReadOnlyList<Move>? stormPlays, IReadOnlyDictionary<Guid, (double Evolve, double SuperEvolve)>? evolutionValues,
+        EndTurnForecast? ending, string? intent)
     {
-        var best = Search(state, actor, token, stormPlays, evolutionValues, prioritizeLethal: true);
-        if (best?.ProjectsLethal != true && HasEnoughPotentialDamage(state, actor, stormPlays))
+        var engines = ReadEngines(state, actor);
+        var best = Search(state, actor, token, stormPlays, evolutionValues, ending, engines, intent, prioritizeLethal: true);
+        var own = state.Players.First(p => p.PlayerId == actor);
+        var enemy = state.Players.First(p => p.PlayerId != actor);
+        if (best?.ProjectsLethal != true
+            && (HasEnoughPotentialDamage(state, actor, stormPlays)
+                || (HasVisibleLethalThreat(own, enemy) && best?.PreventsVisibleLethal != true)))
         {
-            var alternative = Search(state, actor, token, stormPlays, evolutionValues, prioritizeLethal: false);
-            if (alternative?.ProjectsLethal == true) return alternative;
+            var alternative = Search(state, actor, token, stormPlays, evolutionValues, ending, engines, intent, prioritizeLethal: false);
+            if (alternative != null && alternative.Priority > (best?.Priority ?? 0)) best = alternative;
+        }
+        if (best?.SpendsSep == true && own.CanEvolve && own.CurrentEP > 0)
+        {
+            // Compare the same board with SEP unavailable. Preserve SEP when EP achieves the same tactical goal.
+            var normalState = state with { Players = state.Players.Select(player => player.PlayerId == actor
+                ? player with { CanSuperEvolve = false } : player).ToList() };
+            var normal = Search(normalState, actor, token, stormPlays, evolutionValues, ending, engines, intent, prioritizeLethal: true);
+            if (normal != null && normal.Priority >= best.Priority && (normal.Priority > 0 || normal.Gain > 0)
+                && best.Gain - normal.Gain <= 4.5 + 1e-9)
+                best = normal;
         }
         return best;
     }
 
-    private static Plan? Search(GameStateDto state, Guid actor, CancellationToken token, IReadOnlyList<Move>? stormPlays,
-        IReadOnlyDictionary<Guid, (double Evolve, double SuperEvolve)>? evolutionValues, bool prioritizeLethal)
+    internal static bool HasVisibleLethalThreat(PlayerStateDto defender, PlayerStateDto attacker) =>
+        defender.LeaderCard is { CurrentHealth: > 0 } leader
+        && EstimateBoardDamage(attacker.Field, defender.Field) >= leader.CurrentHealth;
+
+    internal static bool CanProjectGeneratedStormLethal(PlayerStateDto player, PlayerStateDto opponent,
+        int spellCost, int selfDamage, int count, int tokenCost, int tokenAttack)
     {
-        var baseline = Evaluate(state, actor);
-        var originalReserve = ReserveValue(state.Players.First(p => p.PlayerId == actor));
-        Plan? best = null;
+        if (count <= 0 || tokenAttack <= 0 || tokenCost < 0 || spellCost < 0 || selfDamage < 0)
+            return false;
+        return player.LeaderCard is { } ownLeader && ownLeader.CurrentHealth > selfDamage
+            && opponent.LeaderCard is { CurrentHealth: > 0 } enemy && enemy.CurrentHealth <= (long)count * tokenAttack
+            && !enemy.HasKeyword(CardKeyword.Shield)
+            && player.CurrentPP >= spellCost + (long)count * tokenCost
+            && player.Hand.Count - 1 + count <= GameConstants.Hand.MaxHandSize
+            && player.Field.Count + count <= GameConstants.Field.MaxFieldSize
+            && !opponent.Field.Any(card => card.Type == CardType.Follower && card.HasKeyword(CardKeyword.Ward));
+    }
+
+    private static Plan? Search(GameStateDto state, Guid actor, CancellationToken token, IReadOnlyList<Move>? stormPlays,
+        IReadOnlyDictionary<Guid, (double Evolve, double SuperEvolve)>? evolutionValues, EndTurnForecast? ending, IReadOnlySet<Guid> engines, string? intent, bool prioritizeLethal)
+    {
+        var terminal = ProjectEndTurn(state, actor, ending);
+        var baseline = Evaluate(terminal, actor, engines, intent);
+        var originalPlayer = state.Players.First(p => p.PlayerId == actor);
+        var originalReserve = ReserveValue(originalPlayer);
+        var defensiveEmergency = HasVisibleLethalThreat(originalPlayer, state.Players.First(p => p.PlayerId != actor));
+        var terminalOwn = terminal.Players.First(player => player.PlayerId == actor);
+        var terminalEnemy = terminal.Players.First(player => player.PlayerId != actor);
+        var terminalLethal = terminalEnemy.LeaderCard is { CurrentHealth: <= 0 };
+        var terminalSafe = defensiveEmergency && !HasVisibleLethalThreat(terminalOwn, terminalEnemy);
+        Plan? best = (terminalLethal || terminalSafe) && terminalOwn.LeaderCard is { CurrentHealth: > 0 } leader
+            ? new Plan(new Move("EndTurn", new { }, leader), 0, terminalLethal, terminalSafe) : null;
         var frontier = new List<Node>();
         var visited = new HashSet<string>();
         var expanded = 0;
@@ -50,7 +108,7 @@ internal static class AiTacticalSearch
                     if (expanded >= MaxNodes) break;
                     expanded++;
                     var projected = Apply(parent.State, actor, move);
-                    if (!visited.Add(Key(projected))) continue;
+                    if (!visited.Add(Key(projected) + ":" + parent.InvalidatesEndTurn)) continue;
                     var first = parent.First ?? move;
                     var playedCard = parent.PlayedCard || move.Type == "PlayCard";
                     var abilityValue = parent.AbilityValue;
@@ -59,13 +117,23 @@ internal static class AiTacticalSearch
                         if (move.Type == "PerformEvolve") abilityValue += estimates.Evolve;
                         if (move.Type == "PerformSuperEvolve") abilityValue += estimates.SuperEvolve;
                     }
-                    var value = Evaluate(projected, actor) + abilityValue - .04 * depth;
-                    var enemy = projected.Players.First(p => p.PlayerId != actor);
+                    var invalidatesEndTurn = parent.InvalidatesEndTurn || move.Type != "PerformAttack"
+                        || ending?.UnsafeAttackers.Contains(move.Source.InstanceId) == true;
+                    var evaluated = invalidatesEndTurn ? projected : ProjectEndTurn(projected, actor, ending);
+                    var value = Evaluate(evaluated, actor, engines, intent) + abilityValue - .04 * depth;
+                    var enemy = evaluated.Players.First(p => p.PlayerId != actor);
                     var lethal = enemy.LeaderCard is { CurrentHealth: <= 0 };
-                    var reserveSpent = originalReserve - ReserveValue(projected.Players.First(p => p.PlayerId == actor));
-                    var plan = new Plan(first, value - baseline - reserveSpent, lethal);
-                    if ((lethal || !playedCard) && (best == null || plan.Gain > best.Gain)) best = plan;
-                    if (!lethal) next.Add(new Node(projected, first, value, playedCard, abilityValue));
+                    var own = evaluated.Players.First(p => p.PlayerId == actor);
+                    var reserveSpent = originalReserve - ReserveValue(own);
+                    var preventsLethal = defensiveEmergency && own.LeaderCard is { CurrentHealth: > 0 }
+                        && !HasVisibleLethalThreat(own, enemy);
+                    var plan = new Plan(first, value - baseline - reserveSpent, lethal, preventsLethal,
+                        own.CurrentSEP < originalPlayer.CurrentSEP);
+                    if ((lethal || preventsLethal || !playedCard)
+                        && (best == null || plan.Priority > best.Priority
+                            || (plan.Priority == best.Priority && plan.Gain > best.Gain)))
+                        best = plan;
+                    if (!lethal) next.Add(new Node(projected, first, value, playedCard, abilityValue, invalidatesEndTurn));
                 }
             }
             if (next.Count == 0) break;
@@ -219,6 +287,32 @@ internal static class AiTacticalSearch
         return state with { Players = players };
     }
 
+    private static GameStateDto ProjectEndTurn(GameStateDto state, Guid actor, EndTurnForecast? ending)
+    {
+        if (ending == null || ending.Damage.Count == 0) return state;
+        var players = state.Players.Select(player => player with { Field = new(player.Field) }).ToList();
+        var own = players.First(player => player.PlayerId == actor);
+        foreach (var damage in ending.Damage)
+        {
+            if (own.Hand.Count != damage.HandCount || !own.Field.Concat(own.Emblem).Any(card => card.InstanceId == damage.SourceId)) continue;
+            foreach (var player in players)
+            {
+                foreach (var target in player.Field.ToArray())
+                {
+                    if (!damage.TargetIds.Contains(target.InstanceId) || target.Keywords.Contains(CardKeyword.EffectImmune)
+                        || target.BuffSummaries.Count > 0) continue;
+                    var hit = Hit(target, target.Keywords.Contains(CardKeyword.Shield) ? 0 : damage.Amount);
+                    if (hit.CurrentHealth <= 0) player.Field.RemoveAll(card => card.InstanceId == target.InstanceId);
+                    else Replace(player.Field, hit);
+                }
+                if (player.LeaderCard is { } leader && damage.TargetIds.Contains(leader.InstanceId)
+                    && !leader.Keywords.Contains(CardKeyword.EffectImmune) && leader.BuffSummaries.Count == 0)
+                    player.LeaderCard = Hit(leader, leader.Keywords.Contains(CardKeyword.Shield) ? 0 : damage.Amount);
+            }
+        }
+        return state with { Players = players };
+    }
+
     private static CardInstanceDto Hit(CardInstanceDto card, int damage) => card with {
         CurrentHealth = card.CurrentHealth - damage,
         Keywords = card.Keywords.Where(k => k != CardKeyword.Shield).ToList()
@@ -234,7 +328,30 @@ internal static class AiTacticalSearch
         if (index >= 0) field[index] = card;
     }
 
-    private static double Evaluate(GameStateDto state, Guid actor)
+    private static HashSet<Guid> ReadEngines(GameStateDto state, Guid actor)
+    {
+        var engines = new HashSet<Guid>();
+        foreach (var card in state.Players.Where(player => player.PlayerId != actor).SelectMany(player => player.Field))
+        {
+            if (card.ActAbilities.Count > 0 || card.BuffSummaries.Any(buff => buff.GrantedAbilities.Count > 0))
+            {
+                engines.Add(card.InstanceId);
+                continue;
+            }
+            if (card.CardId <= 0 || GameDataProvider.Instance == null) continue;
+            // Read rules once per search, rather than querying definitions for every simulated node.
+            if (GameDataProvider.Instance.GetAbilityConfigs(card.CardId).Any(ability => ability.IsEnabled
+                && (ability.Trigger.ValidZones.Count == 0 || ability.Trigger.ValidZones.Contains(CardZone.Field))
+                && (ability.Type is AbilityType.Continuous or AbilityType.Activated
+                    || (!ability.HasKeyword(AbilityKeyword.Fanfare) && !ability.HasKeyword(AbilityKeyword.EvolveEffect)
+                        && !ability.HasKeyword(AbilityKeyword.SuperEvolveEffect) && !ability.HasKeyword(AbilityKeyword.Lastword)
+                        && ability.Trigger.EventTypes.Count > 0))))
+                engines.Add(card.InstanceId);
+        }
+        return engines;
+    }
+
+    private static double Evaluate(GameStateDto state, Guid actor, IReadOnlySet<Guid> engines, string? intent)
     {
         var me = state.Players.First(p => p.PlayerId == actor);
         var enemy = state.Players.First(p => p.PlayerId != actor);
@@ -243,8 +360,21 @@ internal static class AiTacticalSearch
         if (enemyHealth <= 0) return 10000 + health;
         var threat = EstimateBoardDamage(enemy.Field, me.Field);
         var survival = threat >= health ? 13 + (threat - health) : 0;
-        return me.Field.Sum(BoardValue) - 1.14 * enemy.Field.Sum(BoardValue)
-            + .65 * health - (enemyHealth <= 6 ? .9 * enemyHealth - .9 : .75 * enemyHealth)
+        var safeToRace = health >= 9 && threat <= Math.Min(4, (health - 6) / 2);
+        var minorWeight = intent is "stabilize" or "value" ? .5 : .35;
+        double EnemyValue(CardInstanceDto card)
+        {
+            var engine = engines.Contains(card.InstanceId);
+            var minor = card.Type == CardType.Follower && card.CurrentAttack <= 2 && card.CurrentHealth <= 3
+                && card.MaxAttacksPerTurn <= 1 && !engine
+                && !card.Keywords.Any(keyword => keyword is CardKeyword.Ward or CardKeyword.Bane
+                    or CardKeyword.Drain or CardKeyword.Shield or CardKeyword.Aura);
+            return (BoardValue(card) + (engine ? 1.5 : 0)) * (safeToRace && minor ? minorWeight : 1);
+        }
+        var faceWeight = intent == "pressure" ? 1 : .8;
+        return me.Field.Sum(BoardValue) - (intent == "stabilize" ? 1.18 : 1.14) * enemy.Field.Sum(EnemyValue)
+            + (intent == "stabilize" ? .8 : .65) * health
+            - (enemyHealth <= 6 ? Math.Max(.9, faceWeight) * enemyHealth - .9 : faceWeight * enemyHealth)
             - survival + 3.5 * me.CurrentEP + 5.5 * me.CurrentSEP;
     }
 

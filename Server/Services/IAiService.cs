@@ -28,7 +28,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="gameState">The current state of the game.</param>
         /// <param name="aiPlayerId">The ID of the AI player.</param>
         /// <returns>A PlayCardActionDto representing the card to play, or null if no card should be played.</returns>
-        Task<PlayCardActionDto?> DecidePlayCardAsync(GameStateDto gameState, Guid aiPlayerId);
+        Task<PlayCardActionDto?> DecidePlayCardAsync(GameStateDto gameState, Guid aiPlayerId, AiStrategyPlanner.TurnPlan? strategy = null);
 
         /// <summary>
         /// Decides whether the AI should use PP+1 this turn.
@@ -77,6 +77,6 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="request">The choice request detailing what needs to be selected.</param>
         /// <param name="gameState">The current state of the game.</param>
         /// <returns>A PlayerChoiceResult representing the AI's decision.</returns>
-        Task<PlayerChoiceResult> DecideTargetChoiceAsync(PlayerChoiceRequest request, GameStateDto gameState);
+        Task<PlayerChoiceResult> DecideTargetChoiceAsync(PlayerChoiceRequest request, GameStateDto gameState, CancellationToken token = default);
     }
 }

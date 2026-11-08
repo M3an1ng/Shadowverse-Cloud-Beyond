@@ -998,14 +998,22 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             var sourceCard = triggeredAbility?.SourceCard;
             var abilityName = concreteAbility?.Name ?? triggeredAbility?.Name ?? string.Empty;
             var abilityDescription = concreteAbility?.Description ?? string.Empty;
+            // Resolve with the source owner's preferences, even after the source leaves play.
+            var appearance = sourceCard == null ? null : ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.Resolve(sourceCard.OwnerPlayerId, sourceCard.CurrentDefinitionId);
+            if (appearance != null && abilityName == sourceCard?.Name) abilityName = appearance.Name;
+            var artAppearance = appearance ?? (sourceCard?.AlternateArtDefinitionId is int parentId
+                ? ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.Resolve(sourceCard.OwnerPlayerId, parentId) : null);
+            var artDefinition = sourceCard?.AlternateArtDefinitionId is int artId
+                ? ShadowverseBeyond.Server.Services.GameDataProvider.Instance.GetCardDefinition(artId) : sourceCard?.CurrentDefinition;
+
             var parameters = new Dictionary<string, object>
             {
                 { "ability_definition_id", triggeredAbility?.DefinitionId ?? 0L },
                 { "ability_runtime_id", triggeredAbility?.RuntimeId ?? Guid.Empty },
                 { "ability_name", abilityName },
                 { "ability_description", abilityDescription },
-                { "source_card_name", sourceCard?.Name ?? string.Empty },
-                { "source_card_art_preview", sourceCard?.CurrentDefinition?.ArtPreview ?? string.Empty }
+                { "source_card_name", appearance?.Name ?? sourceCard?.Name ?? string.Empty },
+                { "source_card_art_preview", artAppearance?.ArtPreview ?? artDefinition?.ArtPreview ?? string.Empty }
             };
 
             return gameEvent.EventType switch

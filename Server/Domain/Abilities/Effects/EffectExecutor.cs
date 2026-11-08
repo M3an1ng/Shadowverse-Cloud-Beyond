@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
@@ -641,7 +641,30 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
             var elementType = targetType.GetGenericArguments()[0];
             if (elementType != typeof(int))
             {
-                return false;
+                // DSL select returns a lazy IEnumerable<T>, not necessarily List<T>.
+                // Preserve typed objects (notably AbilityConfig) when binding list parameters.
+                if (value is not global::System.Collections.IEnumerable items || value is string)
+                {
+                    return false;
+                }
+                var converted = (global::System.Collections.IList)Activator.CreateInstance(targetType)!;
+                foreach (var item in items)
+                {
+                    if (item != null && elementType.IsInstanceOfType(item))
+                    {
+                        converted.Add(item);
+                    }
+                    else if (item != null && IsIntegerType(elementType) && IsIntegerType(item.GetType()))
+                    {
+                        converted.Add(Convert.ChangeType(item, elementType));
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
+                result = converted;
+                return true;
             }
 
             if (value is IEnumerable<int> intEnumerable)

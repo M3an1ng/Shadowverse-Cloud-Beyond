@@ -48,7 +48,11 @@ export function getReadableValueLabel(editor, node) {
 
     if (meta.type === 'property') {
         if (meta.isDynamicMemberAccess) {
-            return meta.displayName || node.value || '?';
+            const base = meta.baseAST && typeof editor.toReadableText === 'function'
+                ? editor.toReadableText(meta.baseAST)
+                : meta.baseExpression;
+            const label = meta.displayName || meta.property || '?';
+            return base ? `${base} . ${label}` : label;
         }
         const path = meta.fullPath || node.value || '';
         if (!path.includes('.') && meta.displayName) {

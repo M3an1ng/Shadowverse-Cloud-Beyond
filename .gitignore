@@ -154,4 +154,5 @@ coverage/
 
 # AI artifacts are uploaded independently of code and player data.
 /data/ai-model/
+/data/ai-strategy/
 /exports/

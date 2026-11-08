@@ -305,7 +305,7 @@ namespace ShadowverseBeyond.Server.Mappings
                     yield return new AttachedNumericEffectDto { Field = modifier.Keyword.ToString(), Layer = modifier.Layer.ToString(), Value = modifier.Value, PolicyKey = key, RemoveAfterUse = buff.RemoveAfterUse, Duration = buff.DurationType.ToString(), DisplayText = texts[index++] };
         }
 
-        private static IEnumerable<string> DescribeBuff(Buff buff)
+        private static IEnumerable<string> DescribeBuff(Buff buff, IEnumerable<AbilityConfig>? grantedAbilities = null)
         {
             static string Number(double value, ModifierLayer layer) => layer switch
             {
@@ -326,7 +326,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 foreach (var modifier in effect.Modifications)
                     yield return $"{modifier.Keyword} {Number(modifier.Value, modifier.Layer)}{duration}";
             foreach (var keyword in buff.GetGrantedKeywords()) yield return $"获得 {keyword}{duration}";
-            foreach (var granted in buff.GetGrantedAbilityConfigs()) yield return $"{(string.IsNullOrWhiteSpace(granted.Description) ? granted.Name : granted.Description)}{duration}";
+            foreach (var granted in grantedAbilities ?? buff.GetGrantedAbilityConfigs()) yield return $"{(string.IsNullOrWhiteSpace(granted.Description) ? granted.Name : granted.Description)}{duration}";
             foreach (var tribe in buff.GetAddedTribes()) yield return $"种类：{tribe}{duration}";
         }
 
@@ -342,6 +342,21 @@ namespace ShadowverseBeyond.Server.Mappings
             {
                 return new List<BuffSummaryDto>();
             }
+
+            // A grant buff remains as historical runtime state after RemoveAbility suppresses it.
+            // Display only abilities that are currently effective, matched by the exact origin buff
+            // so removing one grant does not hide a later grant of the same ability definition.
+            var visibleGrantedAbilities = context.AbilityManager
+                .GetEffectiveAbilitiesForCard(cardInstance.InstanceId, context)
+                .OfType<Ability>()
+                .Where(ability => ability.SourceBuffId.HasValue && ability.Config.IsEnabled)
+                .GroupBy(ability => ability.SourceBuffId!.Value)
+                .ToDictionary(group => group.Key, group => group.Select(ability => ability.Config).ToList());
+            List<AbilityConfig> GetVisibleGrants(Buff buff) => visibleGrantedAbilities.TryGetValue(buff.Id, out var granted)
+                ? granted : new List<AbilityConfig>();
+            buffs = buffs.Where(buff => !buff.GetGrantedAbilityConfigs().Any()
+                || GetVisibleGrants(buff).Count > 0
+                || buff.Effects.Any(effect => effect is not AbilityBuffEffect)).ToList();
 
             var logger = GameServiceProvider.Logger;
 
@@ -488,9 +503,9 @@ namespace ShadowverseBeyond.Server.Mappings
                     SourceCardName = sourceCardName,
                     SourceCardArtPreview = sourceCardArtPreview ?? string.Empty,
                     SourceAbilityName = sourceAbilityName,
-                    GrantedAbilities = group.SelectMany(buff => buff.GetGrantedAbilityConfigs()).Where(config => config.IsEnabled).Select(config => new GrantedAbilityDetailDto { Name = config.Name ?? "", Description = config.Description ?? "" }).ToList(),
+                    GrantedAbilities = group.SelectMany(GetVisibleGrants).Select(config => new GrantedAbilityDetailDto { Name = config.Name ?? "", Description = config.Description ?? "" }).ToList(),
                     Description = (ability as Ability)?.Description ?? string.Empty,
-                    Details = group.SelectMany(buff => DescribeBuff(buff)).ToList(),
+                    Details = group.SelectMany(buff => DescribeBuff(buff, GetVisibleGrants(buff))).ToList(),
                     NumericEffects = group.SelectMany(buff => BuildNumericEffects(buff, context)).ToList()
                 });
 

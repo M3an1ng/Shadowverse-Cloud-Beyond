@@ -2942,6 +2942,7 @@ export class DslEditor extends MetadataDrivenComponent {
             type: "property",
             fullPath: value,
             baseExpression,
+            baseAST: baseNode,
             property: option.value,
             displayName: option.label || option.value,
             isDynamicMemberAccess: true

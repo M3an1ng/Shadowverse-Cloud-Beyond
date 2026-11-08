@@ -44,6 +44,29 @@ internal static class AiAbilityScoring
         return score;
     }
 
+    internal static double FragileHandPriority(PlayerStateDto player, CardInstanceDto card)
+    {
+        var texts = card.EffectDescriptions
+            .Concat(card.BuffSummaries.SelectMany(buff => new[] { buff.Description }.Concat(buff.Details)
+                .Concat(buff.GrantedAbilities.SelectMany(ability => new[] { ability.Name, ability.Description }))));
+        if (!texts.Any(text => text.Contains("使用其他", StringComparison.Ordinal)
+            && text.Contains("舍弃这张", StringComparison.Ordinal)))
+            return 0;
+        return card.CardId == 1474120 && !player.Emblem.Any(emblem => emblem.CardId == 1474276) ? 4 : 1.5;
+    }
+
+    internal static double PlannedMaterialValue(PlayerStateDto player, CardInstanceDto card, AiStrategyPlanner.TurnPlan? plan)
+    {
+        var copies = Math.Max(1, player.Hand.Count(other => other.CardId == card.CardId));
+        var retention = plan?.Hold.Contains(card.CardId) == true ? 1.25
+            : plan?.Prioritize.Contains(card.CardId) == true ? .85 : 0;
+        return MaterialValue(player, card) + retention / copies;
+    }
+
+    internal static double MaterialBias(PlayerStateDto player, IReadOnlyList<CardInstanceDto> materials, AiStrategyPlanner.TurnPlan? plan) =>
+        plan == null || materials.Count == 0 ? 0
+            : materials.Min(card => MaterialValue(player, card)) - materials.Min(card => PlannedMaterialValue(player, card, plan));
+
     internal static double MaterialValue(PlayerStateDto player, CardInstanceDto card)
     {
         var duplicates = player.Hand.Count(other => other.CardId == card.CardId) > 1;
@@ -53,6 +76,10 @@ internal static class AiAbilityScoring
             value += Math.Min(1.5, (card.CurrentAttack + card.CurrentHealth) * .12);
         if (card.Keywords.Contains(CardKeyword.Storm)) value += 2;
         if (card.FusionAbilities.Count > 0) value += 1.2;
+        // Preserve the first affordable engine piece until its emblem has been established.
+        if (card.CardId == 1474120 && card.CurrentCost <= player.CurrentPP
+            && !player.Emblem.Any(emblem => emblem.CardId == 1474276) && !duplicates)
+            value += 3;
         return value;
     }
 }

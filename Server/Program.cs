@@ -188,6 +188,9 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     builder.Services.AddSingleton<IGameStateManager, InMemoryGameStateManager>(); // Register InMemoryGameStateManager as singleton
     Log.Information("Registered IGameStateManager."); // Added Log
     builder.Services.AddSingleton<AiLearningModel>();
+    builder.Services.AddHttpClient("AiStrategy", client => client.MaxResponseContentBufferSize = 512 * 1024)
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+    builder.Services.AddSingleton<AiStrategyPlanner>();
     builder.Services.AddSingleton<LocalAiTrainingService>();
     builder.Services.AddScoped<IAiService, AiService>(); // Register AiService as Scoped
     Log.Information("Registered IAiService."); // Added Log

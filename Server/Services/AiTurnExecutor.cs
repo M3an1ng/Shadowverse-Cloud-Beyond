@@ -1,4 +1,4 @@
-using ShadowverseBeyond.Server.Domain.Abilities;
+﻿using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Dtos;
@@ -50,6 +50,10 @@ public class AiTurnExecutor
         var useLegacyPolicy = game.LegacyAiPlayerId == aiPlayerId;
         var turnNumber = game.GetPlayerState(aiPlayerId)!.TurnNumber;
         var trainingActions = 0;
+        var allowStrategy = !useLegacyPolicy && (!game.IsLocalAiTraining || game.StrategyBenchmarkPlayerId == aiPlayerId);
+        var planner = allowStrategy ? _serviceProvider.GetService<AiStrategyPlanner>() : null;
+        AiStrategyPlanner.TurnPlan? strategy = null;
+        var strategyChecked = false;
         var unavailableAbilities = new HashSet<Guid>();
         while (IsCurrentTurn(game, aiPlayerId, turnNumber))
         {
@@ -59,26 +63,55 @@ public class AiTurnExecutor
             var services = scope.ServiceProvider;
             var accessor = services.GetRequiredService<IGameContextAccessor>();
             GameStateDto snapshot;
-            AbilityAction? abilityAction;
+            List<AbilityAction> abilityActions;
             var evolutionValues = new Dictionary<Guid, (double Evolve, double SuperEvolve)>();
+            AiTacticalSearch.EndTurnForecast? endTurn = null;
+            AiStrategyPlanner.HandLossRule[] handLossRules=[];
             using (var context = new GameContext(services, _mapper, accessor, game, aiPlayerId, cancellationToken))
             {
                 snapshot = GameStateProjection.Create(game, context);
-                abilityAction = await ChooseAbilityActionAsync(context, snapshot, aiPlayerId, unavailableAbilities, useLegacyPolicy);
+                abilityActions = await GetAbilityActionsAsync(context, snapshot, aiPlayerId, unavailableAbilities, useLegacyPolicy);
                 if (!useLegacyPolicy && snapshot.Phase == GamePhase.Main)
                 {
                     var player = snapshot.Players.First(p => p.PlayerId == aiPlayerId);
+                    endTurn = await AiEndTurnForecast.ReadAsync(context, player);
+                    if(!strategyChecked && planner!=null)handLossRules=await AiPlaySequence.ReadHandLossAsync(context,player);
                     if (player.CanEvolve || player.CanSuperEvolve)
                         await EstimateEvolutionEffectsAsync(context, player, evolutionValues);
                 }
             }
 
+            var abilityAction = useLegacyPolicy
+                ? abilityActions.OrderBy(action => action.Cost > 0).ThenByDescending(action => action.Score).FirstOrDefault()
+                : abilityActions.MaxBy(action => action.Score);
+            var abilityCandidates = abilityActions.OrderByDescending(action => action.Score)
+                .Select(action => action.Candidate).ToArray();
+
+            if (!strategyChecked && planner != null && snapshot.Phase == GamePhase.Main)
+            {
+                strategy = await planner.PlanAsync(game, snapshot, aiPlayerId, cancellationToken,
+                    (uid, token) => _gameService.GetCardPlayabilityAsync(gameId, aiPlayerId, uid, token),
+                    abilityCandidates,
+                    (uid, mode, token) => _gameService.GetCardPlayabilityForModeAsync(gameId, aiPlayerId, uid, mode, token),handLossRules);
+                strategyChecked = true;
+                if (!IsCurrentTurn(game, aiPlayerId, turnNumber)) return;
+            }
+
+            Guid? generatedStormSource = null;
             var actionType = "EndTurn";
             object actionData = new { };
             var bestScore = 0d;
+            var localType = "EndTurn";
+            object localData = new { };
+            var localBestScore = 0d;
 
-            void Consider(string type, object data, double score)
+            void ConsiderLocal(string type, object data, double score)
             {
+                if (score > localBestScore) (localType, localData, localBestScore) = (type, data, score);
+            }
+            void Consider(string type, object data, double score, double? localScore = null)
+            {
+                ConsiderLocal(type, data, localScore ?? score);
                 if (score <= bestScore) return;
                 (actionType, actionData, bestScore) = (type, data, score);
             }
@@ -90,6 +123,9 @@ public class AiTurnExecutor
             else if (snapshot.Phase == GamePhase.Main)
             {
                 var player = snapshot.Players.First(p => p.PlayerId == aiPlayerId);
+                var opponent = snapshot.Players.First(p => p.PlayerId != aiPlayerId);
+                var defensiveEmergency = HasVisibleLethalThreat(player, opponent);
+                var playStrategy = defensiveEmergency ? null : strategy;
                 var stormPlays = new List<AiTacticalSearch.Move>();
                 foreach (var card in player.Hand.Where(c => c.Type == CardType.Follower && c.Keywords.Contains(CardKeyword.Storm)))
                 {
@@ -98,43 +134,76 @@ public class AiTurnExecutor
                     if (playable.SelectedPlayMode != PlayMode.Base || !playable.IsPlayable || baseMode == null)
                         continue;
                     stormPlays.Add(new AiTacticalSearch.Move("PlayCard",
-                        new PlayCardActionDto { CardUid = card.InstanceId, PlayMode = PlayMode.Base },
+                        new PlayCardActionDto { CardUid = card.InstanceId, PlayMode = PlayMode.Base, PaidCost=baseMode.EffectiveCost },
                         card with { CurrentCost = baseMode.EffectiveCost }));
                 }
 
-                var plan = AiTacticalSearch.Find(snapshot, aiPlayerId, cancellationToken, stormPlays, evolutionValues);
+                var intent = playStrategy?.Focus;
+                var plan = AiTacticalSearch.FindWithIntent(snapshot, aiPlayerId, cancellationToken, stormPlays, evolutionValues, endTurn, intent);
+                var localPlan = intent == null ? plan
+                    : AiTacticalSearch.FindWithEndTurn(snapshot, aiPlayerId, cancellationToken, stormPlays, evolutionValues, endTurn);
+                static double CombatScore(AiTacticalSearch.Plan plan) =>
+                    plan.ProjectsLethal ? 1000 : plan.PreventsVisibleLethal ? 850 : plan.Gain * .55;
                 if (plan != null)
-                {
-                    var combatScore = plan.ProjectsLethal ? 1000 : plan.Gain * .55;
-                    Consider(plan.First.Type, plan.First.Data, combatScore);
-                }
+                    Consider(plan.First.Type, plan.First.Data, CombatScore(plan), double.NegativeInfinity);
+                if (localPlan != null)
+                    ConsiderLocal(localPlan.First.Type, localPlan.First.Data, CombatScore(localPlan));
 
-                if (await _aiService.DecidePlayCardAsync(snapshot, aiPlayerId) is { } playCard)
+                async Task<double> PlayScore(PlayCardActionDto action)
+                {
+                    var card = player.Hand.First(c => c.InstanceId == action.CardUid);
+                    var playable = action.PlayMode.HasValue
+                        ? await _gameService.GetCardPlayabilityForModeAsync(gameId,aiPlayerId,card.InstanceId,action.PlayMode.Value,cancellationToken)
+                        : await _gameService.GetCardPlayabilityAsync(gameId,aiPlayerId,card.InstanceId,cancellationToken);
+                    if (!playable.IsPlayable) return double.NegativeInfinity;
+                    var cost = playable.PlayModes.FirstOrDefault(mode=>mode.Mode==playable.SelectedPlayMode)?.EffectiveCost ?? card.CurrentCost;
+                    return 2.5 + cost * .35 - BoostSpendPenalty(player, cost)
+                        + (defensiveEmergency ? 0 : AiAbilityScoring.FragileHandPriority(player, card));
+                }
+                var playCard = await _aiService.DecidePlayCardAsync(snapshot, aiPlayerId, playStrategy);
+                if (playCard != null)
                 {
                     var card = player.Hand.First(c => c.InstanceId == playCard.CardUid);
-                    var cost = card.CurrentCost;
-                    if (player.IsPpBoostArmed)
-                    {
-                        var playability = await _gameService.GetCardPlayabilityAsync(gameId, aiPlayerId, card.InstanceId, cancellationToken);
-                        cost = playability.PlayModes.FirstOrDefault(mode => mode.Mode == playability.SelectedPlayMode)?.EffectiveCost ?? cost;
-                    }
-                    var score = 2.5 + cost * .35 - BoostSpendPenalty(player, cost);
-                    Consider("PlayCard", playCard, score);
+                    var score = await PlayScore(playCard);
+                    Consider("PlayCard", playCard, score + (playStrategy?.PlayBias(card.CardId) ?? 0) * .35,
+                        playStrategy == null ? score : double.NegativeInfinity);
                 }
+                var localPlay = playStrategy == null ? playCard
+                    : await _aiService.DecidePlayCardAsync(snapshot, aiPlayerId);
+                if (localPlay != null) ConsiderLocal("PlayCard", localPlay, await PlayScore(localPlay));
 
-                if (abilityAction != null)
+                foreach (var available in abilityActions)
                 {
-                    var score = abilityAction.Score - BoostSpendPenalty(player, abilityAction.Cost);
-                    Consider(abilityAction.IsFusion ? "RequestFusion" : "RequestAct", abilityAction.Data, score);
+                    var localScore = available.Score - BoostSpendPenalty(player, available.Cost);
+                    var score = localScore + (defensiveEmergency ? 0 : (strategy?.AbilityBias(available.Candidate) ?? 0)
+                        + (available.IsFusion ? AiAbilityScoring.MaterialBias(player, available.Materials, strategy) : 0));
+                    if (score > bestScore) abilityAction = available;
+                    Consider(available.IsFusion ? "RequestFusion" : "RequestAct", available.Data, score, localScore);
                 }
 
-                var opponent = snapshot.Players.First(p => p.PlayerId != aiPlayerId);
+                if (planner?.IsConfigured == true && bestScore < 990
+                    && player.Hand.FirstOrDefault(card => card.CardId == AiStrategyPlanner.StarCallId) is { } starCall
+                    && AiStrategyPlanner.GetStarCallStormToken() is { Attack: > 0 } ghost
+                    && AiTacticalSearch.CanProjectGeneratedStormLethal(player, opponent, starCall.CurrentCost,
+                        selfDamage: 3, count: 3, ghost.Cost, ghost.Attack.Value))
+                {
+                    var playable = await _gameService.GetCardPlayabilityAsync(gameId, aiPlayerId, starCall.InstanceId, cancellationToken);
+                    var baseMode = playable.PlayModes.FirstOrDefault(mode => mode.Mode == PlayMode.Base);
+                    if (playable.IsPlayable && playable.SelectedPlayMode == PlayMode.Base && baseMode != null
+                        && AiTacticalSearch.CanProjectGeneratedStormLethal(player, opponent, baseMode.EffectiveCost,
+                            selfDamage: 3, count: 3, ghost.Cost, ghost.Attack.Value))
+                    {
+                        Consider("PlayCard", new PlayCardActionDto { CardUid = starCall.InstanceId, PlayMode = PlayMode.Base, PaidCost=baseMode.EffectiveCost }, 990);
+                        generatedStormSource = starCall.InstanceId;
+                    }
+                }
                 if (CanArmBoost(player))
                 {
                     if (player.Hand.Any(card => IsBoostedStormLethal(player, opponent, card)))
                         Consider("PerformPpBoost", new { }, 900);
-                    else if (bestScore <= 0 && ShouldArmBoost(player, opponent))
-                        Consider("PerformPpBoost", new { }, .1);
+                    else if ((bestScore <= 0 || localBestScore <= 0) && ShouldArmBoost(player, opponent))
+                        Consider("PerformPpBoost", new { }, bestScore <= 0 ? .1 : double.NegativeInfinity,
+                            localBestScore <= 0 ? .1 : double.NegativeInfinity);
                 }
             }
             cancellationToken.ThrowIfCancellationRequested();
@@ -148,14 +217,46 @@ public class AiTurnExecutor
                 ExpectedTurnNumber = turnNumber,
                 CancellationToken = cancellationToken
             };
-            if (!await _gameService.EnqueuePlayerActionAsync(gameId, action))
+            AiStrategyPlanner.ActionOption Option(string type, object data, double score)
             {
-                _logger.LogWarning("[AI_EXECUTOR:{GameId}:{PlayerId}] Action {ActionType} was not admitted.",
-                    gameId, aiPlayerId, actionType);
-                return;
+                var allCards = snapshot.Players.SelectMany(player => player.Hand.Concat(player.Field)
+                    .Concat(player.LeaderCard == null ? [] : new[] { player.LeaderCard }));
+                int? CardId(Guid uid) => allCards.FirstOrDefault(card => card.InstanceId == uid)?.CardId;
+                return data switch
+                {
+                    PlayCardActionDto play => new(type, CardId(play.CardUid), null, null, score,
+                        snapshot.Players.First(player=>player.PlayerId==aiPlayerId).Hand.FindIndex(card=>card.InstanceId==play.CardUid),
+                        play.PlayMode?.ToString(), play.PaidCost),
+                    AttackActionDto attack => new(type, CardId(attack.AttackerUid), CardId(attack.TargetUid), null, score),
+                    EvolveActionDto evolve when Guid.TryParse(evolve.UnitUid, out var uid) => new(type, CardId(uid), null, null, score),
+                    SuperEvolveActionDto super when Guid.TryParse(super.UnitUid, out var uid) => new(type, CardId(uid), null, null, score),
+                    ActActionDto act => new(type, CardId(act.CardUid), null,
+                        abilityActions.FirstOrDefault(item => item.RuntimeId == act.AbilityRuntimeId)?.Candidate.Name, score),
+                    FusionActionDto fusion => new(type, CardId(fusion.CardUid), null,
+                        abilityActions.FirstOrDefault(item => item.RuntimeId == fusion.AbilityRuntimeId)?.Candidate.Name, score),
+                    _ => new(type, null, null, null, score)
+                };
             }
-
-            var completion = await action.Completion.WaitAsync(cancellationToken);
+            var comparison = strategy == null ? null : new AiStrategyPlanner.ActionComparisonFact(turnNumber,
+                Option(localType, localData, localBestScore), Option(actionType, actionData, bestScore));
+            AiStrategyPlanner.AttackFact? attackFact = null;
+            if (actionData is AttackActionDto attackAction)
+            {
+                var own = snapshot.Players.First(player => player.PlayerId == aiPlayerId);
+                var enemy = snapshot.Players.First(player => player.PlayerId != aiPlayerId);
+                var attacker = own.Field.FirstOrDefault(card => card.InstanceId == attackAction.AttackerUid);
+                var target = enemy.Field.Concat(enemy.LeaderCard == null ? [] : new[] { enemy.LeaderCard })
+                    .FirstOrDefault(card => card.InstanceId == attackAction.TargetUid);
+                if (attacker != null && target != null)
+                    attackFact = new(turnNumber, attacker.CardId, target.CardId, target.Type == CardType.Leader,
+                        attacker.Keywords.Contains(CardKeyword.Storm), attacker.CurrentAttack, target.CurrentAttack,
+                        target.CurrentHealth, own.LeaderCard?.CurrentHealth, enemy.LeaderCard?.CurrentHealth,
+                        AiTacticalSearch.EstimateBoardDamage(enemy.Field, own.Field),
+                        target.Keywords.Select(keyword => keyword.ToString()).ToArray());
+            }
+            var completion = await SubmitAiActionAsync(game, action, generatedStormSource, cancellationToken,
+                actionType is "RequestFusion" or "RequestAct" ? abilityAction : null, planner, comparison, attackFact);
+            if (completion == null) return;
             if (actionType is "RequestFusion" or "RequestAct" && abilityAction != null)
             {
                 var used = abilityAction.IsFusion ? abilityAction.Card.FusionsThisTurn : abilityAction.Card.ActsThisTurn;
@@ -189,6 +290,34 @@ public class AiTurnExecutor
         }
     }
 
+    private async Task<PlayerActionCompletion?> SubmitAiActionAsync(GameState game, PlayerActionWrapper action,
+        Guid? generatedStormSource, CancellationToken token, AbilityAction? abilityAction, AiStrategyPlanner? planner, AiStrategyPlanner.ActionComparisonFact? comparison = null, AiStrategyPlanner.AttackFact? attackFact = null)
+    {
+        if (generatedStormSource.HasValue) game.AiGeneratedStormSource = generatedStormSource;
+        if (abilityAction != null) planner?.SetPendingAbility(game, abilityAction.RuntimeId, abilityAction.Candidate);
+        planner?.SetPendingComparison(game, comparison);
+        if (action.ActionData is AttackActionDto attack)
+            planner?.SetPendingAttack(game, attack.AttackerUid, attack.TargetUid, attackFact);
+        try
+        {
+            if (await _gameService.EnqueuePlayerActionAsync(game.GameId, action))
+                return await action.Completion.WaitAsync(token);
+
+            _logger.LogWarning("[AI_EXECUTOR:{GameId}] Action was not admitted.", game.GameId);
+            return null;
+        }
+        finally
+        {
+            if (generatedStormSource.HasValue) game.AiGeneratedStormSource = null;
+            if (abilityAction != null) planner?.SetPendingAbility(game, null, null);
+            planner?.SetPendingComparison(game, null);
+            if (attackFact != null) planner?.SetPendingAttack(game, Guid.Empty, Guid.Empty, null);
+        }
+    }
+
+    internal static bool HasVisibleLethalThreat(PlayerStateDto player, PlayerStateDto opponent) =>
+        AiTacticalSearch.HasVisibleLethalThreat(player, opponent);
+
     internal static bool ShouldArmBoost(PlayerStateDto player, PlayerStateDto opponent)
     {
         if (!CanArmBoost(player))
@@ -221,12 +350,14 @@ public class AiTurnExecutor
     private static double BoostSpendPenalty(PlayerStateDto player, int cost) =>
         player.IsPpBoostArmed && cost > player.CurrentPP ? 2 : 0;
 
-    private sealed record AbilityAction(CardInstance Card, Guid RuntimeId, bool IsFusion, int Cost, int PreviousUses, object Data, double Score);
+    private sealed record AbilityAction(CardInstance Card, Guid RuntimeId, bool IsFusion, int Cost,
+        int PreviousUses, object Data, double Score, AiStrategyPlanner.LocalAbilityCandidate Candidate,
+        CardInstanceDto[] Materials);
 
-    private async Task<AbilityAction?> ChooseAbilityActionAsync(
+    private async Task<List<AbilityAction>> GetAbilityActionsAsync(
         GameContext context, GameStateDto snapshot, Guid actor, HashSet<Guid> unavailable, bool useLegacyPolicy)
     {
-        if (snapshot.Phase != GamePhase.Main) return null;
+        if (snapshot.Phase != GamePhase.Main) return [];
 
         var player = context.CurrentGameState.GetPlayerState(actor)!;
         var playerView = snapshot.Players.First(p => p.PlayerId == actor);
@@ -264,10 +395,12 @@ public class AiTurnExecutor
                     ? new FusionActionDto { CardUid = card.InstanceId, AbilityRuntimeId = ability.RuntimeId }
                     : new ActActionDto { CardUid = card.InstanceId, AbilityRuntimeId = ability.RuntimeId };
                 var score = model?.Score(snapshot, actor, fusion ? "fusion" : "act", view with { CurrentCost = cost }, weights: weights) ?? 0;
+                CardInstanceDto[] materials = [];
                 if (!useLegacyPolicy)
                 {
                     var candidatesForTarget = (targets.ValidTargetIds ?? []).Select(id => snapshot.FindCardInstanceById(id.ToString()))
                         .OfType<CardInstanceDto>().ToArray();
+                    if (fusion) materials = candidatesForTarget;
                     var effects = ability is Ability configured ? configured.Config.Effects : [];
                     var choiceTargets = ability.Targets.Where(t => t.Config.IsEnabled && t.Config.PlayerChoiceOptions?.IsRequired == true).ToArray();
                     var choiceKey = choiceTargets.Length == 1 ? choiceTargets[0].Key : null;
@@ -276,13 +409,12 @@ public class AiTurnExecutor
                 }
 
                 candidates.Add(new AbilityAction(card, ability.RuntimeId, fusion, cost,
-                    fusion ? card.FusionsThisTurn : card.ActsThisTurn, data, score));
+                    fusion ? card.FusionsThisTurn : card.ActsThisTurn, data, score,
+                    new(card.CurrentDefinition.Id, fusion ? "fusion" : "act", cost, ability.Name, score), materials));
             }
         }
 
-        return useLegacyPolicy
-            ? candidates.OrderBy(action => action.Cost > 0).ThenByDescending(action => action.Score).FirstOrDefault()
-            : candidates.MaxBy(action => action.Score);
+        return candidates;
     }
 
     private static async Task EstimateEvolutionEffectsAsync(

@@ -1304,6 +1304,9 @@ namespace ShadowverseBeyond.Server.Services
                     var loopTokenSource = _gameLoopCancellationTokens.TryGetValue(gameId, out var cts) ? cts.Token : CancellationToken.None;
                     // 【FIX】Do not pass a scoped service provider to a background task.
                     // The task will create its own scope.
+                    if (!newGameState.IsLocalAiTraining && player2State.IsAI)
+                        _ = scopeServiceProvider.GetService<AiStrategyPlanner>()?.WarmDeckAsync(
+                            newGameState, player2Id, player1State.Class.ToString());
                     if (!newGameState.IsLocalAiTraining) _ = Task.Run(() => TriggerAiMulliganIfNeededAsync(gameId, newGameState, loopTokenSource), loopTokenSource);
                     return newGameState;
                 }
@@ -1368,7 +1371,8 @@ namespace ShadowverseBeyond.Server.Services
             GameContext gameContext, // Pass the context directly
             PlayerState playerState,
             CardInstance cardInHand,
-            CardDefinition cardDefinition
+            CardDefinition cardDefinition,
+            PlayMode? requestedMode = null
         )
         {
             var result = new PlayabilityResultDto();
@@ -1405,16 +1409,34 @@ namespace ShadowverseBeyond.Server.Services
                         return result;
                     }
 
+                if (requestedMode.HasValue)
+                {
+                    var availability = modeResolution.Modes.FirstOrDefault(mode => mode.Mode == requestedMode.Value);
+                    var alternate = requestedMode.Value is PlayMode.Accelerate or PlayMode.Crystalize;
+                    if (availability?.IsAvailable != true || alternate && requestedMode.Value != modeResolution.SelectedMode)
+                    {
+                        result.FailureReason = availability?.Reason ?? "所选出牌形态不可用。";
+                        return result;
+                    }
+                    result.SelectedPlayMode = requestedMode;
+                    result.SelectedAbilityRuntimeId = requestedMode == PlayMode.Base ? null : modeResolution.SelectedAbilityRuntimeId;
+                    gameContext = gameContext with { TriggeringEvent = new PlayCardEvent(playerState, cardInHand,
+                        requestedMode.Value, availability.EffectiveCost, result.SelectedAbilityRuntimeId,
+                        alternate ? modeResolution.SelectedAlternateCardDefinitionId : null) };
+                }
+
                 var selectedPlayDefinition = cardDefinition;
                 var selectedAbilityConfigs = abilityConfigs;
-                var usesAlternatePlay = modeResolution.SelectedMode is PlayMode.Accelerate or PlayMode.Crystalize
+                var usesAlternatePlay = result.SelectedPlayMode is PlayMode.Accelerate or PlayMode.Crystalize
                     && modeResolution.SelectedAlternateCardDefinitionId.HasValue;
-                if (modeResolution.SelectedAlternateCardDefinitionId.HasValue)
+                if (usesAlternatePlay && modeResolution.SelectedAlternateCardDefinitionId.HasValue)
                 {
                     selectedPlayDefinition = _gameDataProvider.GetCardDefinition(modeResolution.SelectedAlternateCardDefinitionId.Value)
                         ?? cardDefinition;
                     selectedAbilityConfigs = _gameDataProvider.GetAbilityConfigs(selectedPlayDefinition.Id);
                 }
+
+                result.PlayedCardDefinitionId = selectedPlayDefinition.Id;
 
                 // Field Space Check (followers and amulets both occupy field slots)
                 if (selectedPlayDefinition.Type == CardType.Follower || selectedPlayDefinition.Type == CardType.Amulet)
@@ -1564,7 +1586,8 @@ namespace ShadowverseBeyond.Server.Services
         }
 
         // Made private - core logic to be extracted for proactive updates
-        private async Task<PlayabilityResultDto> CheckCardPlayabilityAsync(string gameId, Guid playerId, Guid cardInstanceId, CancellationToken cancellationToken)
+        private async Task<PlayabilityResultDto> CheckCardPlayabilityAsync(string gameId, Guid playerId, Guid cardInstanceId,
+            CancellationToken cancellationToken, PlayMode? requestedMode = null)
         {
             var result = new PlayabilityResultDto();
             _logger.LogInformation("[GameService:{GameId}] Checking playability for Player {PlayerId}, CardInstanceId {CardInstanceId}.",
@@ -1625,7 +1648,7 @@ namespace ShadowverseBeyond.Server.Services
                 var gameContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
                 using (var gameContext = new GameContext(sp, _mapper, gameContextAccessor, gameState, playerId, cancellationToken, null, card))
                 {
-                    result = await CheckPlayabilityCoreLogicAsync(gameContext, playerState, card, cardDefinition);
+                    result = await CheckPlayabilityCoreLogicAsync(gameContext, playerState, card, cardDefinition, requestedMode);
                 }
 
                 // If core logic determined not playable, return immediately
@@ -2317,6 +2340,10 @@ namespace ShadowverseBeyond.Server.Services
         {
             return CheckCardPlayabilityAsync(gameId, playerId, cardInstanceId, cancellationToken);
         }
+        public Task<PlayabilityResultDto> GetCardPlayabilityForModeAsync(string gameId, Guid playerId,
+            Guid cardInstanceId, PlayMode mode, CancellationToken cancellationToken) =>
+            CheckCardPlayabilityAsync(gameId, playerId, cardInstanceId, cancellationToken, mode);
+
         // Helper to broadcast a single event to the game group
         private async Task BroadcastEventAsync(string gameId, GameEventDto gameEvent)
         {

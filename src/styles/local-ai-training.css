@@ -99,3 +99,4 @@
 }
 
 .local-ai-continuous{display:flex;align-items:center;gap:10px;margin:18px 0}.local-ai-continuous input{width:18px;height:18px;accent-color:#38bdf8}
+.local-ai-continuous[hidden] { display: none; }

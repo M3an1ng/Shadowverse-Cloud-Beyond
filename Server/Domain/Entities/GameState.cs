@@ -35,6 +35,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         public string GameId { get; set; }
         public bool IsLocalAiTraining { get; set; }
+        internal int? StrategyTurnBudgetMs { get; set; }
+        internal bool StrategyChoicesOnly { get; set; }
+        internal Guid? StrategyBenchmarkPlayerId { get; set; }
+        internal Guid? AiGeneratedStormSource { get; set; }
+        internal string? StrategyBenchmarkDeckName { get; set; }
         internal Guid? LegacyAiPlayerId { get; set; }
 
         public GameStatus Status { get; set; } = GameStatus.Starting;

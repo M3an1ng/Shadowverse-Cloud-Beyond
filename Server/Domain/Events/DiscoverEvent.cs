@@ -28,6 +28,10 @@ public sealed class DiscoverRequestEvent : GameEventBase, ICommittableEvent {
   var result=new DomainOperationResult{Success=true};
   if(copy){card=new CardInstance(Guid.NewGuid(),Selected.CurrentDefinitionId,player.PlayerId){CurrentZone=CardZone.Staging};result.GeneratedEvents.Add(new CopyCardEvent(player,Selected,card));}
   else card=factory.CreateAndRegisterNewCard(context.CurrentGameState,Selected.CurrentDefinitionId,player.PlayerId,CardZone.Staging);
+  // EffectCompleted.GeneratedCards reads this request's committed targets.
+  // Publish the newly created hand card, never a sampled candidate or copy source.
+  Target.Clear();
+  Target.Add(TargetInfo.ForCard(card));
   result.GeneratedEvents.Add(new AddCardToHandEvent(player,new(){card}));
   result.GeneratedEvents.Add(new DiscoverEvent(player,card));
   return result;

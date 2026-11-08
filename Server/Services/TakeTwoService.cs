@@ -85,24 +85,11 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
         (environment != "as2p" || !settings.NeutralByClass.Values.Any(ids => ids.Contains(c.Id)) ||
          settings.NeutralByClass.GetValueOrDefault(cls.ToString(), []).Contains(c.Id))).ToList();
 
-    private static int[] Offer(List<CardDefinition> choices, bool requireLegend, bool reserveLegend, HashSet<int>? excluded = null)
+    private static int[] Offer(List<CardDefinition> choices, bool requireLegend)
     {
-        if (!requireLegend) return Choose(choices, 4, excluded);
-        var first = Choose(choices.Where(c => c.Rarity == CardRarity.Legend).ToList(), 1, excluded);
-        var used = excluded == null ? new HashSet<int>() : new HashSet<int>(excluded);
-        used.UnionWith(first);
-        var four = new List<int>(first);
-        var legendLimit = reserveLegend ? choices.Count(c => c.Rarity == CardRarity.Legend) - 1 : 4;
-        if (legendLimit < 1) throw new InvalidOperationException("特殊轮次重抽需要至少两张虹卡");
-        var legendCount = 1;
-        while (four.Count < 4)
-        {
-            var remaining = choices.Where(c => legendCount < legendLimit || c.Rarity != CardRarity.Legend).ToList();
-            var next = Choose(remaining, 1, used)[0];
-            four.Add(next); used.Add(next);
-            if (choices.First(c => c.Id == next).Rarity == CardRarity.Legend) legendCount++;
-        }
-        var offer = four.ToArray();
+        if (!requireLegend) return Choose(choices, 4);
+        var first = Choose(choices.Where(c => c.Rarity == CardRarity.Legend).ToList(), 1);
+        var offer = first.Concat(Choose(choices, 3, first.ToHashSet())).ToArray();
         RandomNumberGenerator.Shuffle(offer.AsSpan());
         return offer;
     }
@@ -125,12 +112,14 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
                 var choices = environment == "as2p"
                     ? combined.Where(c => !special || c.Rarity is CardRarity.Gold or CardRarity.Legend).ToList()
                     : combined.Where(c => rarity == CardRarity.Legend ? c.Rarity is CardRarity.Gold or CardRarity.Legend : c.Rarity == rarity).ToList();
-                var four = Offer(choices, special, redraws > 0);
+                var four = Offer(choices, special);
                 var offer = new[] { four[..2], four[2..] };
                 var redrawOffers = new List<int[][]>();
                 for (var r = 0; r < redraws; r++)
                 {
-                    var next = Offer(choices, special, redraws > 0, four.ToHashSet());
+                    // Redraw ignores the round's rarity rules. Exclude only the currently
+                    // displayed four; earlier offers and already drafted cards remain eligible.
+                    var next = Choose(combined, 4, four.ToHashSet());
                     redrawOffers.Add(new[] { next[..2], next[2..] });
                     four = next;
                 }

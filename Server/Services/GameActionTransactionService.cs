@@ -2338,6 +2338,7 @@ namespace ShadowverseBeyond.Server.Services
                     PendingChoiceId = Guid.NewGuid(),
                     SourceAbilityRuntimeId = ability.RuntimeId,
                     TargetKey = "decision",
+                    OptionSourceCard = ability.SourceCard,
                     RequestingPlayerId = gameContext.RequestingPlayerId,
                     SelectableTargetIds = optionIds.ToList(),
                     SelectableCardInstances = Ability.BuildDecisionOptionCards(orderedOptions, gameContext.RequestingPlayerId),
@@ -5529,6 +5530,14 @@ namespace ShadowverseBeyond.Server.Services
 
                 var completionResolvedParameters = effectResult.ResolvedParameters?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
                     ?? new Dictionary<string, object>();
+
+                // Discovery materializes the chosen card only after its interactive request commits.
+                // Capture the resulting hand instance after that commit for chained abilities.
+                if (effect.Type == EffectType.Discover)
+                {
+                    generatedCards = CollectGeneratedCards(generatedEvents);
+                    generatedSnapshots = generatedCards.Select(CardInstanceSnapshot.From).ToList();
+                }
 
                 var generatedEventsSnapshot = generatedEvents.ToList().AsReadOnly();
 

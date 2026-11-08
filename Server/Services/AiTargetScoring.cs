@@ -20,6 +20,10 @@ internal static class AiTargetScoring
         var matching = effects.Where(effect => effect.IsEnabled
             && EffectTargetSelector.TrySelectTargets(effect.TargetSelector, targets, out _)).OrderBy(effect => effect.ExecutionOrder).ToArray();
 
+        // Discard choices use hand resource valuation at the caller.
+        if (matching.Length > 0 && matching.All(effect => effect.Type == EffectType.Discard))
+            return matching.Select(effect => new Effect(effect.Type, null)).ToArray();
+
         // Composite and scripted effects keep the existing model ranking.
         if (matching.Any(effect => effect.Type is not (EffectType.Damage or EffectType.Destroy or EffectType.Vanish or EffectType.Heal)))
             return Array.Empty<Effect>();
@@ -74,7 +78,7 @@ internal static class AiTargetScoring
         return friendly ? recovery - harm : harm - recovery;
     }
 
-    private static double? ReadAmount(EffectConfig effect)
+    internal static double? ReadAmount(EffectConfig effect)
     {
         var key = effect.Type == EffectType.Damage ? "DamageAmount" : "HealAmount";
         if (!effect.Parameters.TryGetValue(key, out var config) || config is not StaticValueConfig value)

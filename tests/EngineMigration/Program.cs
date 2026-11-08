@@ -1,4 +1,4 @@
-using ShadowverseBeyond.Server.Domain.Query;
+﻿using ShadowverseBeyond.Server.Domain.Query;
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
@@ -37,6 +37,10 @@ void Check(bool yes, string reason) { if(!yes) throw new Exception(reason); }
 Test("AI searches combat, evolution and Storm routes", AiPolicyTests.Search);
 Test("AI scores damage, healing and removal targets", AiPolicyTests.Targets);
 Test("AI values Act resources and Fusion materials", AiPolicyTests.Abilities);
+Test("AI reads complete recursive card references and reports missing context", AiRuleContextTests.Run);
+if (Environment.GetEnvironmentVariable("AI_RULE_PROBE_SOURCE") is { Length: >0 } ruleSource
+    && Environment.GetEnvironmentVariable("AI_RULE_PROBE_OUTPUT") is { Length: >0 } ruleOutput)
+    Test("AI resolves current catalog reference chains", () => AiRuleContextTests.Probe(ruleSource, ruleOutput));
 Test("startup preserves shared original card art and explicit remote art", () => {
  var root=Path.Combine(Path.GetTempPath(),"sv-art-"+Guid.NewGuid());
  var source=Path.Combine(root,"assets","cards","1");var target=Path.Combine(root,"assets","cards","2");
@@ -176,7 +180,7 @@ Test("AS2P uses unrestricted rounds and guarantees a legend on rounds 7 and 14 i
   var round=plan.Rounds[index];int[]? previous=null;
   foreach(var offer in new[]{round.Offer}.Concat(round.RedrawOffers)) {
    var four=offer.SelectMany(x=>x).ToArray();Check(four.Distinct().Count()==4,"duplicate offer");Check(previous==null||!four.Intersect(previous).Any(),"redraw repeated prior four");
-   if(index is 6 or 13) {var cards=four.Select(id=>catalog.Single(c=>c.Id==id)).ToArray();Check(cards.All(c=>c.Rarity is CardRarity.Gold or CardRarity.Legend)&&cards.Any(c=>c.Rarity==CardRarity.Legend),"special offer rarity guarantee lost");}
+   if(previous==null && index is 6 or 13) {var cards=four.Select(id=>catalog.Single(c=>c.Id==id)).ToArray();Check(cards.All(c=>c.Rarity is CardRarity.Gold or CardRarity.Legend)&&cards.Any(c=>c.Rarity==CardRarity.Legend),"special offer rarity guarantee lost");}
    previous=four;
   }
  }
@@ -184,6 +188,28 @@ Test("AS2P uses unrestricted rounds and guarantees a legend on rounds 7 and 14 i
  for(var attempt=0;attempt<20;attempt++) Check(TakeTwoService.Prepare(Guid.NewGuid(),small,settings,"as2p").Plans.Count==1,"two-legend pool randomly became unavailable during redraw generation");
  Check(TakeTwoService.PoolCards(catalog,"as2p",TakeTwoService.EmptyPool).Count==0,"unconfigured AS2P silently used full catalog");
  var roomService=new TakeTwoService(new MatchService(NullLogger<MatchService>.Instance));var room=roomService.Create(Guid.NewGuid(),"as2p",settings,catalog);roomService.Join(room.Code,Guid.NewGuid());Check(room.Players.All(p=>p.Plans.Count==2)&&room.Environment=="as2p","room/join lost AS2P rules");
+});
+Test("redraw ignores rarity and excludes only the current four",()=>{
+ foreach(var environment in new[]{"rotation","unlimited","open"}) {
+  var cards=new List<CardDefinition>();var id=98000;
+  foreach(var rarity in new[]{CardRarity.Bronze,CardRarity.Silver,CardRarity.Gold,CardRarity.Legend}) for(var i=0;i<4;i++) cards.Add(new(){Id=id++,Class=CardClass.Forestcraft,Rarity=rarity,IsCollectible=true,Type=CardType.Follower});
+  var seat=TakeTwoService.Prepare(Guid.NewGuid(),cards,TakeTwoService.EmptyPool,environment);
+  var round=seat.Plans["Forestcraft"].Rounds[0];
+  var initial=round.Offer.SelectMany(x=>x).ToHashSet();var redraw=round.RedrawOffers[0].SelectMany(x=>x).ToArray();
+  Check(initial.Count==4 && initial.All(id=>cards.Single(c=>c.Id==id).Rarity==CardRarity.Bronze),"initial rarity changed");
+  Check(redraw.Length==4 && redraw.Distinct().Count()==4 && redraw.All(id=>!initial.Contains(id)),"redraw duplicates current offer");
+  Check(redraw.All(id=>cards.Single(c=>c.Id==id).Rarity!=CardRarity.Bronze),"redraw still constrained to bronze");
+ }
+ var asCards=new List<CardDefinition>();var asId=99000;
+ foreach(var entry in new[]{(CardRarity.Bronze,4),(CardRarity.Gold,2),(CardRarity.Legend,2)}) for(var i=0;i<entry.Item2;i++) asCards.Add(new(){Id=asId++,Class=CardClass.Forestcraft,Rarity=entry.Item1,IsCollectible=true,Type=CardType.Follower});
+ var asPlan=TakeTwoService.Prepare(Guid.NewGuid(),asCards,TakeTwoService.EmptyPool,"as2p").Plans["Forestcraft"];
+ foreach(var index in new[]{6,13}) {
+  var round=asPlan.Rounds[index];var initial=round.Offer.SelectMany(x=>x).ToHashSet();var redraw=round.RedrawOffers[0].SelectMany(x=>x).ToArray();var second=round.RedrawOffers[1].SelectMany(x=>x).ToHashSet();
+  Check(initial.Count==4 && initial.All(id=>asCards.Single(c=>c.Id==id).Rarity is CardRarity.Gold or CardRarity.Legend),"AS2P initial special rule changed");
+  Check(redraw.Distinct().Count()==4 && redraw.All(id=>asCards.Single(c=>c.Id==id).Rarity==CardRarity.Bronze),"AS2P redraw must use unrestricted pool");
+  Check(second.SetEquals(initial),"second redraw excludes more than the current four");
+ }
+
 });
 Test("AS2P settings are admin-only and validate neutral assignments",()=>{
  using var connection=new SqliteConnection("Data Source=:memory:");connection.Open();using var db=new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(connection).Options);db.Database.EnsureCreated();
@@ -216,6 +242,8 @@ definitions[7].ArtPreview="/original.png";definitions[8].ArtPreview="/spell.png"
 definitions[8].Type=CardType.Spell;definitions[9].Type=CardType.Amulet;
 var data=Proxy<IGameDataProvider>.Make((method,args)=>method.Name switch {"GetCardDefinition"=>definitions.GetValueOrDefault((int)args![0]!),"GetAbilityConfigs"=>new List<AbilityConfig>(),"GetAllCardDefinitions"=>definitions,"get_Cards"=>definitions.Values.ToList(),_=>null});
 GameDataProvider.SetInstanceForTesting(data);
+Test("strategy planner isolates hidden information and reuses finished match experience", AiStrategyTests.Run);
+Test("AI binds exact hand instances and validated play forms, then expires stale advice", AiPlayBindingTests.Run);
 var activeAbilities = new List<IAbility>();
 var abilityManager=Proxy<IAbilityManager>.Make((method,args)=>method.Name switch {"GetAbilitiesForCard" or "GetEffectiveAbilitiesForCard" or "CreateAbilitiesForCard"=>activeAbilities,_=>null});
 var buffs=new BuffManager(NullLogger<BuffManager>.Instance,abilityManager);
@@ -230,6 +258,68 @@ var p1=new PlayerState(Guid.NewGuid());var p2=new PlayerState(Guid.NewGuid());
 var game=new GameState("migration-tests",p1,p2,p1.PlayerId){AbilityManager=abilityManager,BuffManager=buffs};
 p1.Leader=factory.CreateAndRegisterNewCard(game,1,p1.PlayerId,CardZone.Staging);p2.Leader=factory.CreateAndRegisterNewCard(game,1,p2.PlayerId,CardZone.Staging);
 using var context=new GameContext(services,new MapperConfiguration(cfg=>{}).CreateMapper(),accessor,game,p1.PlayerId,sourceCard:p1.Leader);
+Test("AI reads actual automatic end-turn conditions without mutating runtime targets", () => {
+ var own = new PlayerState(Guid.NewGuid()); var enemy = new PlayerState(Guid.NewGuid());
+ var runtime = new List<IAbility>();
+ var manager = Proxy<IAbilityManager>.Make((m,a)=>m.Name=="GetEffectiveAbilitiesForCard"
+     ? runtime.Where(ability=>ability.SourceCardId==(Guid)a![0]!).ToList():null);
+ var match = new GameState("ai-end-turn",own,enemy,own.PlayerId){AbilityManager=manager,BuffManager=buffs};
+ var waiter = factory.CreateAndRegisterNewCard(match,2,own.PlayerId,CardZone.Field);
+ var fox = factory.CreateAndRegisterNewCard(match,3,own.PlayerId,CardZone.Field);
+ var target = factory.CreateAndRegisterNewCard(match,4,enemy.PlayerId,CardZone.Field);
+ var query = Proxy<IQueryExecutor>.Make((m,a)=>new QueryResult{Results=new object[]{target}});
+ var pending=Proxy<IPendingActionService>.Make((m,a)=>throw new Exception("forecast must not request player input"));
+ var selection=new TargetSelectionService(NullLogger<TargetSelectionService>.Instance,query,pending);
+ var conditionEvaluator=new DslConditionEvaluator(compiler,NullLogger<DslConditionEvaluator>.Instance);
+ var mapper=new MapperConfiguration(cfg=>{}).CreateMapper();
+ var conditionFactory=new ConditionFactory(NullLoggerFactory.Instance,mapper,conditionEvaluator);
+ var targetFactory=new TargetFactory(selection,NullLogger<Target>.Instance);
+ var config=new AbilityConfig{Name="款待者回合结束",Trigger=new(){EventTypes=[EventType.TurnEnd],ValidZones=[CardZone.Field]},
+  Conditions=[new(){Expression="count(context.owner.hand) == 0"},new(){Expression="context.triggeringEvent.EndingPlayer.playerId == context.owner.playerId"}],
+  Targets=new(){["target1"]=new(){Query=new(){SourcePoolExpression="context.opponent.field"}}},
+  Effects=[new(){Type=EffectType.Damage,Parameters=new(){["DamageAmount"]=new StaticValueConfig{Value=3},["DistributionMode"]=new StaticValueConfig{Value="perTarget"}}}]};
+ var ability=new Ability(config,conditionFactory,targetFactory,selection,waiter);runtime.Add(ability);
+ using var provider=new ServiceCollection().AddSingleton(query).AddSingleton<IConditionEvaluator>(conditionEvaluator).AddSingleton<IBuffService>(buffService).AddSingleton<IEventHistoryService>(Proxy<IEventHistoryService>.Make((m,a)=>null)).BuildServiceProvider();
+ using var ctx=new GameContext(provider,mapper,accessor,match,own.PlayerId,sourceCard:waiter);
+ var view=new ShadowverseBeyond.Server.Dtos.PlayerStateDto{PlayerId=own.PlayerId,Field=[new(){InstanceId=waiter.InstanceId},new(){InstanceId=fox.InstanceId}]};
+ var read=typeof(AiTurnExecutor).Assembly.GetType("ShadowverseBeyond.Server.Services.AiEndTurnForecast")!.GetMethod("ReadAsync",BindingFlags.Static|BindingFlags.NonPublic)!;
+ object Forecast(){var task=(Task)read.Invoke(null,new object[]{ctx,view})!;task.GetAwaiter().GetResult();return task.GetType().GetProperty("Result")!.GetValue(task)!;}
+ int Count(object result)=>((System.Collections.ICollection)result.GetType().GetProperty("Damage")!.GetValue(result)!).Count;
+ Check(Count(Forecast())==1,"available automatic sweep was not read");
+ Check(ability.Targets[0].NeedsResolution&&ability.Targets[0].ResolutionCount==0&&ability.Conditions.All(condition=>condition.EvaluationCount==0),"forecast mutated runtime selection or condition bookkeeping");
+ factory.CreateAndRegisterNewCard(match,5,own.PlayerId,CardZone.Hand);Check(Count(Forecast())==0,"nonempty hand incorrectly passed empty-hand condition");own.Hand.Clear();
+ config.Targets["target1"].PlayerChoiceOptions=new(){IsRequired=true};Check(Count(Forecast())==0,"interactive end-turn effect treated as automatic");
+});
+Test("AI derives automatic hand loss from live abilities, not labels, without mutating the game",()=>{
+ var own=new PlayerState(Guid.NewGuid());var enemy=new PlayerState(Guid.NewGuid());var runtime=new List<IAbility>();
+ var manager=Proxy<IAbilityManager>.Make((m,a)=>m.Name=="GetEffectiveAbilitiesForCard"?runtime.Where(ability=>ability.SourceCardId==(Guid)a![0]!).ToList():null);
+ var match=new GameState("hand-loss-probe",own,enemy,own.PlayerId){AbilityManager=manager,BuffManager=buffs};
+ var first=factory.CreateAndRegisterNewCard(match,2,own.PlayerId,CardZone.Hand);
+ var fragile=factory.CreateAndRegisterNewCard(match,3,own.PlayerId,CardZone.Hand);
+ var query=Proxy<IQueryExecutor>.Make((m,a)=>throw new Exception("self-only forecast should not query mutable selections"));
+ var pending=Proxy<IPendingActionService>.Make((m,a)=>throw new Exception("hand loss must not prompt"));
+ var selection=new TargetSelectionService(NullLogger<TargetSelectionService>.Instance,query,pending);
+ var conditionEvaluator=new DslConditionEvaluator(compiler,NullLogger<DslConditionEvaluator>.Instance);
+ var mapper=new MapperConfiguration(cfg=>{}).CreateMapper();
+ var cfg=new AbilityConfig {Id=777,Name="arbitrary label",Trigger=new(){EventTypes=[EventType.PlayCard],RelationType=TriggerRelationType.TargetOther,ValidZones=[CardZone.Hand]},
+  Conditions=[new(){Expression="(context.triggeringEvent.PlayingPlayer.playerId) == (context.owner.playerId)"}],
+  Targets=new(){["target1"]=new(){Query=new(){SourcePoolExpression="context.SourceCard"}}},Effects=[new(){Type=EffectType.Discard}]};
+ var ability=new Ability(cfg,new ConditionFactory(NullLoggerFactory.Instance,mapper,conditionEvaluator),new TargetFactory(selection,NullLogger<Target>.Instance),selection,fragile);runtime.Add(ability);
+ using var provider=new ServiceCollection().AddSingleton<IConditionEvaluator>(conditionEvaluator).AddSingleton<IBuffService>(buffService).AddSingleton<IEventHistoryService>(Proxy<IEventHistoryService>.Make((m,a)=>null)).BuildServiceProvider();
+ using var ctx=new GameContext(provider,mapper,accessor,match,own.PlayerId);
+ var view=new ShadowverseBeyond.Server.Dtos.PlayerStateDto{PlayerId=own.PlayerId,Hand=[new(){InstanceId=first.InstanceId},new(){InstanceId=fragile.InstanceId}]};
+ var method=typeof(AiTurnExecutor).Assembly.GetType("ShadowverseBeyond.Server.Services.AiPlaySequence")!.GetMethod("ReadHandLossAsync",BindingFlags.Static|BindingFlags.NonPublic)!;
+ AiStrategyPlanner.HandLossRule[] Read(){var task=(Task<AiStrategyPlanner.HandLossRule[]>)method.Invoke(null,[ctx,view])!;return task.GetAwaiter().GetResult();}
+ var before=own.Hand.Select(card=>card.InstanceId).ToArray();var rules=Read();
+ Check(rules.Length==1&&rules[0].DiscardedHandIndex==1&&rules[0].WhenPlayedHandIndexes.SequenceEqual([0]),"actual discard dependency not detected");
+ Check(own.Hand.Select(card=>card.InstanceId).SequenceEqual(before)&&ability.TotalTriggerCount==0&&ability.Conditions.All(condition=>condition.EvaluationCount==0)&&ability.Targets.All(target=>target.ResolutionCount==0),"forecast altered runtime or bookkeeping");
+ view=view with {Hand=view.Hand.AsEnumerable().Reverse().ToList()};rules=Read();Check(rules[0].DiscardedHandIndex==0&&rules[0].WhenPlayedHandIndexes.SequenceEqual([1]),"dependency did not follow instance after reorder");
+ cfg.Conditions[0].Expression="false";Check(Read().Length==0,"false predicate predicted loss");cfg.Conditions[0].Expression="context.triggeringEvent.PlayingPlayer.playerId == context.owner.playerId";
+ typeof(CardInstance).GetProperty("IsSilenced")!.SetValue(fragile,true);Check(Read().Length==0,"silenced ability predicted loss");typeof(CardInstance).GetProperty("IsSilenced")!.SetValue(fragile,false);
+ cfg.Targets["target1"].PlayerChoiceOptions=new(){IsRequired=true};Check(Read().Length==0,"manual choice treated as automatic");cfg.Targets["target1"].PlayerChoiceOptions=null;
+ cfg.Effects.Add(new(){Type=EffectType.None});Check(Read().Length==0,"unknown composite claimed as proven loss");cfg.Effects.RemoveAt(1);
+ runtime.Clear();Check(Read().Length==0,"removed granted ability remained in forecast");
+});
 Test("inverse of all candidates resolves to an explicit empty target list", () => {
  var query = Proxy<IQueryExecutor>.Make((m,a) => new QueryResult { Results = new object[] { p1.Leader } });
  var pending = Proxy<IPendingActionService>.Make((m,a) => throw new Exception("automatic targets should not prompt"));
@@ -287,6 +377,41 @@ foreach(var mode in new[]{AbilityKeyword.Accelerate,AbilityKeyword.Crystalize}) 
    activeAbilities.Clear();
  });
 }
+Test("AI mode preflight checks base/enhance and rejects alternate field and priority conflicts",()=>{
+ var server=new GameService(Proxy<Microsoft.AspNetCore.SignalR.IHubContext<ShadowverseBeyond.Server.Hubs.GameHub>>.Make((m,a)=>null),
+  NullLogger<GameService>.Instance,context.Mapper,Proxy<IClientMethodMapper>.Make((m,a)=>null),data,
+  Proxy<IMatchService>.Make((m,a)=>null),Proxy<IFirstPlayerSelector>.Make((m,a)=>null),services.GetRequiredService<IServiceScopeFactory>(),
+  Proxy<IPendingActionService>.Make((m,a)=>null),Proxy<IGameStatsRuntimeTracker>.Make((m,a)=>null));
+ var core=typeof(GameService).GetMethod("CheckPlayabilityCoreLogicAsync",BindingFlags.Instance|BindingFlags.NonPublic)!;
+ var card=factory.CreateAndRegisterNewCard(game,7,p1.PlayerId,CardZone.Hand);
+ ShadowverseBeyond.Server.Dtos.PlayabilityResultDto CheckMode(ShadowverseBeyond.Server.Dtos.Enums.PlayMode? mode)=>
+  ((Task<ShadowverseBeyond.Server.Dtos.PlayabilityResultDto>)core.Invoke(server,[context with {SourceCard=card},p1,card,definitions[7],mode])!).GetAwaiter().GetResult();
+ IAbility Ability(AbilityKeyword keyword,int cost,int? alternate=null) {
+  var uid=Guid.NewGuid();return Proxy<IAbility>.Make((m,a)=>m.Name switch {
+   "get_AbilityKeywords"=>new List<AbilityKeywordConfig>{new(){Keyword=keyword,Value=cost}},"get_RuntimeId"=>uid,
+   "GetKeywordValue"=>(AbilityKeyword)a![0]! == keyword?cost:null,
+   "get_AlternatePlay"=>alternate.HasValue?new AlternatePlayConfig{PlayAsCardDefinitionId=alternate.Value}:null,
+   "HasKeyword"=>(AbilityKeyword)a![0]! == keyword,_=>null});
+ }
+ var savedField=p1.Field.ToArray();var savedPP=p1.CurrentPlayPoints;
+ try {
+  p1.Field.Clear();p1.CurrentPlayPoints=10;activeAbilities.Clear();activeAbilities.Add(Ability(AbilityKeyword.Enhance,9));
+  var auto=CheckMode(null);var basic=CheckMode(ShadowverseBeyond.Server.Dtos.Enums.PlayMode.Base);
+  Check(auto.IsPlayable&&auto.SelectedPlayMode==ShadowverseBeyond.Server.Dtos.Enums.PlayMode.Enhance,"auto enhance fixture failed");
+  Check(basic.IsPlayable&&basic.SelectedPlayMode==ShadowverseBeyond.Server.Dtos.Enums.PlayMode.Base&&basic.SelectedAbilityRuntimeId==null
+   &&basic.PlayedCardDefinitionId==7,"explicit base inherited enhance binding");
+  p1.CurrentPlayPoints=2;activeAbilities.Clear();activeAbilities.Add(Ability(AbilityKeyword.Accelerate,1,8));
+  for(var i=0;i<5;i++)p1.Field.Add(factory.CreateAndRegisterNewCard(game,1,p1.PlayerId,CardZone.Staging));
+  var spell=CheckMode(ShadowverseBeyond.Server.Dtos.Enums.PlayMode.Accelerate);
+  Check(spell.IsPlayable&&spell.PlayedCardDefinitionId==8,"spell alternate incorrectly blocked by original follower field space");
+  Check(!CheckMode(ShadowverseBeyond.Server.Dtos.Enums.PlayMode.Base).IsPlayable,"unaffordable base allowed");
+  activeAbilities.Clear();activeAbilities.Add(Ability(AbilityKeyword.Crystalize,1,9));
+  Check(!CheckMode(ShadowverseBeyond.Server.Dtos.Enums.PlayMode.Crystalize).IsPlayable,"amulet alternate ignored full field");
+  p1.Field.Clear();activeAbilities.Add(Ability(AbilityKeyword.Accelerate,2,8));
+  Check(!CheckMode(ShadowverseBeyond.Server.Dtos.Enums.PlayMode.Crystalize).IsPlayable,"non-selected alternate bypassed engine priority");
+  Check(CheckMode(ShadowverseBeyond.Server.Dtos.Enums.PlayMode.Accelerate).IsPlayable,"selected alternate unavailable");
+ } finally {activeAbilities.Clear();p1.Field.Clear();p1.Field.AddRange(savedField);p1.CurrentPlayPoints=savedPP;}
+});
 Test("alternate type mismatch is unavailable",()=>{
  activeAbilities.Clear();activeAbilities.Add(Proxy<IAbility>.Make((method,args)=>method.Name switch{"get_AbilityKeywords"=>new List<AbilityKeywordConfig>{new(){Keyword=AbilityKeyword.Accelerate,Value=0}},"get_AlternatePlay"=>new AlternatePlayConfig{PlayAsCardDefinitionId=9},"HasKeyword"=>true,_=>null}));
  var card=factory.CreateAndRegisterNewCard(game,7,p1.PlayerId,CardZone.Hand);p1.CurrentPlayPoints=0;Check(!PlayModeResolver.Resolve(card,p1,context).HasAvailableMode,"wrong type accepted");activeAbilities.Clear();
@@ -332,7 +457,13 @@ Test("reveal transport includes hand position and log announcement",()=>{
 Test("granted ability names carry rules text when description is empty",()=>{
  activeAbilities.Clear();p1.Field.Clear();var card=factory.CreateAndRegisterNewCard(game,2,p1.PlayerId,CardZone.Field);
  var text="于手牌中发动。当自己使用其他卡片时，舍弃这张卡片";
- buffs.RegisterBuffInstance(new Buff(Guid.Empty,card.InstanceId,0,new(){new AbilityBuffEffect(new(){new AbilityConfig{Name=text,Description=""}})}){SourceCardName="荒诞夜恸",SourceAbilityName="Ability1"},game);
+ var config=new AbilityConfig{Name=text,Description=""};
+ var grant=new Buff(Guid.Empty,card.InstanceId,0,new(){new AbilityBuffEffect(new(){config})}){SourceCardName="荒诞夜恸",SourceAbilityName="Ability1"};
+ buffs.RegisterBuffInstance(grant,game);
+ var selection=(TargetSelectionService)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(TargetSelectionService));
+ var conditionFactory=Proxy<IConditionFactory>.Make((m,a)=>null);
+ var targetFactory=Proxy<ITargetFactory>.Make((m,a)=>null);
+ activeAbilities.Add(new Ability(config,conditionFactory,targetFactory,selection,card,sourceBuffId:grant.Id));
  var summary=ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create(card,context).BuffSummaries.Single();Check(summary.GrantedAbilities.Single().Name==text,"rules text missing");Check(summary.Details.Contains(text),"fallback description missing");
 });
 Test("stacked one-use Act modifiers survive reads and expire after successful use",()=>{
@@ -475,6 +606,10 @@ Test("starlight Savior sword activation selects its own amulet",()=>{
  var target=StarlightAfter(1474098)["targets"]!.AsArray().Single()!;var expression=target["query"]!["sourcePoolExpression"]!.GetValue<string>();Check(expression=="context.SourceCard","sword self target missing");
  var getter=compiler.CompileGetter<object>(expression);Check(ReferenceEquals(getter(new object(),context),p1.Leader),"self reference not resolved");
 });
+if (Environment.GetEnvironmentVariable("AI_RULE_REASONING_OUTPUT") is { Length: >0 } reasoningOutput)
+    Test("real provider reads class, maximum health and late mode rules", () => AiRuleReasoningProbe.Run(reasoningOutput));
+if (Environment.GetEnvironmentVariable("AI_PLAY_BINDING_OUTPUT") is { Length: >0 } bindingOutput)
+    Test("real provider selects cheaper lethal forms and preserves fragile copies", () => AiPlayBindingProbe.Run(bindingOutput));
 Console.WriteLine(JsonSerializer.Serialize(results,options));
 return results.Any(r=>((bool)r.GetType().GetProperty("passed")!.GetValue(r)!) == false)?1:0;
 

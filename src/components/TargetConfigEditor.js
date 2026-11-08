@@ -518,13 +518,13 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         container.appendChild(header);
 
         if (!enabled) {
-            container.appendChild(this.createFormGroup('反选', this.createAccordionToggleSwitch(
+            container.appendChild(this.createAccordionToggleSwitch(
                 target.playerChoiceOptions?.isInverseSelection === true,
                 checked => this.updateTarget(index, {
                     playerChoiceOptions: checked ? { isRequired: false, isInverseSelection: true } : null
                 }),
-                '反选全部目标后不选择任何卡'
-            )));
+                '反选：选择除指定目标外的卡'
+            ));
         }
 
         if (enabled) {
@@ -922,17 +922,6 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             grid.appendChild(this.createFormGroup('反选', inverseToggle));
             selectCountContainer.appendChild(grid);
             container.appendChild(selectCountContainer);
-        }
-
-        if (allowPlayerChoice && method === 'All' && !target._simpleType?.includes('SourceCard')) {
-            hasContent = true;
-            container.appendChild(this.createFormGroup('反选', this.createAccordionToggleSwitch(
-                target.playerChoiceOptions?.isInverseSelection === true,
-                checked => this.updateSimplifiedTarget(index, {
-                    playerChoiceOptions: checked ? { isRequired: false, isInverseSelection: true } : null
-                }),
-                '反选全部目标后不选择任何卡'
-            )));
         }
 
         // 控制容器显示/隐藏以保持布局间距
