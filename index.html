@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Shadowverse:World Beyond</title>
     <link rel="icon" href="/favicon.jpg?v=2" type="image/jpeg">
     <link rel="manifest" href="/manifest.webmanifest">
@@ -29,6 +29,7 @@
     <link rel="stylesheet" href="src/styles/devtools.css">
     <link rel="stylesheet" href="src/styles/game.css"> <!-- Legacy styles, to be refactored -->
     <link rel="stylesheet" href="src/styles/mirage.css">
+    <link rel="stylesheet" href="src/styles/mirage-lobby.css">
     <link rel="stylesheet" href="src/styles/ability-editor.css">
     <link rel="stylesheet" href="src/styles/card-editor.css">
     <link rel="stylesheet" href="src/styles/deck-builder.css">
@@ -42,6 +43,26 @@
 
 <body>
     <div class="noise-bg"></div>
+
+    <!-- 全站竖屏旋转提示遮罩（Capacitor 横屏应用下自动隐藏，移动端浏览器竖屏时引导横屏/全屏） -->
+    <div id="battle-portrait-rotate-overlay" class="battle-portrait-rotate-overlay" role="region" aria-label="横屏游玩建议">
+        <div class="battle-portrait-rotate-card">
+            <div class="battle-portrait-rotate-icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="14" y="6" width="20" height="36" rx="3"></rect>
+                    <line x1="22" y1="37" x2="26" y2="37"></line>
+                    <path d="M8 24a16 16 0 0 1 6-12.5"></path>
+                    <polyline points="8 17 8 24 15 24"></polyline>
+                </svg>
+            </div>
+            <div class="battle-portrait-rotate-title">建议横置屏幕进行游玩</div>
+            <div class="battle-portrait-rotate-desc">横屏视野可完整展现大厅、牌组构筑与双层全息战场</div>
+            <div class="battle-portrait-rotate-actions">
+                <button id="battle-portrait-fullscreen-btn" class="battle-portrait-fullscreen-btn" type="button" hidden>全屏横屏游玩</button>
+                <button id="battle-portrait-dismiss-btn" class="battle-portrait-dismiss-btn" type="button">仍以竖屏查看</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Top Navigation Bar -->
     <div class="top-nav-bar">
@@ -560,21 +581,6 @@
                 </div>
             </div>
             <div id="game-container">
-                <div id="battle-portrait-rotate-overlay" class="battle-portrait-rotate-overlay" role="region" aria-label="横屏游玩建议">
-                    <div class="battle-portrait-rotate-card">
-                        <div class="battle-portrait-rotate-icon" aria-hidden="true">
-                            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <rect x="14" y="6" width="20" height="36" rx="3"></rect>
-                                <line x1="22" y1="37" x2="26" y2="37"></line>
-                                <path d="M8 24a16 16 0 0 1 6-12.5"></path>
-                                <polyline points="8 17 8 24 15 24"></polyline>
-                            </svg>
-                        </div>
-                        <div class="battle-portrait-rotate-title">建议横置屏幕进行对战</div>
-                        <div class="battle-portrait-rotate-desc">横屏视野可完整展现双层全息战场、主战者铭牌与扇形手牌</div>
-                        <button id="battle-portrait-dismiss-btn" class="battle-portrait-dismiss-btn" type="button">仍以竖屏查看</button>
-                    </div>
-                </div>
                 <div id="battle-card-preview" class="card-preview-container battle-card-preview is-empty"></div>
 
                 <!-- 右上角对手纹章与紧凑变量舱 -->
@@ -586,32 +592,35 @@
                         <div class="emblem-slot"></div>
                         <div class="emblem-slot"></div>
                     </div>
-                    <div id="player2-var-strip" class="battle-var-strip">
-                        <div class="resource-box deck-box">
-                            <span class="resource-label">DECK</span>
-                            <span class="resource-value" id="player2-deck-count">0</span>
-                        </div>
-                        <div class="resource-box hand-box">
-                            <span class="resource-label">HAND</span>
-                            <span class="resource-value" id="player2-hand-count">0</span>
-                        </div>
-                        <div class="resource-box grave-box">
-                            <span class="resource-label">GRAVE</span>
-                            <span class="resource-value" id="player2-grave-count">0</span>
-                        </div>
-                        <div class="resource-box rally-box is-zero">
+                    <div id="player2-var-strip" class="battle-var-strip is-opp">
+                        <span id="player2-extra-counters" class="battle-extra-counters"></span>
+                        <div class="resource-box rally-box is-pill is-zero">
                             <span class="resource-label">RALLY</span>
                             <span class="resource-value" id="player2-rally-count">0</span>
                         </div>
-                        <div class="resource-box combo-box is-zero">
+                        <div class="resource-box combo-box is-pill is-zero">
                             <span class="resource-label">COMBO</span>
                             <span class="resource-value" id="player2-combo-count">0</span>
                         </div>
-                        <div class="resource-box blood-box is-zero">
+                        <div class="resource-box blood-box is-pill is-zero">
                             <span class="resource-label">BLOOD</span>
                             <span class="resource-value" id="player2-blood-count">0</span>
                         </div>
-                        <span id="player2-extra-counters" class="battle-extra-counters"></span>
+                        <div class="resource-box deck-box is-core">
+                            <span class="var-strip-icon is-deck" aria-hidden="true"></span>
+                            <span class="resource-label">DECK</span>
+                            <span class="resource-value" id="player2-deck-count">0</span>
+                        </div>
+                        <div class="resource-box hand-box is-core">
+                            <span class="var-strip-icon is-hand" aria-hidden="true"></span>
+                            <span class="resource-label">HAND</span>
+                            <span class="resource-value" id="player2-hand-count">0</span>
+                        </div>
+                        <div class="resource-box grave-box is-core">
+                            <span class="var-strip-icon is-grave" aria-hidden="true"></span>
+                            <span class="resource-label">GRAVE</span>
+                            <span class="resource-value" id="player2-grave-count">0</span>
+                        </div>
                     </div>
                 </aside>
 
@@ -624,32 +633,35 @@
                         <div class="emblem-slot"></div>
                         <div class="emblem-slot"></div>
                     </div>
-                    <div id="player1-var-strip" class="battle-var-strip">
-                        <div class="resource-box rally-box is-zero">
+                    <div id="player1-var-strip" class="battle-var-strip is-self">
+                        <div class="resource-box deck-box is-core">
+                            <span class="var-strip-icon is-deck" aria-hidden="true"></span>
+                            <span class="resource-label">DECK</span>
+                            <span class="resource-value" id="player1-deck-count">0</span>
+                        </div>
+                        <div class="resource-box hand-box is-core">
+                            <span class="var-strip-icon is-hand" aria-hidden="true"></span>
+                            <span class="resource-label">HAND</span>
+                            <span class="resource-value" id="player1-hand-count">0</span>
+                        </div>
+                        <div class="resource-box grave-box is-core">
+                            <span class="var-strip-icon is-grave" aria-hidden="true"></span>
+                            <span class="resource-label">GRAVE</span>
+                            <span class="resource-value" id="player1-grave-count">0</span>
+                        </div>
+                        <div class="resource-box rally-box is-pill is-zero">
                             <span class="resource-label">RALLY</span>
                             <span class="resource-value" id="player1-rally-count">0</span>
                         </div>
-                        <div class="resource-box combo-box is-zero">
+                        <div class="resource-box combo-box is-pill is-zero">
                             <span class="resource-label">COMBO</span>
                             <span class="resource-value" id="player1-combo-count">0</span>
                         </div>
-                        <div class="resource-box blood-box is-zero">
+                        <div class="resource-box blood-box is-pill is-zero">
                             <span class="resource-label">BLOOD</span>
                             <span class="resource-value" id="player1-blood-count">0</span>
                         </div>
                         <span id="player1-extra-counters" class="battle-extra-counters"></span>
-                        <div class="resource-box deck-box">
-                            <span class="resource-label">DECK</span>
-                            <span class="resource-value" id="player1-deck-count">0</span>
-                        </div>
-                        <div class="resource-box hand-box">
-                            <span class="resource-label">HAND</span>
-                            <span class="resource-value" id="player1-hand-count">0</span>
-                        </div>
-                        <div class="resource-box grave-box">
-                            <span class="resource-label">GRAVE</span>
-                            <span class="resource-value" id="player1-grave-count">0</span>
-                        </div>
                     </div>
                 </aside>
 
@@ -658,17 +670,18 @@
 
                 <!-- 中轴五层核心纵列：敌方主战者 + 双层全息战场 + 我方主战者 -->
                 <section class="battle-center-stack" aria-label="中轴主战者与双层战场">
-                    <!-- 对手信息区 (Top Center RPG HUD — Crescent-Docked 2-Row Unified Plate) -->
+                    <!-- 对手信息区 (Top Center RPG HUD — Crescent-Docked Dual-Gauge HP + PP Plate) -->
                     <div id="player2-info" class="player-info opponent-info leader-rpg-hud is-opponent">
                         <div class="player-stats leader-rpg-inner" id="player2-stats">
                             <div class="leader-rpg-portrait">
                                 <div class="stats-avatar leader-rpg-portrait-inner" id="player2-avatar">OPP</div>
+                                <span class="target-hover-ring is-leader-ring" aria-hidden="true"></span>
                             </div>
                             <div class="leader-rpg-body">
-                                <svg class="leader-rpg-spine-svg leader-rpg-chassis-svg" viewBox="0 0 408 62" preserveAspectRatio="none" aria-hidden="true">
-                                    <path class="leader-rpg-spine-bg" d="M 7.14,0.75 L 397.25,0.75 L 407.25,10.75 L 407.25,57.25 L 403.25,61.25 L 7.14,61.25 A 42,42 0 0,0 7.14,0.75 Z"></path>
-                                    <path class="leader-rpg-spine-divider" d="M 26,31.5 L 396,31.5"></path>
-                                    <path class="leader-rpg-spine-accent" d="M 391,0.75 L 397.25,0.75 L 407.25,10.75 L 407.25,25"></path>
+                                <svg class="leader-rpg-spine-svg leader-rpg-chassis-svg" viewBox="0 0 408 72" preserveAspectRatio="none" aria-hidden="true">
+                                    <path class="leader-rpg-spine-bg" d="M 1.22,1 L 397.25,1 L 407.25,11 L 407.25,66.5 L 402.75,71 L 1.22,71 A 42,42 0 0,0 1.22,1 Z"></path>
+                                    <path class="leader-rpg-spine-divider" d="M 25,25.5 L 396,25.5"></path>
+                                    <path class="leader-rpg-spine-accent" d="M 391,1 L 397.25,1 L 407.25,11 L 407.25,26"></path>
                                 </svg>
                                 <div class="leader-rpg-identity-row">
                                     <div class="leader-rpg-identity-left">
@@ -700,14 +713,44 @@
                                         <span class="leader-rpg-target-hint" aria-hidden="true">TARGET · 可直击</span>
                                     </div>
                                 </div>
-                                <div class="hp-display leader-rpg-spine" id="player2-hp">
-                                    <div class="hp-bar-track leader-rpg-gauge" aria-hidden="true">
-                                        <div class="hp-bar-ghost" style="width: 100%;"></div>
-                                        <div class="hp-bar-fill" style="width: 100%;"></div>
+                                <div class="leader-rpg-gauges">
+                                    <div class="hp-display leader-rpg-spine" id="player2-hp">
+                                        <span class="gauge-tag is-hp" aria-hidden="true">HP</span>
+                                        <div class="hp-bar-track leader-rpg-gauge" aria-hidden="true">
+                                            <div class="hp-bar-ghost" style="width: 100%;"></div>
+                                            <div class="hp-bar-fill" style="width: 100%;"></div>
+                                        </div>
+                                        <div class="hp-main-row leader-rpg-hp-nums">
+                                            <span class="hp-value">20</span>
+                                            <span class="hp-max">/ 20</span>
+                                        </div>
                                     </div>
-                                    <div class="hp-main-row leader-rpg-hp-nums">
-                                        <span class="hp-value">20</span>
-                                        <span class="hp-max">/ 20</span>
+                                    <div id="right-dock-upper-pp" class="pp-container leader-rpg-pp-row is-opp">
+                                        <span id="player2-pp-label" class="pp-label gauge-tag is-pp">PP</span>
+                                        <div class="pp-lane-wrap">
+                                            <div class="pp-bar-segments" id="player2-pp-bar">
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                            </div>
+                                            <span class="pp-boost-readonly leader-boost-pill" id="player2-pp-boost-badge" hidden title="对手后手额外能量点">
+                                                <svg class="pp-boost-chevron" viewBox="0 0 10 10" aria-hidden="true">
+                                                    <path d="M2 4.6L5 1.8L8 4.6M2 8L5 5.2L8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path>
+                                                </svg>
+                                                <span class="pp-boost-action-text">+1PP</span>
+                                                <span class="pp-boost-count" id="player2-pp-boost-count">×1</span>
+                                            </span>
+                                        </div>
+                                        <div class="pp-header leader-rpg-pp-nums">
+                                            <span id="player2-pp-text" class="pp-text">0 / 0</span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -729,17 +772,18 @@
                         </div>
                     </div>
 
-                    <!-- 玩家信息区 (Bottom Center RPG HUD — Crescent-Docked 2-Row Unified Plate) -->
+                    <!-- 玩家信息区 (Bottom Center RPG HUD — Crescent-Docked Dual-Gauge HP + PP Plate) -->
                     <div id="player1-info" class="player-info player-info-self leader-rpg-hud is-self">
                         <div class="player-stats leader-rpg-inner" id="player1-stats">
                             <div class="leader-rpg-portrait">
                                 <div class="stats-avatar leader-rpg-portrait-inner" id="player1-avatar">YOU</div>
+                                <span class="target-hover-ring is-leader-ring" aria-hidden="true"></span>
                             </div>
                             <div class="leader-rpg-body">
-                                <svg class="leader-rpg-spine-svg leader-rpg-chassis-svg" viewBox="0 0 408 62" preserveAspectRatio="none" aria-hidden="true">
-                                    <path class="leader-rpg-spine-bg" d="M 7.14,0.75 L 397.25,0.75 L 407.25,10.75 L 407.25,57.25 L 403.25,61.25 L 7.14,61.25 A 42,42 0 0,0 7.14,0.75 Z"></path>
-                                    <path class="leader-rpg-spine-divider" d="M 26,31.5 L 396,31.5"></path>
-                                    <path class="leader-rpg-spine-accent" d="M 391,0.75 L 397.25,0.75 L 407.25,10.75 L 407.25,25"></path>
+                                <svg class="leader-rpg-spine-svg leader-rpg-chassis-svg" viewBox="0 0 408 72" preserveAspectRatio="none" aria-hidden="true">
+                                    <path class="leader-rpg-spine-bg" d="M 1.22,1 L 397.25,1 L 407.25,11 L 407.25,66.5 L 402.75,71 L 1.22,71 A 42,42 0 0,0 1.22,1 Z"></path>
+                                    <path class="leader-rpg-spine-divider" d="M 25,25.5 L 396,25.5"></path>
+                                    <path class="leader-rpg-spine-accent" d="M 391,1 L 397.25,1 L 407.25,11 L 407.25,26"></path>
                                 </svg>
                                 <div class="leader-rpg-identity-row">
                                     <div class="leader-rpg-identity-left">
@@ -770,14 +814,44 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="hp-display leader-rpg-spine" id="player1-hp">
-                                    <div class="hp-bar-track leader-rpg-gauge" aria-hidden="true">
-                                        <div class="hp-bar-ghost" style="width: 100%;"></div>
-                                        <div class="hp-bar-fill" style="width: 100%;"></div>
+                                <div class="leader-rpg-gauges">
+                                    <div class="hp-display leader-rpg-spine" id="player1-hp">
+                                        <span class="gauge-tag is-hp" aria-hidden="true">HP</span>
+                                        <div class="hp-bar-track leader-rpg-gauge" aria-hidden="true">
+                                            <div class="hp-bar-ghost" style="width: 100%;"></div>
+                                            <div class="hp-bar-fill" style="width: 100%;"></div>
+                                        </div>
+                                        <div class="hp-main-row leader-rpg-hp-nums">
+                                            <span class="hp-value">20</span>
+                                            <span class="hp-max">/ 20</span>
+                                        </div>
                                     </div>
-                                    <div class="hp-main-row leader-rpg-hp-nums">
-                                        <span class="hp-value">20</span>
-                                        <span class="hp-max">/ 20</span>
+                                    <div id="right-dock-self-pp" class="pp-container leader-rpg-pp-row is-self">
+                                        <span id="player1-pp-label" class="pp-label gauge-tag is-pp">PP</span>
+                                        <div class="pp-lane-wrap">
+                                            <div class="pp-bar-segments" id="player1-pp-bar">
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                                <div class="pp-segment empty"></div>
+                                            </div>
+                                            <button class="pp-boost-button leader-boost-pill" id="player1-pp-boost-button" type="button" hidden>
+                                                <svg class="pp-boost-chevron" viewBox="0 0 10 10" aria-hidden="true">
+                                                    <path d="M2 4.6L5 1.8L8 4.6M2 8L5 5.2L8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path>
+                                                </svg>
+                                                <span class="pp-boost-action-text">+1PP</span>
+                                                <span class="pp-boost-count" id="player1-pp-boost-count">×0</span>
+                                            </button>
+                                        </div>
+                                        <div class="pp-header leader-rpg-pp-nums">
+                                            <span id="player1-pp-text" class="pp-text">0 / 0</span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -788,78 +862,36 @@
                 <!-- 玩家手牌 (Bottom Center) -->
                 <div id="player1-hand" class="hand player-hand"></div>
 
-                <!-- 右侧中轴对齐能量点 / 回合结束战术中控台 -->
-                <aside id="battle-right-dock" class="battle-right-dock" aria-label="右侧能量与回合结束中控台">
-                    <div id="right-dock-upper-pp" class="pp-container is-opp">
-                        <div class="pp-header">
-                            <span id="player2-pp-label" class="pp-label">OPP PP</span>
-                            <span id="player2-pp-text" class="pp-text">0 / 0</span>
-                        </div>
-                        <div class="pp-bar-segments" id="player2-pp-bar">
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                        </div>
-                    </div>
-
-                    <button id="end-turn-button" class="action-button">
+                <!-- 右侧中轴圆形星轨回合核心 (Circular Astrolabe Turn Orb) -->
+                <aside id="battle-right-dock" class="battle-right-dock is-turn-hub is-orb-hub" aria-label="回合结束星轨核心">
+                    <button id="end-turn-button" class="action-button is-turn-orb">
+                        <svg class="end-turn-orbit-svg" viewBox="0 0 124 124" aria-hidden="true">
+                            <circle class="orb-track-dashed" cx="62" cy="62" r="59" stroke-dasharray="2 5"></circle>
+                            <path class="orb-arc-accent" d="M 62,3 A 59,59 0 0,1 113,32.5 M 62,121 A 59,59 0 0,1 11,91.5"></path>
+                        </svg>
+                        <span class="end-turn-indicator-trench indicator-trench-ring" aria-hidden="true">
+                            <span class="end-turn-indicator-light" style="--seg-idx:0"></span>
+                            <span class="end-turn-indicator-light" style="--seg-idx:1"></span>
+                            <span class="end-turn-indicator-light" style="--seg-idx:2"></span>
+                            <span class="end-turn-indicator-light" style="--seg-idx:3"></span>
+                            <span class="end-turn-indicator-light" style="--seg-idx:4"></span>
+                            <span class="end-turn-indicator-light" style="--seg-idx:5"></span>
+                            <span class="end-turn-indicator-light" style="--seg-idx:6"></span>
+                            <span class="end-turn-indicator-light" style="--seg-idx:7"></span>
+                            <span class="end-turn-indicator-light" style="--seg-idx:8"></span>
+                            <span class="end-turn-indicator-light" style="--seg-idx:9"></span>
+                            <span class="end-turn-indicator-light" style="--seg-idx:10"></span>
+                            <span class="end-turn-indicator-light" style="--seg-idx:11"></span>
+                        </span>
                         <span class="end-turn-surface">
+                            <span class="turn-orb-gem" aria-hidden="true"></span>
                             <span class="end-turn-text">
                                 <span class="end-turn-label">END TURN</span>
                                 <span class="end-turn-countdown">03:00</span>
                             </span>
-                            <span class="end-turn-indicator-trench indicator-trench-bottom" aria-hidden="true">
-                                <span class="end-turn-indicator-light"></span>
-                                <span class="end-turn-indicator-light"></span>
-                                <span class="end-turn-indicator-light"></span>
-                                <span class="end-turn-indicator-light"></span>
-                                <span class="end-turn-indicator-light"></span>
-                                <span class="end-turn-indicator-light"></span>
-                                <span class="end-turn-indicator-light"></span>
-                                <span class="end-turn-indicator-light"></span>
-                                <span class="end-turn-indicator-light"></span>
-                                <span class="end-turn-indicator-light"></span>
-                                <span class="end-turn-indicator-light"></span>
-                                <span class="end-turn-indicator-light"></span>
-                            </span>
                             <span class="end-turn-sweep" aria-hidden="true"></span>
                         </span>
                     </button>
-
-                    <div class="battle-dock-divider" aria-hidden="true"></div>
-
-                    <div id="right-dock-self-pp" class="pp-container is-self">
-                        <div class="pp-header">
-                            <span id="player1-pp-label" class="pp-label">PP</span>
-                            <span id="player1-pp-text" class="pp-text">0 / 0</span>
-                        </div>
-                        <div class="pp-bar-segments" id="player1-pp-bar">
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                            <div class="pp-segment empty"></div>
-                        </div>
-                    </div>
-
-                    <div id="pp-boost-action" class="pp-boost-action">
-                        <button class="pp-boost-button" id="player1-pp-boost-button" type="button">
-                            <span class="pp-boost-action-text">PP+1 BOOST</span>
-                            <span class="pp-boost-count" id="player1-pp-boost-count">0</span>
-                        </button>
-                    </div>
 
                     <div id="mirage-dock-sub-actions" class="mirage-dock-sub-actions" hidden></div>
                 </aside>
@@ -955,6 +987,27 @@
                     </div>
                 </div>
                 <div class="devtools-copy-limit-guidance">可检视所有普通卡包；管理员可保存当前环境的卡包归属、上传 Logo 和新建卡包。</div>
+            </div>
+        </div>
+
+        <!-- 幻境 8人准备室页面 -->
+        <div id="mirage-lobby-page" class="page">
+            <div class="page-header">
+                <div class="page-header-left">
+                    <button class="back-nav-btn" data-route="multiplayer" aria-label="Back to Multiplayer">
+                        <div class="back-icon-wrapper">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="11 17 6 12 11 7"></polyline>
+                                <polyline points="18 17 13 12 18 7"></polyline>
+                            </svg>
+                        </div>
+                        <span class="back-text-art">幻境准备室</span>
+                    </button>
+                </div>
+            </div>
+            <div id="mirage-lobby-container">
+                <div class="loading-message">正在连接星界酒馆大厅...</div>
             </div>
         </div>
 

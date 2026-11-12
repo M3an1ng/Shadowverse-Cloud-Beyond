@@ -6,6 +6,12 @@ namespace ShadowverseBeyond.Server.Hubs
     {
         private const string GamePrefix = "Game_";
         private const string PlayerPrefix = "Player_";
+        private const string MirageRoomPrefix = "MirageRoom_";
+
+        public static string MirageRoom(string roomId)
+        {
+            return $"{MirageRoomPrefix}{NormalizeRoomId(roomId)}";
+        }
 
         // Group is room-scoped: all rounds in a room share the same channel.
         public static string Game(string roomId)

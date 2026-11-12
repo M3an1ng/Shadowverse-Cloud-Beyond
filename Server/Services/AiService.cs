@@ -131,26 +131,39 @@ namespace ShadowverseBeyond.Server.Services
             if (bestOffer != null)
                 return new("MirageBuyOffer", bestOffer.OfferId);
 
-            if (aiState.LeaderCard != null && aiState.CurrentPP > 0)
+            if (aiState.CurrentPP >= 0)
             {
-                using var scope = _serviceScopeFactory.CreateScope();
-                var gameService = scope.ServiceProvider.GetRequiredService<IGameService>();
-                var actPlayability = await gameService.GetActPlayabilityAsync(
-                    gameState.GameId,
-                    aiPlayerId,
-                    aiState.LeaderCard.InstanceId,
-                    CancellationToken.None);
-                var playableAbility = actPlayability.Abilities.FirstOrDefault(a =>
-                    a.IsPlayable && (!a.RequiresTargetSelection || a.HasValidTargets));
-                if (playableAbility != null || (actPlayability.Abilities.Count == 0
-                    && actPlayability.IsPlayable
-                    && (!actPlayability.RequiresTargetSelection || actPlayability.HasValidTargets)))
+                var actCandidates = new List<CardInstanceDto>();
+                if (aiState.LeaderCard != null)
                 {
-                    return new("RequestAct", new ActActionDto
+                    actCandidates.Add(aiState.LeaderCard);
+                }
+                actCandidates.AddRange(fieldUnits);
+
+                if (actCandidates.Count > 0)
+                {
+                    using var scope = _serviceScopeFactory.CreateScope();
+                    var gameService = scope.ServiceProvider.GetRequiredService<IGameService>();
+                    foreach (var actCard in actCandidates)
                     {
-                        CardUid = aiState.LeaderCard.InstanceId,
-                        AbilityRuntimeId = playableAbility?.AbilityRuntimeId
-                    });
+                        var actPlayability = await gameService.GetActPlayabilityAsync(
+                            gameState.GameId,
+                            aiPlayerId,
+                            actCard.InstanceId,
+                            CancellationToken.None);
+                        var playableAbility = actPlayability.Abilities.FirstOrDefault(a =>
+                            a.IsPlayable && (!a.RequiresTargetSelection || a.HasValidTargets));
+                        if (playableAbility != null || (actPlayability.Abilities.Count == 0
+                            && actPlayability.IsPlayable
+                            && (!actPlayability.RequiresTargetSelection || actPlayability.HasValidTargets)))
+                        {
+                            return new("RequestAct", new ActActionDto
+                            {
+                                CardUid = actCard.InstanceId,
+                                AbilityRuntimeId = playableAbility?.AbilityRuntimeId
+                            });
+                        }
+                    }
                 }
             }
 

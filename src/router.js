@@ -58,6 +58,13 @@ class Router {
             cleanup: this.cleanupCardEditorPage.bind(this)
         });
 
+        this.routes.set('mirage-lobby', {
+            element: document.getElementById('mirage-lobby-page'),
+            title: '幻境战棋大厅 - 影之诗 星云',
+            init: this.initMirageLobbyPage.bind(this),
+            cleanup: this.cleanupMirageLobbyPage.bind(this)
+        });
+
         this.routes.set('mirage-card-editor', {
             element: document.getElementById('mirage-card-editor-page'),
             title: '幻境卡牌工坊 - 影之诗 星云',
@@ -268,6 +275,42 @@ class Router {
             }
         } catch (error) {
             console.error('Router: Failed to cleanup card editor:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * 初始化幻境 8人大厅页面
+     */
+    async initMirageLobbyPage() {
+        try {
+            const lobbyModule = await import('./mirageLobby.js');
+            if (window.__svMirageLobbyHost) {
+                lobbyModule.configureMirageLobbyHost(window.__svMirageLobbyHost);
+            }
+            await lobbyModule.initializeMirageLobbyPage('mirage-lobby-container');
+        } catch (error) {
+            console.error('Router: Failed to initialize mirage lobby:', error);
+            const container = document.getElementById('mirage-lobby-container');
+            if (container) {
+                container.innerHTML = `
+                    <div class="error-message">
+                        <h3>加载失败</h3>
+                        <p>无法加载幻境战棋大厅: ${error.message}</p>
+                        <button onclick="location.reload()">重新加载</button>
+                    </div>
+                `;
+            }
+            throw error;
+        }
+    }
+
+    async cleanupMirageLobbyPage() {
+        try {
+            const lobbyModule = await import('./mirageLobby.js');
+            await lobbyModule.cleanupMirageLobbyPage();
+        } catch (error) {
+            console.error('Router: Failed to cleanup mirage lobby:', error);
             throw error;
         }
     }

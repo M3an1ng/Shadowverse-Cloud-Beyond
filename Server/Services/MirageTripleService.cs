@@ -38,7 +38,7 @@ namespace ShadowverseBeyond.Server.Services
             out CardInstance? synthesizedCard,
             out MirageDiscoverTicket? grantedTicket);
 
-        MirageDiscoverTicket CreateDiscoverTicket(int targetTier, MirageRuleConfig rules);
+        MirageDiscoverTicket? CreateDiscoverTicket(MirageMatchState? mirage, int targetTier, MirageRuleConfig rules, bool allowAboveMaxTier = false);
     }
 
     public sealed class MirageTripleService : IMirageTripleService
@@ -368,6 +368,20 @@ namespace ShadowverseBeyond.Server.Services
 
             var result = new DomainOperationResult { Success = true };
 
+            // Transfer exact shared-pool copy holdings from the 3 materials to the synthesized triple card BEFORE retiring them.
+            var aggregatedPoolHoldings = new Dictionary<int, int>();
+            foreach (var material in materials)
+            {
+                foreach (var (poolCardId, heldCount) in material.MiragePoolHoldings)
+                {
+                    if (poolCardId > 0 && heldCount > 0)
+                    {
+                        aggregatedPoolHoldings[poolCardId] = aggregatedPoolHoldings.GetValueOrDefault(poolCardId) + heldCount;
+                    }
+                }
+                material.MiragePoolHoldings.Clear();
+            }
+
             // Contract 3.2 Step 2: Retire all 3 material cards via RetireCardFromPlay
             // (NO CardSoldCompletedEvent, NO gold refund, NO Graveyard/Shadows/Destroy/LastWords).
             foreach (var material in materials)
@@ -386,6 +400,7 @@ namespace ShadowverseBeyond.Server.Services
             var tripleCard = cardFactory.CreateAndRegisterNewCard(gameState, baseDefinitionId, player.PlayerId, CardZone.Hand);
             tripleCard.IsMirageTriple = true;
             tripleCard.IsMirageRecruited = true;
+            tripleCard.MiragePoolHoldings = aggregatedPoolHoldings;
             tripleCard.CostOverride = 0;
             tripleCard.BaseAttackOverride = 2 * (baseDef?.Attack ?? 0);
             tripleCard.BaseHealthOverride = 2 * Math.Max(1, baseDef?.Health ?? 1);
@@ -411,8 +426,11 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             var targetTier = Math.Clamp(player.Mirage.TavernTier + 1, 1, gameState.Mirage.Rules.MaxTavernTier);
-            var ticket = CreateDiscoverTicket(targetTier, gameState.Mirage.Rules);
-            player.Mirage.PendingTickets.Add(ticket);
+            var ticket = CreateDiscoverTicket(gameState.Mirage, targetTier, gameState.Mirage.Rules, allowAboveMaxTier: false);
+            if (ticket != null)
+            {
+                player.Mirage.PendingTickets.Add(ticket);
+            }
             grantedTicket = ticket;
 
             var auraRefreshResult = MirageCardRetirement.RefreshAllBoardAuras(context, "mirage_triple_synthesized");
@@ -426,33 +444,87 @@ namespace ShadowverseBeyond.Server.Services
             return result;
         }
 
-        public MirageDiscoverTicket CreateDiscoverTicket(int targetTier, MirageRuleConfig rules)
+        public MirageDiscoverTicket? CreateDiscoverTicket(
+            MirageMatchState? mirage,
+            int targetTier,
+            MirageRuleConfig rules,
+            bool allowAboveMaxTier = false)
         {
-            var clampedTier = Math.Clamp(targetTier, 1, rules.MaxTavernTier);
-            var exactPool = _shopService.GetPoolForExactTier(clampedTier, rules.MaxTavernTier)
-                .Select(c => c.CardDefinitionId)
-                .Distinct()
+            var effectiveMaxTier = Math.Max(1, rules.MaxTavernTier);
+            var resolvedTier = allowAboveMaxTier
+                ? Math.Max(1, targetTier)
+                : Math.Clamp(targetTier, 1, effectiveMaxTier);
+
+            var exactEntries = _shopService.GetPoolForExactTier(resolvedTier, effectiveMaxTier, allowAboveMaxTier)
+                .GroupBy(c => c.CardDefinitionId)
+                .Select(g => g.First())
                 .ToList();
 
             var candidateIds = new List<int>(3);
-            PickRandomDistinct(exactPool, 3, candidateIds);
-
-            if (candidateIds.Count < 3)
+            if (mirage != null)
             {
-                var fallbackPool = _shopService.GetPoolUpToTier(clampedTier, rules.MaxTavernTier)
-                    .Select(c => c.CardDefinitionId)
-                    .Where(id => !candidateIds.Contains(id))
-                    .Distinct()
-                    .ToList();
-                PickRandomDistinct(fallbackPool, 3 - candidateIds.Count, candidateIds);
+                PickWeightedDistinctWithReservation(mirage, exactEntries, 3, candidateIds);
+
+                if (candidateIds.Count < 3 && !allowAboveMaxTier)
+                {
+                    var fallbackEntries = _shopService.GetPoolUpToTier(resolvedTier, effectiveMaxTier)
+                        .Where(c => !candidateIds.Contains(c.CardDefinitionId))
+                        .GroupBy(c => c.CardDefinitionId)
+                        .Select(g => g.First())
+                        .ToList();
+                    PickWeightedDistinctWithReservation(mirage, fallbackEntries, 3 - candidateIds.Count, candidateIds);
+                }
+            }
+            else
+            {
+                var exactIds = exactEntries.Select(e => e.CardDefinitionId).ToList();
+                PickRandomDistinct(exactIds, 3, candidateIds);
+                if (candidateIds.Count < 3 && !allowAboveMaxTier)
+                {
+                    var fallbackIds = _shopService.GetPoolUpToTier(resolvedTier, effectiveMaxTier)
+                        .Select(c => c.CardDefinitionId)
+                        .Where(id => !candidateIds.Contains(id))
+                        .Distinct()
+                        .ToList();
+                    PickRandomDistinct(fallbackIds, 3 - candidateIds.Count, candidateIds);
+                }
+            }
+
+            if (candidateIds.Count == 0)
+            {
+                return null;
             }
 
             return new MirageDiscoverTicket
             {
                 TicketId = Guid.NewGuid(),
-                TargetTier = clampedTier,
+                TargetTier = resolvedTier,
                 CandidateCardDefinitionIds = candidateIds
             };
+        }
+
+        private void PickWeightedDistinctWithReservation(
+            MirageMatchState mirage,
+            List<MirageCardCatalogEntry> sourceEntries,
+            int count,
+            List<int> destination)
+        {
+            if (sourceEntries.Count == 0 || count <= 0)
+            {
+                return;
+            }
+
+            var remainingEntries = new List<MirageCardCatalogEntry>(sourceEntries);
+            for (int i = 0; i < count && remainingEntries.Count > 0; i++)
+            {
+                if (!_shopService.TryDrawWeightedFromPool(mirage, remainingEntries, out var picked))
+                {
+                    break;
+                }
+
+                destination.Add(picked.CardDefinitionId);
+                remainingEntries.RemoveAll(e => e.CardDefinitionId == picked.CardDefinitionId);
+            }
         }
 
         private static void PickRandomDistinct(List<int> pool, int count, List<int> destination)

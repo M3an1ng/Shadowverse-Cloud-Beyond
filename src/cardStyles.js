@@ -63,8 +63,12 @@ export function cardFace(card, { appearance = null, onClick = null, applyPrefere
   img.decoding = "async";
   img.loading = "lazy";
   face.append(img);
-  face.append(miniCardBadge("cost", cardValue(card, "cost", 0)));
-  if (String(cardValue(card, "type")).toLowerCase() === "follower")
+  const isMirage = Boolean(cardValue(card, "isMirageCard", false));
+  const cardTypeLower = String(cardValue(card, "type")).toLowerCase();
+  if (!isMirage || cardTypeLower !== "leader") {
+    face.append(miniCardBadge("cost", cardValue(card, "cost", 0), { isMirage }));
+  }
+  if (cardTypeLower === "follower")
     face.append(
       miniCardBadge("attack", cardValue(card, "attack", 0)),
       miniCardBadge("health", cardValue(card, "health", 0)),

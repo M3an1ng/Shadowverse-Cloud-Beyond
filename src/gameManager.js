@@ -20,6 +20,7 @@ export const mirageCombatPlayback = {
     playbackToken: 0,
     abortController: null,
     pendingGameEndDto: null,
+    pendingStandingsDto: null,
     pendingTurnStartBannerPlayerId: null,
     currentReplay: null,
     currentStepIndex: -1
@@ -128,6 +129,15 @@ function createInitialGameState() {
         phase: "Initializing",
         mode: "Standard",
         mirage: null,
+        mirageRoomId: null,
+        mirageStandings: null,
+        mirageRoomVersion: 0,
+        selfOriginalPlayerId: null,
+        viewingPlayerId: null,
+        viewEpoch: 0,
+        pendingSpectateTargetId: null,
+        gameMessage: null,
+        miragePlacementModalDismissed: false,
         isEndingTurn: false,
         activePlayer: null, // 对当前玩家实例的引用
         opponentPlayer: null, // 对对手玩家实例的引用
@@ -891,6 +901,9 @@ export function initializeGame(idOfGame, idOfPlayer, options = {}) {
     resetGameSessionState("new_game");
     gameState.gameId = idOfGame;
     gameState.localPlayerId = idOfPlayer;
+    gameState.selfOriginalPlayerId = idOfPlayer;
+    gameState.viewingPlayerId = idOfPlayer;
+    gameState.mirageRoomId = options.mirageRoomId || null;
     gameState.phase = gameState.gamePhase = 'Connecting';
     gameState.dualControl = options.dualControl === true;
     gameState.dualControlSeatIds = {
@@ -902,10 +915,12 @@ export function initializeGame(idOfGame, idOfPlayer, options = {}) {
     }
 }
 
-export function initializeSpectator(gameId) {
+export function initializeSpectator(gameId, options = {}) {
     resetGameSessionState("new_game");
     gameState.gameId = gameId;
     gameState.isSpectator = true;
+    gameState.viewingPlayerId = options.viewingPlayerId || null;
+    gameState.mirageRoomId = options.mirageRoomId || null;
     gameState.phase = gameState.gamePhase = 'Connecting';
     signalRGuestConnection = null;
 }
@@ -1953,7 +1968,7 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
 
     if (isMirage) {
         if (gameState.phase !== "Recruit") {
-            showAlert("幻境战棋模式仅可在酒馆招募阶段启动主战者技能！");
+            showAlert("幻境战棋模式仅可在酒馆招募阶段启动能力！");
             return;
         }
         if (playerState.mirage?.isReady ?? playerState.mirage?.IsReady) {
@@ -1962,8 +1977,9 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
         }
         const isLocalLeader = cardInstance.ownerId === playerState.id
             && (cardInstance.zone === "Leader" || playerState.leaderCard?.uid === cardInstance.uid);
-        if (!isLocalLeader) {
-            showAlert("幻境战棋模式仅可启动我方主战者技能！");
+        const isLocalField = cardInstance.ownerId === playerState.id && cardInstance.zone === "Field";
+        if (!isLocalLeader && !isLocalField) {
+            showAlert("幻境战棋模式仅可启动我方主战者或场上卡牌的能力！");
             return;
         }
     } else {
@@ -2743,6 +2759,65 @@ export function updateFullGameState(serverState, options = {}) {
     // For now, assuming serverState is the complete source of truth for shared properties.
     // We preserve local-only properties like signalRConnection if they exist outside gameState.
 
+    const incomingMirage = serverState.Mirage ?? serverState.mirage ?? null;
+    const incomingTournamentRoomId = incomingMirage?.TournamentRoomId ?? incomingMirage?.tournamentRoomId ?? null;
+    const activeMirageRoomId = incomingTournamentRoomId
+        || gameState.mirageRoomId
+        || gameState.mirage?.tournamentRoomId
+        || gameState.mirage?.TournamentRoomId
+        || null;
+
+    const incomingViewEpoch = Number(readStateField(serverState, 'ViewEpoch', 'viewEpoch'));
+    const incomingViewingPlayerId = readStateField(serverState, 'ViewingPlayerId', 'viewingPlayerId');
+    const resetViewEpoch = options?.resetViewEpoch === true;
+
+    if (Number.isFinite(incomingViewEpoch) && incomingViewEpoch > 0) {
+        if (!resetViewEpoch && gameState.viewEpoch > 0 && incomingViewEpoch < gameState.viewEpoch) {
+            return true; // Discard stale state from a previous spectate target
+        }
+        if (!resetViewEpoch
+            && activeMirageRoomId
+            && gameState.pendingSpectateTargetId
+            && incomingViewingPlayerId
+            && String(incomingViewingPlayerId).toLowerCase() !== String(gameState.pendingSpectateTargetId).toLowerCase()) {
+            return true;
+        }
+        gameState.viewEpoch = incomingViewEpoch;
+        gameState.pendingSpectateTargetId = null;
+    } else if (activeMirageRoomId && !resetViewEpoch) {
+        // Group broadcasts (e.g. TurnStarted) do not carry ViewEpoch: reject stale cross-seat frames
+        if (gameState.pendingSpectateTargetId) {
+            if (!incomingViewingPlayerId ||
+                String(incomingViewingPlayerId).toLowerCase() !== String(gameState.pendingSpectateTargetId).toLowerCase()) {
+                return true;
+            }
+        } else if ((gameState.gameId && incomingStateGameId !== gameState.gameId)
+            || (gameState.viewingPlayerId
+                && incomingViewingPlayerId
+                && String(incomingViewingPlayerId).toLowerCase() !== String(gameState.viewingPlayerId).toLowerCase())) {
+            return true;
+        }
+    }
+
+    if (incomingTournamentRoomId) {
+        gameState.mirageRoomId = incomingTournamentRoomId;
+    }
+
+    const incomingRoomVer = Number(readStateField(serverState, 'RoomVersion', 'roomVersion'));
+    if (Number.isFinite(incomingRoomVer) && incomingRoomVer > 0) {
+        if (gameState.mirageRoomVersion > 0 && incomingRoomVer < gameState.mirageRoomVersion) {
+            return true;
+        }
+        gameState.mirageRoomVersion = incomingRoomVer;
+    }
+
+    if (incomingViewingPlayerId) {
+        gameState.viewingPlayerId = incomingViewingPlayerId;
+        if (gameState.isSpectator) {
+            gameState.localPlayerId = incomingViewingPlayerId;
+        }
+    }
+
     // Merge the server state into the local gameState
     // --- Smart Hydration: Assign top-level properties ---
     const incomingGameId = incomingStateGameId;
@@ -2837,6 +2912,10 @@ export function updateFullGameState(serverState, options = {}) {
     gameState.turnEndsAtUtc = serverState.TurnEndsAtUtc ?? serverState.turnEndsAtUtc ?? null;
     gameState.gameOver = readStateField(serverState, 'IsGameOver', 'isGameOver') || false;
     gameState.winner = readStateField(serverState, 'WinnerId', 'winnerId') || null;
+    gameState.gameMessage = readStateField(serverState, 'GameMessage', 'gameMessage') || null;
+    if (!gameState.gameOver) {
+        gameState.miragePlacementModalDismissed = false;
+    }
     gameState.selectedCardUid = null; // Reset selections on full update
     gameState.selectedAttackerUid = null; // Reset selections on full update
     // Find player DTOs to get mulligan status
@@ -2978,12 +3057,19 @@ export function updateFullGameState(serverState, options = {}) {
     if (options?.isReconnectFullSync === true && mirageCombatPlayback.reconnectSyncPending) {
         mirageCombatPlayback.reconnectSyncPending = false;
         rawGameView?.hideMirageCombatPlaybackOverlay?.();
+        if (mirageCombatPlayback.pendingStandingsDto) {
+            gameState.mirageStandings = mirageCombatPlayback.pendingStandingsDto;
+            mirageCombatPlayback.pendingStandingsDto = null;
+        }
         if (!gameState.gameOver) {
             mirageCombatPlayback.pendingGameEndDto = null;
         }
     }
 
     if (isMiragePlaybackDomGateActive()) {
+        if (gameState.gameOver && !mirageCombatPlayback.pendingGameEndDto) {
+            mirageCombatPlayback.pendingGameEndDto = { isMirageSettlement: true };
+        }
         refreshTurnTimerFromState();
         return true;
     }
@@ -4292,7 +4378,9 @@ export function handleCardPlayed(eventData) {
         timestampUtc: eventData.TimestampUtc ?? eventData.timestampUtc ?? new Date().toISOString()
     });
 
-    return gameView.notifyCardPlayed?.(playedCard, sourcePlayerId);
+    const paidCost = eventData.PaidCost ?? eventData.paidCost;
+    const playMode = eventData.PlayMode ?? eventData.playMode;
+    return gameView.notifyCardPlayed?.(playedCard, sourcePlayerId, Number.isFinite(paidCost) ? paidCost : undefined, playMode);
 }
 
 export function handleCardSummoned(eventData) {
@@ -4322,13 +4410,12 @@ function finalizeGameOverPresentation() {
 }
 
 export function handleGameOver(eventData) {
-    // DTO: GameOverEventDto { WinnerId: string, Reason?: string } // Assuming PascalCase DTO
-    // Use PascalCase: WinnerId
-    const winnerId = eventData?.WinnerId ?? eventData?.winnerId;
-    if (!eventData || !winnerId) { // PascalCase
+    // DTO: GameOverEventDto { WinnerId?: string | null, EndReason?: string }
+    if (!eventData || typeof eventData !== "object") {
         console.error("GM Error: Invalid data in handleGameOver:", eventData);
         return;
     }
+    const winnerId = eventData?.WinnerId ?? eventData?.winnerId ?? null;
     gameState.gameOver = true;
     gameState.gamePhase = "GameOver";
     gameState.phase = "GameOver";
@@ -4381,6 +4468,7 @@ export function abortMirageCombatPlayback(reason = "completed") {
     if (reason === "leave_room" || reason === "new_game") {
         mirageCombatPlayback.reconnectSyncPending = false;
         mirageCombatPlayback.pendingGameEndDto = null;
+        mirageCombatPlayback.pendingStandingsDto = null;
         mirageCombatPlayback.pendingTurnStartBannerPlayerId = null;
         rawGameView?.hideMirageCombatPlaybackOverlay?.();
         return;
@@ -4394,6 +4482,10 @@ export function abortMirageCombatPlayback(reason = "completed") {
 
     if (reason === "skip" || reason === "completed") {
         mirageCombatPlayback.reconnectSyncPending = false;
+        if (mirageCombatPlayback.pendingStandingsDto) {
+            gameState.mirageStandings = mirageCombatPlayback.pendingStandingsDto;
+            mirageCombatPlayback.pendingStandingsDto = null;
+        }
         rawGameView?.hideMirageCombatPlaybackOverlay?.();
         if (typeof rawGameView?.renderGame === "function") {
             rawGameView.renderGame(gameState);
@@ -4411,6 +4503,65 @@ export function abortMirageCombatPlayback(reason = "completed") {
     }
 }
 
+export function handleMirageStandingsUpdated(standingsDto) {
+    if (!standingsDto) return;
+    const incomingVer = Number(standingsDto.RoomVersion ?? standingsDto.roomVersion ?? 0);
+    if (incomingVer > 0) {
+        if (gameState.mirageRoomVersion > 0 && incomingVer < gameState.mirageRoomVersion) {
+            return;
+        }
+        gameState.mirageRoomVersion = incomingVer;
+    }
+
+    const settledRound = standingsDto.SettledRoundNumber ?? standingsDto.settledRoundNumber ?? null;
+    if (isMiragePlaybackDomGateActive()) {
+        mirageCombatPlayback.pendingStandingsDto = standingsDto;
+        return;
+    }
+
+    const activeMirageRound = Number(gameState.mirage?.roundNumber ?? gameState.mirage?.RoundNumber ?? 0);
+    if (settledRound !== null
+        && Number(settledRound) >= activeMirageRound
+        && activeMirageRound > 0
+        && !gameState.gameOver
+        && (mirageCombatPlayback.lastPlayedRound || 0) < Number(settledRound)) {
+        // Guard against public-group standings arriving a few ms before seat-group combat replay
+        mirageCombatPlayback.pendingStandingsDto = standingsDto;
+        setTimeout(() => {
+            if (!isMiragePlaybackDomGateActive() && mirageCombatPlayback.pendingStandingsDto === standingsDto) {
+                gameState.mirageStandings = standingsDto;
+                mirageCombatPlayback.pendingStandingsDto = null;
+                if (typeof gameView?.renderGame === "function") {
+                    gameView.renderGame(gameState);
+                }
+            }
+        }, 260);
+        return;
+    }
+
+    gameState.mirageStandings = standingsDto;
+    if (typeof gameView?.renderGame === "function") {
+        gameView.renderGame(gameState);
+    }
+}
+
+export async function switchMirageSpectateTargetRequest(targetPlayerId) {
+    if (!signalRConnection || !targetPlayerId) return;
+    const nextEpoch = (Number(gameState.viewEpoch) || 1) + 1;
+    gameState.viewEpoch = nextEpoch;
+    gameState.pendingSpectateTargetId = String(targetPlayerId);
+    gameState.isSpectator = true;
+    gameState.miragePlacementModalDismissed = true;
+    abortMirageCombatPlayback("new_game");
+    try {
+        await signalRConnection.invoke("SwitchMirageSpectateTarget", String(targetPlayerId), nextEpoch);
+    } catch (error) {
+        gameState.pendingSpectateTargetId = null;
+        console.error("GM: SwitchMirageSpectateTarget failed:", error);
+        showAlert(`切换观战视角失败：${error?.message || error}`);
+    }
+}
+
 export async function handleMirageCombatReplay(replayDto) {
     const combatId = replayDto?.combatId ?? replayDto?.CombatId;
     if (!replayDto || !combatId) {
@@ -4419,6 +4570,30 @@ export async function handleMirageCombatReplay(replayDto) {
     }
     if (mirageCombatPlayback.reconnectSyncPending) {
         return;
+    }
+
+    const activeMirageRoomId = gameState.mirageRoomId
+        || gameState.mirage?.tournamentRoomId
+        || gameState.mirage?.TournamentRoomId
+        || null;
+    if (activeMirageRoomId) {
+        if (gameState.pendingSpectateTargetId) {
+            return;
+        }
+        const replayRoomVer = Number(replayDto?.roomVersion ?? replayDto?.RoomVersion);
+        if (Number.isFinite(replayRoomVer)
+            && replayRoomVer > 0
+            && gameState.mirageRoomVersion > 0
+            && replayRoomVer < gameState.mirageRoomVersion) {
+            return;
+        }
+        const replayViewingId = replayDto?.viewingPlayerId ?? replayDto?.ViewingPlayerId ?? null;
+        const currentViewingId = gameState.viewingPlayerId || gameState.localPlayerId || null;
+        if (replayViewingId
+            && currentViewingId
+            && String(replayViewingId).toLowerCase() !== String(currentViewingId).toLowerCase()) {
+            return;
+        }
     }
     if (mirageCombatPlayback.active) {
         mirageCombatPlayback.playbackToken += 1;
@@ -4436,6 +4611,7 @@ export async function handleMirageCombatReplay(replayDto) {
     mirageCombatPlayback.abortController = abortController;
     mirageCombatPlayback.currentReplay = replayDto;
     mirageCombatPlayback.currentStepIndex = -1;
+    mirageCombatPlayback.lastPlayedRound = Number(replayDto?.roundNumber ?? replayDto?.RoundNumber ?? 0);
 
     const steps = Array.isArray(replayDto.steps ?? replayDto.Steps)
         ? (replayDto.steps ?? replayDto.Steps)

@@ -31,6 +31,32 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             [6] = 10
         };
 
+        public Dictionary<int, int> InitialCopiesByTier { get; set; } = new()
+        {
+            [1] = 15,
+            [2] = 15,
+            [3] = 13,
+            [4] = 11,
+            [5] = 9,
+            [6] = 7,
+            [7] = 5
+        };
+
+        public int GetInitialPoolCopiesForTier(int tier)
+        {
+            if (tier <= 0)
+            {
+                return 0;
+            }
+
+            if (InitialCopiesByTier.TryGetValue(tier, out var copies))
+            {
+                return Math.Max(0, copies);
+            }
+
+            return tier >= 7 ? 5 : 7;
+        }
+
         public int GetBaseUpgradeCostForNextTier(int currentTier)
         {
             if (currentTier >= MaxTavernTier)
@@ -90,9 +116,19 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     {
         [JsonIgnore]
         public object RoundSyncLock { get; } = new();
+        [JsonIgnore]
+        public object SharedPoolSyncRoot { get; init; } = new();
+        public string? TournamentRoomId { get; init; }
+        public int? TournamentSeatIndex { get; init; }
+        public bool IsNextRoundGateClosed { get; set; }
+        [JsonIgnore]
+        public bool IsTournamentSeat => !string.IsNullOrWhiteSpace(TournamentRoomId);
         public int RoundNumber { get; set; } = 1;
         public int? ClosingRecruitRoundNumber { get; set; }
         public HashSet<Guid> ReadyPlayerIds { get; set; } = new();
+        public Dictionary<int, int> SharedCardPool { get; set; } = new();
+        public Dictionary<int, int> InitialCardPoolCaps { get; set; } = new();
+        public HashSet<Guid> ReturnedEliminatedPlayerIds { get; set; } = new();
         public Guid? ActiveCombatId { get; set; }
         public HashSet<Guid> CommittedCombatIds { get; set; } = new();
         public Guid? LastCombatId { get; set; }
@@ -106,5 +142,29 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         [JsonIgnore]
         public Guid? NextCombatGhostId { get; set; }
         public MirageRuleConfig Rules { get; set; } = new();
+
+        public Dictionary<int, int> SnapshotSharedCardPool()
+        {
+            lock (SharedPoolSyncRoot)
+            {
+                return new Dictionary<int, int>(SharedCardPool);
+            }
+        }
+
+        public Dictionary<int, int> SnapshotInitialCardPoolCaps()
+        {
+            lock (SharedPoolSyncRoot)
+            {
+                return new Dictionary<int, int>(InitialCardPoolCaps);
+            }
+        }
+
+        public int GetSharedPoolRemaining(int cardDefinitionId)
+        {
+            lock (SharedPoolSyncRoot)
+            {
+                return SharedCardPool.TryGetValue(cardDefinitionId, out var copies) ? copies : 0;
+            }
+        }
     }
 }

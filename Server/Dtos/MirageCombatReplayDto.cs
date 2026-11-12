@@ -36,6 +36,9 @@ namespace ShadowverseBeyond.Server.Dtos
     {
         public Guid CombatId { get; init; }
         public int RoundNumber { get; init; }
+        public long? RoomVersion { get; init; }
+        public Guid? ViewingPlayerId { get; init; }
+        public int? ViewEpoch { get; init; }
         public Guid FirstAttackerPlayerId { get; init; }
         public GameStateDto InitialState { get; init; } = null!;
         public List<MirageCombatStepDto> Steps { get; init; } = new();

@@ -10,11 +10,31 @@ export const DEFAULT_NUMBER_STYLE = 'shadowverse-symd2';
 export const NUMBER_STYLES = [{ id: 'shadowverse-symd2', label: '默认（symd2）' }];
 export const FILE_FORMAT = 'svwb-mse-web-card-set';
 
+export function normalizeSectionStyle(style) {
+  return SECTION_STYLES.includes(style) ? style : '普通';
+}
+
+export function normalizeRuleSectionText(text, { stripItalic = false } = {}) {
+  let normalized = String(text ?? '').replace(/\r\n/g, '\n');
+  if (stripItalic) {
+    normalized = normalized.replace(/<\/?i>/g, '');
+  }
+  normalized = normalized
+    .replace(/\n*[ \t]*(?:[-—─]{2,}|==)[ \t]*\n*/g, '\n--\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/(?:\n--\n)+/g, '\n--\n')
+    .trim()
+    .replace(/^(?:--\s*\n?)+/, '')
+    .replace(/(?:\n?\s*--)+$/, '')
+    .trim();
+  return normalized;
+}
+
 export function newCard() {
   return {
     editorId: crypto.randomUUID(), sourceCardId: null, name: '新卡牌', type: 'Follower',
     class: 'Neutral', rarity: 'Bronze', cardSet: '默认', cost: 0, attack: 0, health: 1,
-    keywords: [], tribe: [], countdown: null, isCollectible: true, isImplemented: false, abilityIds: [],
+    keywords: [], tribe: [], countdown: null, isMirageCard: false, mirageBuyCost: null, isCollectible: true, isImplemented: false, abilityIds: [],
     presentation: {
       template: 'shadowverse-beyond', version: 1, language: 'zh-TW', fontSize: 16.8, autoFitFontSize: true,
       numberStyle: DEFAULT_NUMBER_STYLE, alternateArt: false, artist: '', showArtist: true,
@@ -36,11 +56,74 @@ export function initialSet() {
   return { name: 'Beyond 测试卡集', author: '', description: '', cards: [card] };
 }
 
-export function descriptionFromSections(sections) {
-  return sections.filter(section => section.text.trim()).map(section => {
-    const prefix = ['进化', '超进化', '纹章', '信仰'].includes(section.style) ? `【${section.style}】\n` : '';
-    return prefix + section.text.replace(/<\/?i>/g, '').replace(/==/g, '\n──\n');
-  }).join('\n\n');
+export function descriptionFromSections(sections, options = {}) {
+  if (!Array.isArray(sections)) return '';
+  const normType = String(options.cardType ?? '').trim().toLowerCase();
+  const isStandaloneCrestOrFaith = normType === 'crest' || normType === 'faith';
+  const isTw = options.language === 'zh-TW';
+
+  const nonEmpty = sections
+    .map(section => ({
+      style: normalizeSectionStyle(section?.style),
+      text: normalizeRuleSectionText(section?.text, { stripItalic: true }),
+      refToken: String(section?.refToken ?? '').trim()
+    }))
+    .filter(section => section.text.length > 0 || (!isStandaloneCrestOrFaith && ['纹章', '信仰'].includes(section.style) && section.refToken));
+
+  if (isStandaloneCrestOrFaith) {
+    return nonEmpty
+      .map(section => section.text.replace(/^【(?:纹章|紋章|信仰)】\s*\n?/, '').trim())
+      .filter(Boolean)
+      .join('\n--\n');
+  }
+
+  const bodyBlocks = [];
+  const refLines = [];
+  const seenRefs = new Set();
+
+  for (const section of nonEmpty) {
+    if (section.style === '纹章' || section.style === '信仰') {
+      const fallbackName = String(options.cardName ?? '').trim() || '未命名卡牌';
+      const token = section.refToken || `${section.style}：${fallbackName}`;
+      if (!seenRefs.has(token)) {
+        seenRefs.add(token);
+        refLines.push(`{${token}}`);
+      }
+      continue;
+    }
+
+    let body = section.text;
+    if (section.style === '进化') {
+      body = body.replace(/^【(?:进化|進化)】\s*\n+/, '').trim();
+      if (body && !/^(?:【(?:进化时|進化時)】|(?:进化后|進化後)(?:[：:\s]|$))/.test(body)) {
+        body = `${isTw ? '【進化時】' : '【进化时】'}${body}`;
+      }
+    } else if (section.style === '超进化') {
+      body = body.replace(/^【(?:超进化|超進化)】\s*\n+/, '').trim();
+      if (body && !/^(?:【(?:超进化时|超進化時)】|(?:超进化后|超進化後)(?:[：:\s]|$))/.test(body)) {
+        body = `${isTw ? '【超進化時】' : '【超进化时】'}${body}`;
+      }
+    }
+
+    if (body) {
+      bodyBlocks.push({ style: section.style, text: body });
+    }
+  }
+
+  let bodyResult = '';
+  for (let i = 0; i < bodyBlocks.length; i++) {
+    if (i === 0) {
+      bodyResult = bodyBlocks[i].text;
+      continue;
+    }
+    const prev = bodyBlocks[i - 1];
+    const curr = bodyBlocks[i];
+    const joiner = prev.style === '进化' && curr.style === '超进化' ? '\n' : '\n--\n';
+    bodyResult += `${joiner}${curr.text}`;
+  }
+
+  if (refLines.length === 0) return bodyResult;
+  return bodyResult ? `${bodyResult}\n${refLines.join('\n')}` : refLines.join('\n');
 }
 
 export function cardParameters(card) {
@@ -49,8 +132,16 @@ export function cardParameters(card) {
     card_set: card.cardSet, cost: card.cost,
     attack: card.type === 'Follower' ? card.attack : null,
     health: (card.type === 'Follower' || card.type === 'Leader') ? card.health : null,
-    description: descriptionFromSections(card.presentation.sections), keywords: card.keywords,
-    tribe: card.tribe, countdown: card.countdown, isCollectible: card.isCollectible, isImplemented: card.isImplemented ?? true,
+    description: descriptionFromSections(card.presentation.sections, {
+      cardType: card.type,
+      cardName: card.name,
+      language: card.presentation?.language
+    }),
+    keywords: card.keywords,
+    tribe: card.tribe, countdown: card.countdown,
+    isMirageCard: Boolean(card.isMirageCard),
+    mirageBuyCost: card.isMirageCard && card.type !== 'Leader' ? (card.mirageBuyCost ?? 3) : null,
+    isCollectible: card.isCollectible, isImplemented: card.isImplemented ?? true,
     abilityIds: card.abilityIds, presentation: structuredClone(card.presentation)
   };
 }
@@ -61,7 +152,7 @@ function requireText(value, label) {
 
 function requireImage(src) {
   requireText(src, '图片');
-  if (src && !/^data:image\/(png|jpeg|webp|gif);base64,/.test(src) && !/^\/assets\/(cards|card-sets|card-styles)\/[\w/.-]+\.(webp|png|jpe?g)$/.test(src)) {
+  if (src && !/^data:image\/(png|jpeg|webp|gif);base64,/.test(src) && !/^\/assets\/(cards|card-sets|card-styles)\/[\w/.-]+\.(webp|png|jpe?g)(?:\?[\w=&.-]+)?$/.test(src)) {
     throw new Error('图片必须是导入文件内的图片数据或项目卡牌素材。');
   }
 }
@@ -96,6 +187,10 @@ export function validateSet(set) {
     if (!Array.isArray(p.sections) || p.sections.length !== 5) throw new Error('Beyond 模板需要五个规则段落。');
     for (const section of p.sections) {
       requireText(section.text, '段落'); requireImage(section.icon);
+      section.style = normalizeSectionStyle(section.style);
+      if (section.text.includes('==')) {
+        section.text = normalizeRuleSectionText(section.text);
+      }
       if (!SECTION_STYLES.includes(section.style)) throw new Error('段落样式不受支持。');
     }
   }

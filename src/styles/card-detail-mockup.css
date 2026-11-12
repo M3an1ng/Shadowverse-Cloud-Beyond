@@ -331,6 +331,33 @@
     color: #fff;
 }
 
+.card-detail-modal .stat-cost .card-stat-star-sprite {
+    position: relative;
+    z-index: 1;
+    width: 68%;
+    height: 68%;
+    object-fit: contain;
+    pointer-events: none;
+    filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.8));
+}
+
+.card-detail-modal .stat-mirage-buy-cost {
+    top: -6px;
+    right: -6px;
+    width: auto;
+    height: 28px;
+    min-width: 42px;
+    padding: 0 9px;
+    border-radius: 14px;
+    background: linear-gradient(145deg, #5c390b 0%, #241303 100%);
+    border: 1.5px solid rgba(251, 191, 36, 0.9);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.8);
+    color: #fef3c7;
+    font-family: var(--cd-font-tech);
+    font-size: 0.92rem;
+    font-weight: 800;
+}
+
 .card-detail-modal .stat-atk {
     bottom: 10px;
     left: 10px;
@@ -1370,6 +1397,153 @@
 @media (max-width: 1160px) {
     .card-detail-modal-shell {
         --community-flyout-width: min(248px, 40vw);
+    }
+}
+
+@media (max-width: 960px), ((max-height: 540px) and (orientation: landscape)) {
+    .card-detail-modal-overlay {
+        padding:
+            calc(8px + var(--safe-top, 0px))
+            calc(12px + var(--safe-right, 0px))
+            calc(8px + var(--safe-bottom, 0px))
+            calc(12px + var(--safe-left, 0px));
+    }
+
+    .card-detail-modal-shell {
+        width: min(900px, calc(100vw - 24px - var(--safe-left, 0px) - var(--safe-right, 0px)));
+        height: min(600px, calc(var(--app-height, 100dvh) - 16px - var(--safe-top, 0px) - var(--safe-bottom, 0px)));
+    }
+
+    .card-detail-modal-shell.is-community-open {
+        transform: none;
+    }
+
+    .card-detail-modal .modal-header-bar {
+        height: 40px;
+        grid-template-columns: 44px 1fr 44px;
+    }
+
+    .card-detail-modal .back-btn,
+    .card-detail-modal .close-btn {
+        width: 44px;
+    }
+
+    .card-detail-modal .header-title {
+        font-size: 1rem;
+    }
+
+    .card-detail-modal .detail-content-frame {
+        padding: 10px 14px 12px;
+    }
+
+    .card-detail-modal .detail-content-grid {
+        grid-template-columns: minmax(0, 38fr) minmax(0, 62fr);
+        gap: 10px;
+    }
+
+    .card-detail-modal .visual-column {
+        padding: 4px 8px 4px 40px;
+        height: 100%;
+    }
+
+    .card-detail-modal .card-preview-wrapper {
+        margin-left: 0;
+        max-width: min(220px, calc((var(--app-height, 100dvh) - 82px) * 0.714));
+    }
+
+    .card-detail-modal .card-stat-indicator {
+        width: 38px;
+        height: 38px;
+        font-size: 1.35rem;
+    }
+
+    .card-detail-modal .stat-cost {
+        top: -6px;
+        left: -6px;
+    }
+
+    .card-detail-modal .stat-atk {
+        bottom: 6px;
+        left: 6px;
+    }
+
+    .card-detail-modal .stat-def {
+        bottom: 6px;
+        right: 6px;
+    }
+
+    .card-detail-modal .inspect-btn {
+        left: -40px;
+        bottom: 4px;
+        width: 36px;
+        height: 36px;
+        font-size: 0.68rem;
+    }
+
+    .card-detail-modal .data-column {
+        gap: 6px;
+    }
+
+    .card-detail-modal .name-row {
+        height: 34px;
+        padding: 0 12px;
+    }
+
+    .card-detail-modal .card-name {
+        font-size: 1.05rem;
+    }
+
+    .card-detail-modal .meta-row {
+        height: 40px;
+        padding: 4px 12px;
+    }
+
+    .card-detail-modal .meta-text {
+        font-size: 0.76rem;
+        gap: 1px;
+    }
+
+    .card-detail-modal .ability-box {
+        padding: 10px 12px;
+    }
+
+    .card-detail-modal .ability-text {
+        font-size: 0.82rem;
+        line-height: 1.48;
+    }
+
+    .card-detail-modal .side-buttons {
+        display: none;
+    }
+
+    .card-detail-modal .footer-actions-row {
+        height: 42px;
+        gap: 8px;
+    }
+
+    .card-detail-modal .btn-label {
+        font-size: 0.82rem;
+        margin-bottom: 0;
+    }
+
+    .card-detail-modal .btn-cost {
+        font-size: 0.72rem;
+    }
+
+    /* Overlay community flyout inside the modal right half instead of overflowing offscreen */
+    .card-detail-modal-shell .card-community-flyout {
+        top: 40px;
+        right: 0;
+        left: auto;
+        height: calc(100% - 40px);
+        border-radius: 0 0 12px 0;
+        background: rgba(7, 12, 22, 0.96);
+        backdrop-filter: blur(14px);
+        z-index: 30;
+    }
+
+    .card-detail-modal-shell.is-community-open .card-community-flyout {
+        width: min(300px, 56%);
     }
 }
 

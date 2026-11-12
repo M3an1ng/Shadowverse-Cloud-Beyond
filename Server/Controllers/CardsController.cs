@@ -244,15 +244,23 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     setDefinition ??= await ResolveLegacyCardSetDefinitionAsync();
                 }
 
-                var tavernTier = isMirage && !string.Equals(dto.Type, nameof(CardType.Leader), StringComparison.OrdinalIgnoreCase)
-                    ? Math.Clamp(dto.MirageTavernTier ?? (dto.Cost > 0 ? dto.Cost : 1), 1, MirageRuleConfig.DefaultMaxTavernTier)
+                var isCreateLeader = string.Equals(dto.Type, nameof(CardType.Leader), StringComparison.OrdinalIgnoreCase);
+                var normalizedCreateCost = isMirage
+                    ? (isCreateLeader ? 0 : Math.Max(1, dto.Cost))
+                    : Math.Max(0, dto.Cost);
+                var tavernTier = isMirage && !isCreateLeader
+                    ? normalizedCreateCost
+                    : (int?)null;
+                var mirageBuyCost = isMirage && !isCreateLeader
+                    ? Math.Clamp(dto.MirageBuyCost ?? MirageRuleConfig.DefaultBuyCost, 0, MirageRuleConfig.DefaultHardGoldCap)
                     : (int?)null;
 
                 var normalizedDto = dto with
                 {
                     IsMirageCard = isMirage,
                     MirageTavernTier = tavernTier,
-                    Cost = tavernTier ?? dto.Cost,
+                    MirageBuyCost = mirageBuyCost,
+                    Cost = normalizedCreateCost,
                     CardSet = isMirage
                         ? GameConstants.Cards.MirageCardSetName
                         : NormalizeCardSet(setDefinition?.Name ?? dto.CardSet),
@@ -262,6 +270,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 var entity = _mapper.Map<CardDefinition>(normalizedDto);
                 entity.IsMirageCard = isMirage;
                 entity.MirageTavernTier = tavernTier;
+                entity.MirageBuyCost = mirageBuyCost;
                 if (setDefinition != null)
                 {
                     entity.CardSetDefinitionId = setDefinition.Id;
@@ -362,9 +371,16 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                         ?? (string.IsNullOrWhiteSpace(dto.CardSet) ? existing.CardSet : NormalizeCardSet(dto.CardSet));
                 }
 
-                var isLeader = existing.Type == CardType.Leader || string.Equals(dto.Type, nameof(CardType.Leader), StringComparison.OrdinalIgnoreCase);
+                var effectiveTypeStr = string.IsNullOrWhiteSpace(dto.Type) ? existing.Type.ToString() : dto.Type;
+                var isLeader = string.Equals(effectiveTypeStr, nameof(CardType.Leader), StringComparison.OrdinalIgnoreCase);
+                var normalizedUpdateCost = existing.IsMirageCard
+                    ? (isLeader ? 0 : Math.Max(1, dto.Cost))
+                    : Math.Max(0, dto.Cost);
                 var tavernTier = existing.IsMirageCard && !isLeader
-                    ? Math.Clamp(dto.MirageTavernTier ?? (dto.Cost > 0 ? dto.Cost : (existing.MirageTavernTier ?? 1)), 1, MirageRuleConfig.DefaultMaxTavernTier)
+                    ? normalizedUpdateCost
+                    : (int?)null;
+                var mirageBuyCost = existing.IsMirageCard && !isLeader
+                    ? Math.Clamp(dto.MirageBuyCost ?? existing.MirageBuyCost ?? MirageRuleConfig.DefaultBuyCost, 0, MirageRuleConfig.DefaultHardGoldCap)
                     : (int?)null;
 
                 var mergedDto = dto with
@@ -372,7 +388,8 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                     Id = id,
                     IsMirageCard = existing.IsMirageCard,
                     MirageTavernTier = tavernTier,
-                    Cost = tavernTier ?? dto.Cost,
+                    MirageBuyCost = mirageBuyCost,
+                    Cost = normalizedUpdateCost,
                     CardSet = normalizedCardSet,
                     AbilityIds = effectiveAbilityIds,
                     Keywords = dto.Keywords ?? existing.Keywords,
@@ -387,6 +404,7 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                 var updatedEntity = _mapper.Map(mergedDto, existing);
                 updatedEntity.IsMirageCard = existing.IsMirageCard;
                 updatedEntity.MirageTavernTier = tavernTier;
+                updatedEntity.MirageBuyCost = mirageBuyCost;
                 if (setDefinition != null)
                 {
                     updatedEntity.CardSetDefinitionId = setDefinition.Id;
@@ -767,11 +785,14 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                         cardIdMap[srcCardId] = newCardId;
 
                         var isRoot = srcCardId == sourceRoot.Id;
-                        var defaultTier = ComputeDefaultMirageTier(srcCard.Cost);
+                        var isSrcLeader = srcCard.Type == CardType.Leader;
+                        var defaultTier = Math.Max(1, srcCard.Cost);
                         var requestedTier = request.MirageTavernTier ?? request.TavernTier;
-                        var resolvedTier = isRoot && requestedTier.HasValue
-                            ? Math.Clamp(requestedTier.Value, 1, MirageRuleConfig.DefaultMaxTavernTier)
-                            : defaultTier;
+                        var resolvedTier = isSrcLeader
+                            ? (int?)null
+                            : (isRoot && requestedTier.HasValue
+                                ? Math.Max(1, requestedTier.Value)
+                                : defaultTier);
 
                         var newPreviewPath = MirageCardPoolIsolationRules.CopyCardArtFileForImport(
                             workspaceRoot,
@@ -797,8 +818,9 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
                             CardSet = GameConstants.Cards.MirageCardSetName,
                             CardSetDefinitionId = mirageSet?.Id,
                             Class = srcCard.Class,
-                            Cost = resolvedTier,
+                            Cost = isSrcLeader ? 0 : (resolvedTier ?? Math.Max(1, srcCard.Cost)),
                             MirageTavernTier = resolvedTier,
+                            MirageBuyCost = isSrcLeader ? null : MirageRuleConfig.DefaultBuyCost,
                             Attack = srcCard.Attack,
                             Health = srcCard.Health,
                             Countdown = srcCard.Countdown,
@@ -1466,16 +1488,6 @@ namespace ShadowverseBeyond.Server.Controllers // Corrected namespace
             _db.CardSetDefinitions.Add(definition);
             await _db.SaveChangesAsync();
             return definition;
-        }
-
-        private static int ComputeDefaultMirageTier(int cost)
-        {
-            if (cost <= 1) return 1;
-            if (cost == 2) return 2;
-            if (cost == 3) return 3;
-            if (cost == 4) return 4;
-            if (cost <= 6) return 5;
-            return 6;
         }
 
         private static bool TryParsePackCode(string? value, out int region, out int sequence)

@@ -64,4 +64,12 @@
     --z-overlay: 100;
     --z-modal: 200;
     --z-tooltip: 300;
+
+    /* --- Viewport & Safe Area --- */
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
+    --app-width: var(--app-vw, 100dvw);
+    --app-height: var(--app-vh, 100dvh);
 }

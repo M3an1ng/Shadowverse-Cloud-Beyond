@@ -65,6 +65,8 @@ namespace ShadowverseBeyond.Server.Services
         /// <returns>True when the action was admitted to the queue; false when the request or game is invalid.</returns>
         Task<bool> EnqueuePlayerActionAsync(string gameId, PlayerActionWrapper action);
 
+        Task EndGameForRoomLeaveAsync(string gameId, Guid playerId, CancellationToken cancellationToken);
+
         void TriggerMirageAiRecruitIfNeeded(string gameId, int expectedRoundNumber,
             Task<PlayerActionCompletion>? prerequisiteCompletion = null);
 
@@ -111,6 +113,22 @@ namespace ShadowverseBeyond.Server.Services
         /// Marks a player as reconnected and resumes turn processing if possible.
         /// </summary>
         void MarkPlayerReconnected(string gameId, Guid playerId);
+
+        Task<GameState?> CreateMirageTournamentSeatGameAsync(
+            string seatGameId,
+            string tournamentRoomId,
+            int seatIndex,
+            Guid playerId,
+            bool isAi,
+            string displayName,
+            string avatarUrl,
+            int recruitTimeoutSeconds,
+            DateTime roundStartedAtUtc,
+            DateTime roundEndsAtUtc,
+            MirageMatchState sharedPoolSource,
+            CancellationToken cancellationToken = default);
+
+        void RetireMirageTournamentSeatGame(string seatGameId);
 
     }
 }

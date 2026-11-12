@@ -1,10 +1,12 @@
-import { CLASSES } from './document.js';
+import { CLASSES, normalizeSectionStyle } from './document.js';
 
 export const WIDTH = 1269;
 export const HEIGHT = 715;
 const ASSETS = '/mse-beyond/';
 const images = new Map();
 const maskedFrames = new Map();
+const fontLoadPromises = new Map();
+const loadedFontFamilies = new Set();
 // MSE 的普通字体以 96 DPI 下的 pt 定义；卡面坐标仍是像素，不能乘 card dpi。
 const PIXELS_PER_POINT = 96 / 72;
 const NUMBER_IMAGE_POINT_SIZE = 60;
@@ -25,8 +27,58 @@ export function loadImage(src) {
   return images.get(src);
 }
 
+function loadFontFamily(name) {
+  if (loadedFontFamilies.has(name)) {
+    return Promise.resolve();
+  }
+  if (typeof document === 'undefined' || !document.fonts?.load) {
+    loadedFontFamilies.add(name);
+    return Promise.resolve();
+  }
+  if (!fontLoadPromises.has(name)) {
+    const p = document.fonts.load(`20px "${name}"`)
+      .then(() => {
+        loadedFontFamilies.add(name);
+      })
+      .finally(() => {
+        if (!loadedFontFamilies.has(name)) {
+          fontLoadPromises.delete(name);
+        }
+      });
+    fontLoadPromises.set(name, p);
+  }
+  return fontLoadPromises.get(name);
+}
+
+export function getCardFontFamilies(language = 'zh-CN') {
+  const isTw = language === 'zh-TW';
+  return {
+    primary: isTw ? 'MSE WeiBei TC' : 'MSE WeiBei SC',
+    footer: isTw ? 'MSE Noto TC' : 'MSE Noto SC'
+  };
+}
+
+export function areCardFontsLoaded(language = 'zh-CN', { includeFooter = true } = {}) {
+  const { primary, footer } = getCardFontFamilies(language);
+  if (!loadedFontFamilies.has(primary)) return false;
+  if (includeFooter && !loadedFontFamilies.has(footer)) return false;
+  return true;
+}
+
+export async function loadCardFonts(language = 'zh-CN', { includeFooter = true, onStage = null } = {}) {
+  const { primary, footer } = getCardFontFamilies(language);
+  if (!loadedFontFamilies.has(primary)) {
+    onStage?.('primary', primary);
+    await loadFontFamily(primary);
+  }
+  if (includeFooter && !loadedFontFamilies.has(footer)) {
+    onStage?.('footer', footer);
+    await loadFontFamily(footer);
+  }
+}
+
 export async function loadFonts() {
-  await Promise.all(['MSE WeiBei SC', 'MSE WeiBei TC', 'MSE Noto SC', 'MSE Noto TC'].map(name => document.fonts.load(`20px "${name}"`)));
+  await Promise.all(['MSE WeiBei SC', 'MSE WeiBei TC', 'MSE Noto SC', 'MSE Noto TC'].map(loadFontFamily));
 }
 
 function canvasOf(width, height) {
@@ -49,7 +101,7 @@ export function drawCroppedArt(ctx, image, crop, rect) {
   ctx.restore();
 }
 
-async function maskedFrame(name, maskName = 'card_mask.png') {
+export async function maskedFrame(name, maskName = 'card_mask.png') {
   const key = `${name}|${maskName}`;
   if (!maskedFrames.has(key)) {
     const frameSrc = name.startsWith('data:') || name.startsWith('/') ? name : ASSETS + name;
@@ -69,7 +121,16 @@ async function maskedFrame(name, maskName = 'card_mask.png') {
 }
 
 function fontFor(card) {
-  return card.presentation.language === 'zh-TW' ? '"MSE WeiBei TC", "MSE WeiBei SC"' : '"MSE WeiBei SC", "MSE WeiBei TC"';
+  // 按语言严格隔离简繁网络字体，避免在 zh-CN 下意外触发 15MB+ 繁体字库下载，并提供系统本地字体瞬时兜底。
+  return card.presentation.language === 'zh-TW'
+    ? '"MSE WeiBei TC", "DFKai-SB", "BiauKai", "Microsoft JhengHei", "PingFang TC", serif'
+    : '"MSE WeiBei SC", "STKaiti", "KaiTi", "Microsoft YaHei", "PingFang SC", serif';
+}
+
+function footerFontFor(card) {
+  return card.presentation.language === 'zh-TW'
+    ? '"MSE Noto TC", "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", sans-serif'
+    : '"MSE Noto SC", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif';
 }
 
 function drawText(ctx, text, x, y, width, size, font, align = 'left', color = '#fff', shadow = null) {
@@ -84,19 +145,49 @@ function drawText(ctx, text, x, y, width, size, font, align = 'left', color = '#
   ctx.restore();
 }
 
-function ruleGlyphs(text) {
+const DIVIDER_SENTINEL = '\x1e';
+
+export function ruleGlyphs(text) {
   let emphasis = false;
-  let keyword = false;
   const glyphs = [];
-  text = text.replace(/·/g, '•').replace(/￥/g, '$').replace(/\r?\n?[ \t]*==[ \t]*\r?\n?/g, '==');
+  text = text
+    .replace(/·/g, '•')
+    .replace(/￥/g, '$')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n?[ \t]*(?:[-—─]{2,}|==)[ \t]*\n?/g, DIVIDER_SENTINEL);
   for (let i = 0; i < text.length;) {
     if (text.startsWith('<i>', i)) { emphasis = true; i += 3; continue; }
     if (text.startsWith('</i>', i)) { emphasis = false; i += 4; continue; }
-    if (text.startsWith('==', i)) { glyphs.push({ divider: true }); i += 2; continue; }
+    if (text[i] === DIVIDER_SENTINEL) { glyphs.push({ divider: true }); i += 1; continue; }
     const char = String.fromCodePoint(text.codePointAt(i));
-    if (char === '【') keyword = true;
-    glyphs.push({ char, emphasis: emphasis || keyword });
-    if (char === '】') keyword = false;
+    if (char === '【') {
+      const closeIdx = text.indexOf('】', i + 1);
+      const newlineIdx = text.indexOf('\n', i + 1);
+      const sentinelIdx = text.indexOf(DIVIDER_SENTINEL, i + 1);
+      const hasValidClose = closeIdx !== -1
+        && closeIdx > i + 1
+        && (newlineIdx === -1 || closeIdx < newlineIdx)
+        && (sentinelIdx === -1 || closeIdx < sentinelIdx);
+      if (hasValidClose) {
+        glyphs.push({ char: '【', emphasis });
+        const innerRaw = text.slice(i + 1, closeIdx);
+        let reachedSuffix = false;
+        for (let k = 0; k < innerRaw.length;) {
+          if (innerRaw.startsWith('<i>', k)) { emphasis = true; k += 3; continue; }
+          if (innerRaw.startsWith('</i>', k)) { emphasis = false; k += 4; continue; }
+          const innerChar = String.fromCodePoint(innerRaw.codePointAt(k));
+          if (innerChar === '_' && k > 0) {
+            reachedSuffix = true;
+          }
+          glyphs.push({ char: innerChar, emphasis: emphasis || !reachedSuffix });
+          k += innerChar.length;
+        }
+        glyphs.push({ char: '】', emphasis });
+        i = closeIdx + 1;
+        continue;
+      }
+    }
+    glyphs.push({ char, emphasis });
     i += char.length;
   }
   return glyphs;
@@ -128,32 +219,42 @@ function layoutRuleSections(ctx, sections, fontSize, font) {
   const renderedSections = [];
   let previous = null;
   let overflow = false;
+  // 原版 MSE 度量：16.8pt (22.4px) 下单行净高 22px、行步进 32px；末行不含额外行间空隙（栅栏定律）
+  const glyphHeight = fontSize * PIXELS_PER_POINT * (22 / 22.4);
+  const lineHeight = fontSize * PIXELS_PER_POINT * (32 / 22.4);
+
   for (let i = 0; i < sections.length; i++) {
-    const section = sections[i];
+    const rawSection = sections[i];
+    const style = normalizeSectionStyle(rawSection.style);
+    const section = style === rawSection.style ? rawSection : { ...rawSection, style };
     if (i > 0 && !sections[i - 1].text.trim() && !section.text.trim()) continue;
-    const crest = ['纹章', '信仰'].includes(section.style);
-    const ordinary = section.style.startsWith('普通');
+    const crest = ['纹章', '信仰'].includes(style);
+    const ordinary = style.startsWith('普通');
+    const hasTrailingDivider = style === '普通（分割线）' && Boolean(section.text.trim());
     const baseTop = previous
-      ? previous.top + previous.effectiveHeight + (previous.style === '普通（分割线）' ? 22 : previous.style === '普通' ? 0 : 11) + 20
+      ? previous.top + previous.effectiveHeight + (previous.hasTrailingDivider ? 22 : previous.ordinary ? 0 : 11) + 20
       : 180;
     const top = i === 0 ? baseTop + (crest ? 60 : 0) : baseTop + (crest ? 65 : ordinary ? -6 : 5);
     const backgroundTop = i === 0 ? 175 : baseTop + (ordinary ? -6 : 0);
     const crestTop = i === 0 ? 187 : baseTop + 12;
     const lines = section.text ? ruleLines(ctx, section.text, 614, fontSize, font) : [];
-    const lineHeight = fontSize * PIXELS_PER_POINT * 1.4;
-    const contentHeight = lines.length * lineHeight;
-    const effectiveHeight = Math.max(22, contentHeight);
+    const contentHeight = lines.length ? glyphHeight + (lines.length - 1) * lineHeight : 0;
+    const effectiveHeight = Math.max(glyphHeight, contentHeight);
     const lineCountForBg = section.text ? Math.max(1, Math.min(5, lines.length)) : 1;
-    const prefix = section.style === '进化' ? 'ev' : section.style === '超进化' ? 'sev' : crest ? 'crest' : '';
-    const hasVisualContent = Boolean(section.text.trim()) || section.style !== '无';
+    const prefix = style === '进化' ? 'ev' : style === '超进化' ? 'sev' : crest ? 'crest' : '';
+    const hasVisualContent = Boolean(section.text.trim()) || style !== '无';
     const visualBottom = hasVisualContent ? Math.max(
       top + effectiveHeight,
-      section.style === '普通（分割线）' && section.text.trim() ? top + effectiveHeight + 22 : 0,
+      hasTrailingDivider ? top + effectiveHeight + 22 : 0,
       prefix ? backgroundTop + effectiveHeight + 16 + (crest ? 60 : 0) : 0
     ) : 0;
     overflow ||= visualBottom > 571;
-    renderedSections.push({ i, section, crest, top, backgroundTop, crestTop, lines, lineHeight, contentHeight, effectiveHeight, lineCountForBg, prefix });
-    previous = { top, effectiveHeight, style: section.style };
+    renderedSections.push({
+      i, section, crest, ordinary, hasTrailingDivider,
+      top, backgroundTop, crestTop, lines,
+      glyphHeight, lineHeight, contentHeight, effectiveHeight, lineCountForBg, prefix
+    });
+    previous = { top, effectiveHeight, ordinary, hasTrailingDivider };
   }
   return { sections: renderedSections, overflow };
 }
@@ -175,6 +276,38 @@ async function drawNumbers(ctx, value, rect, style) {
   }
 }
 
+async function drawMirageStarTier(ctx, tierValue, rect) {
+  const tier = Math.max(1, Math.trunc(Number(tierValue) || 1));
+  const symbolScale = 28 / NUMBER_IMAGE_POINT_SIZE;
+  if (tier <= 7) {
+    const sprite = await loadImage(`${ASSETS}numbers/mirage-stars/${tier}.png`);
+    const w = sprite.width * symbolScale;
+    const h = sprite.height * symbolScale;
+    const scale = Math.min(1, rect.width / w, rect.height / h);
+    const drawW = w * scale;
+    const drawH = h * scale;
+    ctx.drawImage(sprite, rect.x + (rect.width - drawW) / 2, rect.y + (rect.height - drawH) / 2, drawW, drawH);
+    return;
+  }
+
+  const digits = String(tier).split('');
+  const [starSprite, ...digitSprites] = await Promise.all([
+    loadImage(`${ASSETS}numbers/mirage-stars/1.png`),
+    ...digits.map(d => loadImage(`${ASSETS}numbers/shadowverse-symd/${d}.png`))
+  ]);
+  const sprites = [starSprite, ...digitSprites];
+  const spacing = -12;
+  const widths = sprites.map((s, idx) => s.width * symbolScale * (idx === 0 ? 0.82 : 0.9));
+  const heights = sprites.map((s, idx) => s.height * symbolScale * (idx === 0 ? 0.82 : 0.9));
+  const total = widths.reduce((a, b) => a + b, 0) + spacing * (sprites.length - 1);
+  const scale = Math.min(1, rect.width / total);
+  let x = rect.x + (rect.width - total * scale) / 2;
+  for (let i = 0; i < sprites.length; i++) {
+    ctx.drawImage(sprites[i], x, rect.y + (rect.height - heights[i] * scale) / 2, widths[i] * scale, heights[i] * scale);
+    x += (widths[i] + spacing) * scale;
+  }
+}
+
 export async function renderCard(card, options = {}) {
   const omitKey = options?.omitTextField || null;
   const canvas = canvasOf(WIDTH, HEIGHT);
@@ -184,37 +317,66 @@ export async function renderCard(card, options = {}) {
   const fields = [];
   const p = card.presentation;
   const font = fontFor(card);
-  const footerFont = p.language === 'zh-TW' ? '"MSE Noto TC", "MSE Noto SC"' : '"MSE Noto SC", "MSE Noto TC"';
+  const footerFont = footerFontFor(card);
   const typography = (points, family = font, align = 'left') => ({ family, size: points * PIXELS_PER_POINT, align });
   const classKey = card.class.toLowerCase();
   const isFollower = card.type === 'Follower';
   const isLeader = card.type === 'Leader';
+  const isMirage = Boolean(card.isMirageCard ?? card.IsMirageCard);
+  const mirageTier = Math.max(1, Math.trunc(Number(card.cost) || 1));
   const frameType = (isFollower || isLeader) ? 'minion' : card.type === 'Spell' ? 'spell' : 'amulet';
   const rarity = p.alternateArt ? 'special' : card.rarity === 'Legend' ? 'legend' : card.rarity.toLowerCase();
   const picture = async (name, x, y, width, height) => ctx.drawImage(await loadImage(ASSETS + name), x, y, width, height);
   const field = (key, label, x, y, width, height, kind = 'text', textStyle = null) => fields.push({ key, label, x, y, width, height, kind, textStyle });
 
-  ctx.drawImage(await loadImage(p.background || `${ASSETS}background_${classKey}.png`), 0, 0, WIDTH, HEIGHT);
+  // 并行预热核心底图、卡框蒙版、数字精灵及插画，避免公网环境下串行等待多个 RTT
+  const bgSrc = p.background || `${ASSETS}background_${classKey}.png`;
+  const frameName = `card_${frameType}_${rarity}.png`;
+  const digitSet = new Set();
+  if (!isMirage) {
+    String(card.cost).split('').forEach(d => digitSet.add(d));
+  } else if (!isLeader && mirageTier > 7) {
+    String(mirageTier).split('').forEach(d => digitSet.add(d));
+  }
+  if (isFollower) {
+    String(card.attack).split('').forEach(d => digitSet.add(d));
+    String(card.health).split('').forEach(d => digitSet.add(d));
+  } else if (isLeader) {
+    String(card.health ?? 20).split('').forEach(d => digitSet.add(d));
+  }
+  const mirageStarPreloads = isMirage && !isLeader
+    ? [loadImage(`${ASSETS}numbers/mirage-stars/${mirageTier <= 7 ? mirageTier : 1}.png`)]
+    : [];
+  const preloadTasks = [
+    loadImage(bgSrc),
+    loadImage(`${ASSETS}title_bg.png`),
+    loadImage(`${ASSETS}card_detail_background.png`),
+    maskedFrame(frameName),
+    loadImage(`${ASSETS}gem_${classKey}.png`),
+    loadImage(`${ASSETS}Emblem_${card.class}.png`),
+    ...mirageStarPreloads,
+    ...[...digitSet].filter(d => /^\d$/.test(d)).map(d => loadImage(`${ASSETS}numbers/shadowverse-symd/${d}.png`)),
+    p.art.src ? loadImage(p.art.src).catch(() => null) : Promise.resolve(null),
+    p.cardPackLogo ? loadImage(p.cardPackLogo).catch(() => null) : Promise.resolve(null)
+  ];
+  const [bgImg, , , frameCanvas, , , ...restPreloaded] = await Promise.all(preloadTasks);
+  const logoImg = restPreloaded[restPreloaded.length - 1];
+  const artImg = restPreloaded[restPreloaded.length - 2];
+
+  ctx.drawImage(bgImg, 0, 0, WIDTH, HEIGHT);
   await picture('title_bg.png', 0, 0, WIDTH, 130);
   await picture('card_detail_background.png', 483, 145, 701, 488);
-  if (p.art.src) {
-    try {
-      drawCroppedArt(ctx, await loadImage(p.art.src), p.art.crop, { x: 136, y: 230, width: 293, height: 363 });
-    } catch (_) {
-      // 忽略缺失的旧卡牌插画，继续绘制卡框与文字
-    }
+  if (artImg) {
+    drawCroppedArt(ctx, artImg, p.art.crop, { x: 136, y: 230, width: 293, height: 363 });
   }
-  ctx.drawImage(await maskedFrame(`card_${frameType}_${rarity}.png`), 81, 131, 391, 513);
+  ctx.drawImage(frameCanvas, 81, 131, 391, 513);
   await picture(`gem_${classKey}.png`, 268, 572, 25, 26);
   await picture(`Emblem_${card.class}.png`, 864, 48, 24, 24);
-  if (p.cardPackLogo) {
-    try {
-      const logoImg = await loadImage(p.cardPackLogo);
-      const scale = Math.min(160 / logoImg.width, 80 / logoImg.height);
-      const width = logoImg.width * scale;
-      const height = logoImg.height * scale;
-      ctx.drawImage(logoImg, 1035 + (160 - width) / 2, 32 + (80 - height) / 2, width, height);
-    } catch (_) {}
+  if (logoImg) {
+    const scale = Math.min(160 / logoImg.width, 80 / logoImg.height);
+    const width = logoImg.width * scale;
+    const height = logoImg.height * scale;
+    ctx.drawImage(logoImg, 1035 + (160 - width) / 2, 32 + (80 - height) / 2, width, height);
   }
 
   const filteredName = card.name.replace(/[·.．]/g, '•');
@@ -236,7 +398,13 @@ export async function renderCard(card, options = {}) {
   if (omitKey !== 'tribe') {
     drawText(textCtx, card.tribe.map(value => value.replace(/[·.．]/g, '•')).join('•') || '-', 864, 95, 160, 18, font, 'left', '#fff', blackShadow);
   }
-  await drawNumbers(ctx, card.cost, { x: 90, y: 163, width: 85, height: 85 });
+  if (isMirage) {
+    if (!isLeader) {
+      await drawMirageStarTier(ctx, mirageTier, { x: 90, y: 163, width: 85, height: 85 });
+    }
+  } else {
+    await drawNumbers(ctx, card.cost, { x: 90, y: 163, width: 85, height: 85 });
+  }
   if (isFollower) {
     await drawNumbers(ctx, card.attack, { x: 94, y: 540, width: 85, height: 102 });
     await drawNumbers(ctx, card.health, { x: 383, y: 540, width: 85, height: 102 });
@@ -247,7 +415,9 @@ export async function renderCard(card, options = {}) {
   field('art', '插画 · 双击更换／拖动裁切', 136, 230, 293, 310, 'art');
   field('name', '卡牌名称', 167, 190, nameWidth, 36, 'text', typography(nameSize, font, 'center'));
   field('title-name', '卡牌标题', 86, 72, 650, 46, 'text', typography(28.6));
-  field('cost', '费用', 90, 163, 85, 85, 'number', typography(45, font, 'center'));
+  if (!isMirage || !isLeader) {
+    field('cost', isMirage ? '星级' : '费用', 90, 163, 85, 85, 'number', typography(45, font, 'center'));
+  }
   if (isFollower) {
     field('attack', '攻击力', 94, 540, 85, 102, 'number', typography(45, font, 'center'));
     field('health', '生命值', 383, 540, 85, 102, 'number', typography(45, font, 'center'));
@@ -269,19 +439,24 @@ export async function renderCard(card, options = {}) {
     }
   }
   const effectiveFontSize = fontTicks / 10;
-  for (const { i, section, crest, top, backgroundTop, crestTop, lines, lineHeight, contentHeight, effectiveHeight, lineCountForBg, prefix } of layout.sections) {
+  for (const { i, section, crest, hasTrailingDivider, top, backgroundTop, crestTop, lines, glyphHeight, lineHeight, contentHeight, effectiveHeight, lineCountForBg, prefix } of layout.sections) {
     if (prefix) await picture(`bg_${prefix}_${lineCountForBg}.png`, 513, backgroundTop, 642, effectiveHeight + 16 + (crest ? 60 : 0));
     if (crest) {
       await picture(section.style === '纹章' ? 'Crest.png' : 'Faith.png', 523, crestTop, 449, 48);
       await picture(section.style === '纹章' ? 'Crest_mark.png' : 'Faith_mark.png', 544, crestTop + 4, 36, 40);
-      const iconName = section.icon || `${ASSETS}Crest_default.png`;
-      const maskedIcon = await maskedFrame(iconName, 'crest_mask.png');
-      ctx.drawImage(maskedIcon, section.icon ? 583 : 584, crestTop + (section.icon ? 4 : 5), section.icon ? (i === 0 ? 40 : 39) : 38, section.icon ? (i === 0 ? 40 : 39) : 38);
+      const defaultIconSrc = `${ASSETS}Crest_default.png`;
+      const iconName = section.icon || defaultIconSrc;
+      let hasCustomIcon = Boolean(section.icon);
+      const maskedIcon = await maskedFrame(iconName, 'crest_mask.png').catch(() => {
+        hasCustomIcon = false;
+        return maskedFrame(defaultIconSrc, 'crest_mask.png');
+      });
+      ctx.drawImage(maskedIcon, hasCustomIcon ? 583 : 584, crestTop + (hasCustomIcon ? 4 : 5), hasCustomIcon ? (i === 0 ? 40 : 39) : 38, hasCustomIcon ? (i === 0 ? 40 : 39) : 38);
       drawText(textCtx, section.style === '纹章' ? (p.language === 'zh-TW' ? '紋章' : '纹章') : '信仰', 630, crestTop + 24, 100, 16.8, font, 'left', '#eccf71');
       field(`icon.${i}`, `段落 ${i + 1} 图标`, 583, crestTop + 4, 40, 40, 'image');
     }
+    const textStartY = top + (effectiveHeight + 6 - contentHeight) / 2;
     if (omitKey !== `section.${i}`) {
-      const textStartY = top + (effectiveHeight + 6 - contentHeight) / 2;
       textCtx.save();
       textCtx.beginPath(); textCtx.rect(505, 151, 660, 477); textCtx.clip();
       textCtx.font = `${effectiveFontSize * PIXELS_PER_POINT}px ${font}`; textCtx.textBaseline = 'top';
@@ -293,7 +468,8 @@ export async function renderCard(card, options = {}) {
           ctx.save();
           ctx.beginPath(); ctx.rect(505, 151, 660, 477); ctx.clip();
           ctx.globalAlpha = 0.3;
-          await picture('detail_spit.png', 507, y + (lineHeight - 2) / 2, 653, 2);
+          // 段内分割线锚定在上下两行文字墨迹的正几何中心，消除上方留白偏大、下方贴顶
+          await picture('detail_spit.png', prefix ? 523 : 507, y + (glyphHeight - 2) / 2, prefix ? 622 : 653, 2);
           ctx.restore();
           continue;
         }
@@ -311,12 +487,24 @@ export async function renderCard(card, options = {}) {
       }
       textCtx.restore();
     }
-    if (section.style === '普通（分割线）' && section.text.trim()) {
-      ctx.save(); ctx.globalAlpha = 0.3;
+    if (hasTrailingDivider) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(505, 151, 660, 477); ctx.clip();
+      ctx.globalAlpha = 0.3;
       await picture('detail_spit.png', 507, top + effectiveHeight + 20, 653, 2);
       ctx.restore();
     }
-    field(`section.${i}`, `段落 ${i + 1}`, 527, top - 2, 614, Math.max(27, effectiveHeight + 6), 'multiline', typography(effectiveFontSize));
+    // 有背景框（进化/超进化/纹章/信仰）时，热区直接严丝合缝贴合背景框四边，消除双层底边距离叠加
+    const hotspotX = prefix ? 513 : 521;
+    const hotspotY = prefix ? (crest ? backgroundTop + 60 : backgroundTop) : (textStartY - 4);
+    const hotspotW = prefix ? 642 : 626;
+    const hotspotH = prefix ? (effectiveHeight + 16) : Math.max(30, effectiveHeight + 8);
+    const secStyle = {
+      ...typography(effectiveFontSize),
+      lineHeight,
+      textRect: { x: 527, y: textStartY, width: 614, height: effectiveHeight }
+    };
+    field(`section.${i}`, `段落 ${i + 1}`, hotspotX, hotspotY, hotspotW, hotspotH, 'multiline', secStyle);
     field(`style.${i}`, `段落 ${i + 1} 样式`, 507, top + 4, 16, 18, 'select');
   }
 

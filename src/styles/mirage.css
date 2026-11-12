@@ -14,7 +14,8 @@
     display: none !important;
 }
 
-#game-container[data-game-mode="Mirage"][data-mirage-phase="Recruit"] #player2-hand {
+#game-container[data-game-mode="Mirage"][data-mirage-phase="Recruit"] #player2-hand,
+#game-container[data-game-mode="Mirage"][data-mirage-phase="Recruit"] #player2-corner-pod {
     display: none !important;
 }
 
@@ -28,13 +29,23 @@
 }
 
 .battle-field-zone.is-upper.is-tavern {
-    background: linear-gradient(180deg, rgba(217, 146, 26, 0.14) 0%, rgba(0, 0, 0, 0.38) 100%);
-    border-bottom: 1px solid rgba(245, 158, 11, 0.14);
+    background: radial-gradient(ellipse 72% 92% at 50% 100%, rgba(216, 186, 114, 0.085) 0%, rgba(10, 12, 16, 0.18) 62%, transparent 100%);
+    border-bottom: 1px solid rgba(216, 186, 114, 0.16);
 }
 
 .battle-field-zone.is-upper.is-tavern.is-frozen {
-    background: linear-gradient(180deg, rgba(56, 189, 248, 0.15) 0%, rgba(0, 0, 0, 0.38) 100%);
+    background: radial-gradient(ellipse 72% 92% at 50% 100%, rgba(56, 189, 248, 0.11) 0%, rgba(10, 14, 22, 0.2) 62%, transparent 100%);
     border-bottom: 1px solid rgba(56, 189, 248, 0.24);
+}
+
+/* Move upper zone tag to bottom-right in Tavern mode so centered shop cards never overlap it */
+.battle-field-zone.is-upper.is-tavern #upper-zone-tag {
+    top: auto !important;
+    bottom: 6px !important;
+    left: auto !important;
+    right: 12px !important;
+    color: rgba(216, 186, 114, 0.52);
+    pointer-events: none;
 }
 
 .mirage-tavern-stage {
@@ -43,7 +54,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 14px 18px;
+    padding: 12px 18px 18px;
     background: transparent;
     border: none;
     box-shadow: none;
@@ -77,7 +88,7 @@
     letter-spacing: 0.06em;
 }
 
-/* Tactile Vertical Shop Offer Cards (Aligned with 96x132 Field Card Proportion) */
+/* Tactile Vertical Shop Offer Cards (Obsidian Minimalist Frame) */
 .mirage-offer-card {
     position: relative;
     width: 98px;
@@ -87,32 +98,32 @@
     flex-direction: column;
     justify-content: space-between;
     padding: 0;
-    border-radius: 6px;
-    background: linear-gradient(165deg, #131722 0%, #090b10 100%);
-    border: 1.6px solid rgba(217, 154, 48, 0.52);
+    border-radius: 4px;
+    background: linear-gradient(170deg, #12151e 0%, #080a0f 100%);
+    border: 1px solid rgba(216, 186, 114, 0.38);
     box-shadow:
-        0 8px 20px rgba(0, 0, 0, 0.8),
-        inset 0 1px 0 rgba(255, 255, 255, 0.14);
+        0 8px 22px rgba(0, 0, 0, 0.82),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
     cursor: pointer;
     overflow: visible;
     transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .mirage-offer-card:hover {
-    transform: translateY(-5px) scale(1.06);
-    border-color: #fde047;
+    transform: translateY(-4px) scale(1.04);
+    border-color: rgba(236, 210, 144, 0.88);
     box-shadow:
         0 14px 28px rgba(0, 0, 0, 0.86),
-        0 0 14px rgba(234, 179, 8, 0.3);
+        0 0 14px rgba(216, 186, 114, 0.22);
     z-index: 25;
 }
 
 .mirage-offer-card.is-frozen {
-    border-color: #38bdf8;
+    border-color: rgba(86, 176, 208, 0.78);
     box-shadow:
         0 8px 20px rgba(0, 0, 0, 0.82),
-        0 0 14px rgba(56, 189, 248, 0.38),
-        inset 0 0 12px rgba(56, 189, 248, 0.22);
+        0 0 12px rgba(86, 176, 208, 0.28),
+        inset 0 0 10px rgba(86, 176, 208, 0.16);
 }
 
 .mirage-offer-art {
@@ -120,8 +131,11 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    border-radius: 4.5px;
-    background-color: #0d1017;
+    border-radius: 3px;
+    background-color: #0b0e15;
+    background-image:
+        radial-gradient(circle at 50% 42%, rgba(216, 186, 114, 0.07) 0%, transparent 68%),
+        repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.015) 0px, rgba(255, 255, 255, 0.015) 1px, transparent 1px, transparent 9px);
     background-size: cover;
     background-position: center 18%;
     background-repeat: no-repeat;
@@ -136,9 +150,9 @@
     background: linear-gradient(
         180deg,
         rgba(6, 8, 14, 0.78) 0%,
-        rgba(6, 8, 14, 0.08) 30%,
-        rgba(6, 8, 14, 0.18) 64%,
-        rgba(6, 8, 14, 0.92) 100%
+        rgba(6, 8, 14, 0.06) 32%,
+        rgba(6, 8, 14, 0.16) 64%,
+        rgba(6, 8, 14, 0.9) 100%
     );
 }
 
@@ -150,30 +164,133 @@
     padding: 5px 5px 2px;
 }
 
-.mirage-offer-tier {
+.mirage-offer-tier,
+.card .cost.is-mirage-tier {
     position: absolute;
     top: -6px;
     left: -6px;
-    width: 24px;
-    height: 24px;
+    width: auto;
+    min-width: 27px;
+    height: 20px;
+    padding: 0 5px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2.5px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 800;
+    line-height: 1;
+    color: #f8fafc;
+    background: linear-gradient(180deg, rgba(16, 19, 27, 0.96) 0%, rgba(9, 11, 16, 0.98) 100%);
+    border: 1px solid rgba(216, 186, 114, 0.58);
+    border-left: 2px solid #e2c074;
+    border-radius: 3px 2px 3px 2px;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.85);
+    z-index: 12;
+}
+
+.mirage-offer-tier.is-mythic,
+.card .cost.is-mirage-tier.is-mythic {
+    border-color: rgba(168, 85, 247, 0.72);
+    border-left-color: #00ffcc;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.85), 0 0 10px rgba(0, 255, 204, 0.24);
+}
+
+.mirage-tier-glyph {
+    width: 8.5px;
+    height: 8.5px;
+    color: #ecd290;
+    flex-shrink: 0;
+    filter: drop-shadow(0 0 3px rgba(216, 186, 114, 0.36));
+}
+
+.is-mythic .mirage-tier-glyph {
+    color: #72f7dc;
+}
+
+.mirage-tier-num {
+    color: #f8fafc;
+    letter-spacing: -0.02em;
+}
+
+.mirage-offer-cost {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 22px;
+    height: 20px;
+    padding: 0 5px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     font-family: var(--font-mono);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 800;
-    color: #fef3c7;
-    background: linear-gradient(145deg, #54330a 0%, #261504 100%);
-    border: 1px solid rgba(251, 191, 36, 0.82);
-    border-radius: 5px;
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.78);
+    line-height: 1;
+    color: #f7e6bc;
+    background: linear-gradient(180deg, rgba(16, 19, 27, 0.96) 0%, rgba(9, 11, 16, 0.98) 100%);
+    border: 1px solid rgba(216, 186, 114, 0.58);
+    border-right: 2px solid #e2c074;
+    border-radius: 2px 3px 2px 3px;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.82);
+    cursor: pointer;
+    z-index: 4;
+    transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.mirage-offer-cost:hover:not(:disabled) {
+    background: rgba(216, 186, 114, 0.24);
+    border-color: #ffffff;
+    color: #ffffff;
+    transform: scale(1.06);
+}
+
+.mirage-offer-cost:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.mirage-offer-hover-cta {
+    position: absolute;
+    left: 50%;
+    bottom: 26px;
+    transform: translateX(-50%) translateY(3px);
+    height: 20px;
+    padding: 0 10px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: var(--font-sans);
+    background: rgba(10, 13, 20, 0.94);
+    border: 1px solid rgba(0, 255, 204, 0.72);
+    color: #eafffa;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 4;
+    white-space: nowrap;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.85);
+    transition: opacity 0.14s ease, transform 0.14s ease, background 0.14s ease;
+}
+
+.mirage-offer-card:hover .mirage-offer-hover-cta:not(:disabled) {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) translateY(0);
+}
+
+.mirage-offer-hover-cta:hover:not(:disabled) {
+    background: rgba(0, 255, 204, 0.2);
+    border-color: #ffffff;
+    color: #ffffff;
 }
 
 .mirage-offer-name {
     width: 100%;
-    padding-left: 16px;
+    padding: 0 16px;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     color: #f1f5f9;
     text-align: center;
     text-shadow: 0 1px 4px rgba(0, 0, 0, 0.96);
@@ -187,9 +304,9 @@
     z-index: 2;
     margin: auto 4px 4px;
     padding: 3px 5px;
-    border-radius: 4px;
-    background: rgba(8, 10, 15, 0.9);
-    border: 1px solid rgba(217, 154, 48, 0.32);
+    border-radius: 3px;
+    background: rgba(8, 10, 15, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.14);
     font-size: 9px;
     line-height: 1.25;
     color: #e2e8f0;
@@ -236,49 +353,262 @@
 }
 
 .mirage-offer-atk {
-    border-radius: 4px 2px 4px 3px;
-    border: 1px solid rgba(235, 82, 102, 0.65);
-    border-left: 2.5px solid #ef4444;
+    border-radius: 3px 2px 3px 2px;
+    border: 1px solid rgba(235, 82, 102, 0.55);
+    border-left: 2px solid #ef4444;
     color: #ffe4e6;
 }
 
 .mirage-offer-hp {
-    border-radius: 2px 4px 3px 4px;
-    border: 1px solid rgba(52, 205, 142, 0.65);
-    border-right: 2.5px solid #22c55e;
+    border-radius: 2px 3px 2px 3px;
+    border: 1px solid rgba(52, 205, 142, 0.55);
+    border-right: 2px solid #22c55e;
     color: #dcfce7;
 }
 
-.mirage-offer-buy-btn {
-    flex: 1;
-    height: 19px;
-    padding: 0 3px;
-    border-radius: 3px;
-    font-size: 9.5px;
-    font-weight: 700;
-    font-family: var(--font-sans);
-    cursor: pointer;
-    background: rgba(24, 16, 6, 0.94);
-    border: 1px solid rgba(217, 154, 48, 0.82);
-    color: #fef3c7;
+/* ==========================================================================
+   Neutral Tavern Upper HUD (#player2-info.is-mirage-tavern)
+   Unified Obsidian Chassis + Muted Champagne Brass + 6-Cell Segmented Tier Gauge
+   ========================================================================== */
+#player2-info.is-mirage-tavern {
+    cursor: default;
+}
+
+/* Prevent title clipping: keep tavern title intact, let meta subtitle truncate cleanly */
+#player2-info.is-mirage-tavern .leader-rpg-name-wrap,
+#player2-info.is-mirage-tavern .player-name {
+    flex-shrink: 0;
     white-space: nowrap;
-    transition: all 0.14s ease;
 }
 
-.mirage-offer-buy-btn:hover:not(:disabled) {
-    background: #b45309;
-    border-color: #ffffff;
-    color: #ffffff;
+#player2-info.is-mirage-tavern .player-name-text {
+    max-width: none;
+    color: #f4f4f5;
+    letter-spacing: 0.04em;
 }
 
-.mirage-offer-buy-btn:disabled {
-    opacity: 0.38;
-    cursor: not-allowed;
+#player2-info.is-mirage-tavern .leader-rpg-meta {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+}
+
+#player2-info.is-mirage-tavern .class-name {
+    color: #9aa3b0;
+    text-transform: none;
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Left Medallion: Matches bottom self HUD obsidian ring, accented in muted champagne gold */
+#player2-info.is-mirage-tavern .leader-rpg-portrait {
+    background: radial-gradient(circle at 30% 25%, #1e222d 0%, #080a0f 100%);
+    border-color: rgba(216, 186, 114, 0.68);
+    box-shadow:
+        0 6px 18px rgba(0, 0, 0, 0.78),
+        inset 0 0 0 2px #07090d;
+}
+
+#player2-info.is-mirage-tavern:hover .leader-rpg-portrait {
+    border-color: rgba(236, 210, 144, 0.88);
+}
+
+#player2-info.is-mirage-tavern .leader-rpg-portrait::before {
+    border-left-color: rgba(216, 186, 114, 0.42);
+    border-top-color: rgba(216, 186, 114, 0.18);
+}
+
+#player2-info.is-mirage-tavern.is-tavern-frozen .leader-rpg-portrait {
+    border-color: rgba(110, 184, 212, 0.78);
+}
+
+#player2-info.is-mirage-tavern.is-tavern-frozen .leader-rpg-portrait::before {
+    border-left-color: rgba(110, 184, 212, 0.45);
+    border-top-color: rgba(110, 184, 212, 0.2);
+}
+
+#player2-info.is-mirage-tavern .stats-avatar.is-tavern-emblem {
+    background: radial-gradient(circle at 50% 45%, rgba(216, 186, 114, 0.1) 0%, #090c12 78%);
+    border-color: rgba(216, 186, 114, 0.24);
+}
+
+.tavern-astrolabe-svg {
+    width: 90%;
+    height: 90%;
+    display: block;
+    overflow: visible;
+}
+
+.astrolabe-outer-ring {
+    fill: none;
+    stroke: rgba(216, 186, 114, 0.36);
+    stroke-width: 1;
+}
+
+.astrolabe-crosshair {
+    fill: none;
+    stroke: rgba(216, 186, 114, 0.52);
+    stroke-width: 1.15;
+    stroke-linecap: round;
+}
+
+.astrolabe-square-frame {
+    fill: none;
+    stroke: rgba(86, 176, 208, 0.26);
+    stroke-width: 0.85;
+}
+
+.astrolabe-diamond-frame {
+    fill: none;
+    stroke: rgba(216, 186, 114, 0.28);
+    stroke-width: 0.85;
+}
+
+.astrolabe-hex-track {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.12);
+    stroke-width: 0.8;
+}
+
+.astrolabe-core-plate {
+    fill: #0b0e15;
+    stroke: rgba(216, 186, 114, 0.58);
+    stroke-width: 1.1;
+}
+
+.astrolabe-chalice {
+    fill: rgba(216, 186, 114, 0.18);
+    stroke: #ecd290;
+    stroke-width: 1.25;
+    stroke-linejoin: round;
+}
+
+.astrolabe-chalice-stem {
+    fill: none;
+    stroke: #ecd290;
+    stroke-width: 1.25;
+    stroke-linecap: round;
+}
+
+.astrolabe-core-spark {
+    fill: #00ffcc;
+    filter: drop-shadow(0 0 3px rgba(0, 255, 204, 0.65));
+}
+
+.astrolabe-node.is-lit {
+    fill: #f6df9e;
+    stroke: #ffffff;
+    stroke-width: 0.45;
+    filter: drop-shadow(0 0 4px rgba(216, 186, 114, 0.65));
+}
+
+.astrolabe-node.is-dim {
+    fill: #0b0e15;
+    stroke: rgba(148, 163, 184, 0.42);
+    stroke-width: 0.95;
+}
+
+#player2-info.is-mirage-tavern.is-tavern-frozen .astrolabe-outer-ring,
+#player2-info.is-mirage-tavern.is-tavern-frozen .astrolabe-crosshair,
+#player2-info.is-mirage-tavern.is-tavern-frozen .astrolabe-core-plate {
+    stroke: rgba(125, 211, 252, 0.56);
+}
+
+#player2-info.is-mirage-tavern.is-tavern-frozen .astrolabe-chalice,
+#player2-info.is-mirage-tavern.is-tavern-frozen .astrolabe-chalice-stem {
+    stroke: #bae6fd;
+}
+
+#player2-info.is-mirage-tavern.is-tavern-frozen .astrolabe-node.is-lit {
+    fill: #7dd3fc;
+}
+
+/* Unified Obsidian Spine: Same dark slate chassis as #player1-info */
+#player2-info.is-mirage-tavern .leader-rpg-spine-bg {
+    fill: rgba(11, 14, 21, 0.95);
+    stroke: rgba(186, 204, 226, 0.26);
+}
+
+#player2-info.is-mirage-tavern .leader-rpg-spine-divider {
+    stroke: rgba(196, 210, 228, 0.08);
+}
+
+#player2-info.is-mirage-tavern .leader-rpg-spine-accent {
+    stroke: rgba(216, 186, 114, 0.76);
+}
+
+#player2-info.is-mirage-tavern.is-tavern-frozen .leader-rpg-spine-accent {
+    stroke: rgba(86, 176, 208, 0.8);
+}
+
+#player2-info.is-mirage-tavern .player-order-badge.tavern-badge {
+    border-color: rgba(216, 186, 114, 0.42);
+    background: rgba(216, 186, 114, 0.1);
+    color: #ecd290;
+}
+
+#player2-info.is-mirage-tavern .player-order-badge.tavern-badge.is-frozen {
+    border-color: rgba(86, 176, 208, 0.55);
+    background: rgba(30, 58, 92, 0.32);
+    color: #bae6fd;
+}
+
+/* Segmented 6-Cell Tavern Tier Gauge instead of continuous HP bar */
+#player2-info.is-mirage-tavern .hp-bar-track.leader-rpg-gauge {
+    display: none;
+}
+
+.mirage-tavern-tier-segments {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px;
+    align-items: center;
+    height: 9px;
+    z-index: 1;
+}
+
+.tavern-tier-seg {
+    height: 7px;
+    border-radius: 1.5px;
+    transform: skewX(-10deg);
+    background: rgba(18, 22, 30, 0.95);
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.tavern-tier-seg.is-active {
+    background: linear-gradient(180deg, #d8b25c 0%, #946f24 100%);
+    border-color: rgba(247, 230, 188, 0.72);
+    box-shadow: 0 0 5px rgba(216, 186, 114, 0.24);
+}
+
+#player2-info.is-mirage-tavern.is-tavern-frozen .tavern-tier-seg.is-active {
+    background: linear-gradient(180deg, #4b94ad 0%, #2b657d 100%);
+    border-color: rgba(165, 216, 243, 0.72);
+    box-shadow: 0 0 5px rgba(86, 176, 208, 0.28);
+}
+
+#player2-info.is-mirage-tavern .hp-value {
+    font-size: 16px;
+    color: #f1f5f9;
+}
+
+#player2-info.is-mirage-tavern .hp-max {
+    color: #8b95a5;
+}
+
+#game-container[data-game-mode="Mirage"][data-mirage-phase="Recruit"] #player2-emblem-zone {
+    display: none !important;
 }
 
 /* ==========================================================================
-   Mirage Leader Skill Chips inside .leader-rpg-slots-row
+   Tactical Chips inside .leader-rpg-slots-row (Tavern Upgrade & Leader Skill)
    ========================================================================== */
+.mirage-tavern-upgrade-pod,
 .mirage-leader-skill-pod {
     display: inline-flex;
     align-items: center;
@@ -292,12 +622,12 @@
 
 button.leader-rpg-chip {
     cursor: pointer;
-    background: rgba(16, 20, 28, 0.94);
-    transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+    background: rgba(14, 18, 26, 0.92);
+    transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
 }
 
 button.leader-rpg-chip:hover:not(:disabled) {
-    background: rgba(26, 32, 44, 0.98);
+    background: rgba(24, 30, 42, 0.98);
     border-color: rgba(226, 197, 116, 0.78);
 }
 
@@ -306,8 +636,43 @@ button.leader-rpg-chip.is-skill:hover:not(:disabled) {
 }
 
 button.leader-rpg-chip:disabled {
-    opacity: 0.38;
+    opacity: 0.42;
     cursor: not-allowed;
+}
+
+button.leader-rpg-chip.is-tavern-upgrade {
+    border-color: rgba(216, 186, 114, 0.48);
+}
+
+button.leader-rpg-chip.is-tavern-upgrade.is-affordable:not(:disabled) {
+    border-color: rgba(216, 186, 114, 0.82);
+    box-shadow: 0 0 10px rgba(216, 186, 114, 0.18);
+}
+
+button.leader-rpg-chip.is-tavern-upgrade:hover:not(:disabled) {
+    background: rgba(216, 186, 114, 0.16);
+    border-color: #f7e6bc;
+}
+
+button.leader-rpg-chip.is-tavern-upgrade:disabled:not(.is-max) {
+    opacity: 0.55;
+    border-color: rgba(196, 210, 228, 0.22);
+}
+
+button.leader-rpg-chip.is-tavern-upgrade.is-max {
+    opacity: 0.85;
+    border-color: rgba(216, 186, 114, 0.52);
+}
+
+.tavern-up-tier {
+    color: #dfc278;
+    font-weight: 700;
+    font-size: 10px;
+}
+
+.tavern-up-cost {
+    color: #f8fafc;
+    font-weight: 700;
 }
 
 /* ==========================================================================
@@ -365,10 +730,10 @@ button.leader-rpg-chip:disabled {
     flex: 1;
     height: 20px;
     padding: 0 4px;
-    background: rgba(18, 13, 8, 0.95);
-    border: 1px solid rgba(217, 154, 48, 0.8);
+    background: rgba(12, 15, 22, 0.95);
+    border: 1px solid rgba(216, 186, 114, 0.65);
     border-radius: 3px;
-    color: #fde68a;
+    color: #f7e6bc;
     font-family: var(--font-mono);
     font-size: 9.5px;
     font-weight: 700;
@@ -381,7 +746,7 @@ button.leader-rpg-chip:disabled {
 }
 
 .mirage-sell-button:hover {
-    background: #b45309;
+    background: rgba(216, 186, 114, 0.22);
     border-color: #ffffff;
     color: #ffffff;
 }
@@ -397,9 +762,10 @@ button.leader-rpg-chip:disabled {
     min-width: 320px;
     max-width: 480px;
     padding: 7px 14px;
-    border-radius: 6px;
-    background: rgba(10, 12, 18, 0.95);
-    border: 1px solid rgba(217, 154, 48, 0.65);
+    border-radius: 4px;
+    background: rgba(10, 12, 18, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-left: 2px solid #00ffcc;
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.78);
     backdrop-filter: blur(10px);
     color: #f8fafc;
@@ -418,45 +784,46 @@ button.leader-rpg-chip:disabled {
 
 .mirage-combat-overlay-title {
     font-size: 12px;
-    font-weight: 800;
-    color: #fde047;
+    font-weight: 700;
+    color: #f4f4f5;
     letter-spacing: 0.04em;
 }
 
 .mirage-combat-overlay-sub {
     font-family: var(--font-mono);
     font-size: 11px;
-    color: #cbd5e1;
+    color: #94a3b8;
 }
 
 .mirage-combat-overlay-sync {
     font-size: 12.5px;
-    font-weight: 700;
+    font-weight: 600;
     color: #7dd3fc;
 }
 
 .mirage-combat-skip-btn {
     padding: 5px 12px;
-    border-radius: 4px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
     font-size: 11px;
-    font-weight: 700;
-    background: rgba(127, 29, 29, 0.85);
-    border: 1px solid rgba(248, 113, 113, 0.68);
-    color: #ffe4e6;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    color: #f1f5f9;
     cursor: pointer;
     white-space: nowrap;
     transition: all 0.14s ease;
 }
 
 .mirage-combat-skip-btn:hover {
-    background: rgba(185, 28, 28, 0.95);
+    background: rgba(255, 255, 255, 0.14);
     border-color: #ffffff;
     color: #ffffff;
 }
 
 /* ==========================================================================
    Central Selection Altar (#mirage-decision-drawer)
-   Round 1 Leader 3-Pick & Triple Reward Discover
+   Obsidian Glass Modal aligned with .mp-room-modal-card
    ========================================================================== */
 .mirage-decision-drawer {
     position: absolute;
@@ -465,37 +832,53 @@ button.leader-rpg-chip:disabled {
     transform: translate(-50%, -50%);
     z-index: 95;
     width: min(760px, calc(100vw - 80px));
-    background: rgba(10, 12, 18, 0.97);
-    border: 1px solid rgba(217, 154, 48, 0.72);
-    border-radius: 8px;
-    padding: 16px 20px 18px;
+    background: rgba(8, 10, 16, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 5px;
+    padding: 18px 22px 20px;
     color: #f8fafc;
     box-shadow:
-        0 0 0 100vmax rgba(0, 0, 0, 0.65),
-        0 24px 60px rgba(0, 0, 0, 0.9);
+        0 0 0 100vmax rgba(0, 0, 0, 0.68),
+        0 24px 72px rgba(0, 0, 0, 0.88);
     backdrop-filter: blur(12px);
 }
 
 .mirage-drawer-header {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
-    margin-bottom: 12px;
-    padding-bottom: 8px;
+    gap: 12px;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.mirage-drawer-title-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mirage-drawer-kicker {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: #00ffcc;
+    text-transform: uppercase;
+}
+
 .mirage-drawer-title {
-    font-size: 14.5px;
-    font-weight: 800;
-    color: #fde047;
-    letter-spacing: 0.05em;
+    font-family: 'Rajdhani', var(--font-sans);
+    font-size: 16px;
+    font-weight: 700;
+    color: #ffffff;
+    letter-spacing: 0.06em;
 }
 
 .mirage-drawer-subtitle {
     font-family: var(--font-mono);
     font-size: 11px;
-    color: #94a3b8;
+    color: rgba(255, 255, 255, 0.56);
 }
 
 .mirage-drawer-grid {
@@ -508,21 +891,22 @@ button.leader-rpg-chip:disabled {
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    gap: 10px;
-    padding: 12px 14px;
-    border-radius: 6px;
-    background: linear-gradient(165deg, #141824 0%, #0a0c12 100%);
-    border: 1px solid rgba(217, 154, 48, 0.42);
+    gap: 12px;
+    padding: 14px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     cursor: pointer;
     text-align: left;
     color: #f8fafc;
-    transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+    transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
 }
 
 .mirage-choice-card:hover:not(:disabled) {
-    transform: translateY(-3px);
-    border-color: #fde047;
-    box-shadow: 0 12px 26px rgba(0, 0, 0, 0.8), 0 0 14px rgba(217, 154, 48, 0.24);
+    transform: translateY(-2px);
+    background: rgba(255, 255, 255, 0.055);
+    border-color: rgba(0, 255, 204, 0.58);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.7), 0 0 16px rgba(0, 255, 204, 0.12);
 }
 
 .mirage-choice-card:disabled {
@@ -533,18 +917,41 @@ button.leader-rpg-chip:disabled {
 .mirage-choice-card-top {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 11px;
 }
 
 .mirage-choice-avatar {
-    width: 50px;
-    height: 50px;
+    position: relative;
+    overflow: hidden;
+    width: 46px;
+    height: 46px;
     border-radius: 50%;
-    background-color: #10131a;
-    background-size: cover;
-    background-position: center 15%;
-    border: 1.5px solid rgba(217, 154, 48, 0.72);
+    background: radial-gradient(circle at 50% 42%, rgba(216, 186, 114, 0.12) 0%, #090b10 80%);
+    border: 1px solid rgba(216, 186, 114, 0.38);
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
+}
+
+.mirage-choice-avatar-fallback {
+    position: relative;
+    z-index: 1;
+    width: 52%;
+    height: 52%;
+    object-fit: contain;
+    opacity: 0.85;
+}
+
+.mirage-choice-avatar-img {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center 15%;
+    display: block;
 }
 
 .mirage-choice-meta {
@@ -553,23 +960,24 @@ button.leader-rpg-chip:disabled {
 }
 
 .mirage-choice-name {
-    font-size: 13px;
-    font-weight: 800;
-    color: #fef08a;
+    font-size: 13.5px;
+    font-weight: 700;
+    color: #ffffff;
     margin-bottom: 2px;
 }
 
 .mirage-choice-stats {
     font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: #93c5fd;
-    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    color: #82bfd0;
+    font-weight: 600;
 }
 
 .mirage-choice-desc {
     font-size: 11.5px;
-    line-height: 1.42;
-    color: #e2e8f0;
+    line-height: 1.45;
+    color: rgba(255, 255, 255, 0.78);
 }
 
 .mirage-choice-cta {
@@ -577,13 +985,22 @@ button.leader-rpg-chip:disabled {
     align-items: center;
     justify-content: center;
     width: 100%;
-    height: 28px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 700;
-    background: linear-gradient(165deg, rgba(64, 42, 10, 0.9) 0%, rgba(34, 22, 6, 0.96) 100%);
-    border: 1px solid rgba(217, 154, 48, 0.7);
-    color: #fef3c7;
+    height: 30px;
+    border-radius: 3px;
+    font-family: 'Rajdhani', var(--font-sans);
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    background: rgba(0, 255, 204, 0.07);
+    border: 1px solid rgba(0, 255, 204, 0.45);
+    color: #eafffa;
+    transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.mirage-choice-card:hover:not(:disabled) .mirage-choice-cta {
+    background: rgba(0, 255, 204, 0.16);
+    border-color: #00ffcc;
+    color: #ffffff;
 }
 
 @media (max-height: 540px) and (orientation: landscape) {
@@ -602,8 +1019,8 @@ button.leader-rpg-chip:disabled {
     }
 
     .mirage-offer-tier {
-        width: 18px;
-        height: 18px;
+        min-width: 22px;
+        height: 16px;
         font-size: 8.5px;
     }
 

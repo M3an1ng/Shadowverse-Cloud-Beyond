@@ -69,7 +69,17 @@ const MATCH_HISTORY_RECORD_DESTROYED = 'destroyed';
 const USED_CARD_HISTORY_STORAGE_PREFIX = 'svcb.used-card-history:';
 const DESTROYED_CARD_HISTORY_STORAGE_PREFIX = 'svcb.destroyed-card-history:';
 const CHAT_BARRAGE_MAX_QUEUE = 30;
-const CHAT_BARRAGE_LANE_TOPS = [4, 92, 180, 268];
+const CHAT_BARRAGE_LANE_TOPS = [6, 48, 90, 132];
+const EMOTE_POP_DURATION_MS = 2550;
+const EMOTE_POP_MAX_CONCURRENT = 6;
+const EMOTE_POP_SAFE_SLOTS = Object.freeze([
+    { xPct: 16, yPct: 31 },
+    { xPct: 14, yPct: 47 },
+    { xPct: 17, yPct: 63 },
+    { xPct: 80, yPct: 30 },
+    { xPct: 79, yPct: 45 },
+    { xPct: 78, yPct: 58 }
+]);
 function shouldDefaultChatDockOpen() {
     if (typeof window === 'undefined') return true;
     return window.innerHeight > 560 && window.innerWidth > 960;
@@ -101,6 +111,9 @@ let selectedEmotePackId = '';
 let isEmoteSending = false;
 const chatBarrageQueue = [];
 const chatBarrageActiveLanes = new Set();
+const emotePopQueue = [];
+const emotePopActiveSlots = new Set();
+const emotePopTimeoutIds = new Set();
 
 function getLatestGameLogs(fallbackLogs) {
     if (Array.isArray(gameState.gameLog)) {
@@ -223,9 +236,9 @@ function getChatMessageClasses(message) {
 }
 
 function createEmoteImageView(message, imageClassName, fallbackClassName) {
-    const isBarrage = fallbackClassName.includes('barrage');
+    const isTransientOverlay = fallbackClassName.includes('barrage') || fallbackClassName.includes('pop');
     const wrapper = document.createElement('div');
-    wrapper.className = isBarrage
+    wrapper.className = isTransientOverlay
         ? 'chat-barrage-emote'
         : 'chat-message-emote';
 
@@ -243,7 +256,7 @@ function createEmoteImageView(message, imageClassName, fallbackClassName) {
     image.src = String(message?.emoteUrl ?? message?.EmoteUrl ?? '').trim();
     image.alt = label;
     image.title = label;
-    image.loading = isBarrage ? 'eager' : 'lazy';
+    image.loading = isTransientOverlay ? 'eager' : 'lazy';
     image.decoding = 'async';
     image.onerror = () => {
         wrapper.innerHTML = '';
@@ -750,32 +763,47 @@ function ensureChatPanelStructure(chatContent) {
 
         form.addEventListener('submit', async event => {
             event.preventDefault();
-            const normalized = normalizeChatText(input.value);
+            if (isChatSending) return;
+
+            const submittedDraft = input.value;
+            const normalized = normalizeChatText(submittedDraft);
             if (!normalized) {
                 setChatSendStatus('消息不能为空。', 'error');
                 renderInMatchChatDock();
                 return;
             }
 
-            logPanelChatDraft = normalized;
+            logPanelChatDraft = submittedDraft;
             setChatSendStatus('发送中...', 'neutral');
             isChatSending = true;
             sendButton.disabled = true;
             renderInMatchChatDock();
 
-            const result = await sendChatMessage(normalized);
+            let result;
+            try {
+                result = await sendChatMessage(normalized);
+            } finally {
+                isChatSending = false;
+                if (sendButton.isConnected) {
+                    sendButton.disabled = false;
+                }
+            }
+
             if (!result?.ok) {
                 setChatSendStatus(result?.error || '发送失败，请稍后重试。', 'error');
-                isChatSending = false;
-                sendButton.disabled = false;
                 renderInMatchChatDock();
                 return;
             }
 
-            logPanelChatDraft = '';
+            if (input.isConnected && input.value !== submittedDraft) {
+                logPanelChatDraft = input.value || '';
+            } else {
+                if (input.isConnected) {
+                    input.value = '';
+                }
+                logPanelChatDraft = '';
+            }
             setChatSendStatus('已发送', 'success');
-            isChatSending = false;
-            sendButton.disabled = false;
             shouldScrollChatToLatestOnRender = true;
             renderInMatchChatDock();
             window.setTimeout(() => {
@@ -1810,6 +1838,178 @@ function clearChatBarrageUi() {
     if (root) {
         root.remove();
     }
+
+    emotePopQueue.splice(0, emotePopQueue.length);
+    emotePopActiveSlots.clear();
+    emotePopTimeoutIds.forEach(timeoutId => window.clearTimeout(timeoutId));
+    emotePopTimeoutIds.clear();
+    const popRoot = document.getElementById('chat-emote-pop-root');
+    if (popRoot) {
+        popRoot.remove();
+    }
+}
+
+function ensureEmotePopRoot() {
+    let root = document.getElementById('chat-emote-pop-root');
+    if (root) return root;
+
+    root = document.createElement('div');
+    root.id = 'chat-emote-pop-root';
+    root.className = 'chat-emote-pop-root';
+    const host = document.body || getBarrageHostElement();
+    host.appendChild(root);
+    return root;
+}
+
+function pickEmotePopSlotIndex() {
+    const freeIndices = EMOTE_POP_SAFE_SLOTS
+        .map((_, idx) => idx)
+        .filter(idx => !emotePopActiveSlots.has(idx));
+    const pool = freeIndices.length > 0
+        ? freeIndices
+        : EMOTE_POP_SAFE_SLOTS.map((_, idx) => idx);
+    return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function resolveEmotePopPosition(root, slotIndex) {
+    const slot = EMOTE_POP_SAFE_SLOTS[slotIndex] || EMOTE_POP_SAFE_SLOTS[0];
+    const width = Math.max(root?.clientWidth || 0, (typeof window !== 'undefined' ? window.innerWidth : 0) || 1280);
+    const height = Math.max(root?.clientHeight || 0, (typeof window !== 'undefined' ? window.innerHeight : 0) || 720);
+    const isCompactHeight = height <= 540;
+    const jitterX = Math.round((Math.random() * 2 - 1) * 16);
+    const jitterY = Math.round((Math.random() * 2 - 1) * 12);
+    const rawX = Math.round((width * slot.xPct) / 100) + jitterX;
+    const rawY = Math.round((height * slot.yPct) / 100) + jitterY;
+    const marginX = isCompactHeight ? 72 : 104;
+    const minTopPx = isCompactHeight ? 112 : 184;
+    const maxTopPx = Math.max(minTopPx, height - (isCompactHeight ? 84 : 124));
+    return {
+        leftPx: Math.max(marginX, Math.min(rawX, Math.max(marginX, width - marginX))),
+        topPx: Math.max(minTopPx, Math.min(rawY, maxTopPx)),
+        tiltDeg: Number(((Math.random() * 2 - 1) * 4.5).toFixed(1))
+    };
+}
+
+function enqueueEmoteStickerPop(message) {
+    if (!message || !isGamePageActive()) return;
+    if (emotePopQueue.length >= CHAT_BARRAGE_MAX_QUEUE) {
+        emotePopQueue.shift();
+    }
+    emotePopQueue.push(message);
+    dispatchEmoteStickerPops();
+}
+
+function dispatchEmoteStickerPops() {
+    if (!isGamePageActive()) {
+        clearChatBarrageUi();
+        return;
+    }
+
+    while (
+        emotePopQueue.length > 0
+        && emotePopActiveSlots.size < EMOTE_POP_MAX_CONCURRENT
+    ) {
+        const message = emotePopQueue.shift();
+        const slotIndex = pickEmotePopSlotIndex();
+        emotePopActiveSlots.add(slotIndex);
+        void playSingleEmoteStickerPop(message, slotIndex).finally(() => {
+            emotePopActiveSlots.delete(slotIndex);
+            if (!isGamePageActive()) {
+                clearChatBarrageUi();
+                return;
+            }
+            dispatchEmoteStickerPops();
+        });
+    }
+}
+
+function playSingleEmoteStickerPop(message, slotIndex = 0) {
+    return new Promise(resolve => {
+        if (!message || !isGamePageActive()) {
+            resolve();
+            return;
+        }
+
+        const root = ensureEmotePopRoot();
+        const item = document.createElement('div');
+        const roleClass = message.senderType === 'spectator'
+            ? 'is-spectator'
+            : (message.isSelf ? 'is-self' : 'is-opponent');
+        item.className = `chat-emote-pop-item ${roleClass}`;
+        item.dataset.slotIndex = String(slotIndex);
+
+        const pos = resolveEmotePopPosition(root, slotIndex);
+        item.style.left = `${pos.leftPx}px`;
+        item.style.top = `${pos.topPx}px`;
+        item.style.setProperty('--emote-tilt', `${pos.tiltDeg}deg`);
+
+        const burst = document.createElement('span');
+        burst.className = 'chat-emote-pop-burst';
+        burst.setAttribute('aria-hidden', 'true');
+
+        const body = document.createElement('div');
+        body.className = 'chat-emote-pop-body';
+
+        const sparkles = document.createElement('span');
+        sparkles.className = 'chat-emote-pop-sparkles';
+        sparkles.setAttribute('aria-hidden', 'true');
+
+        const emoteView = createEmoteImageView(message, 'chat-emote-pop-img', 'chat-emote-pop-fallback');
+
+        const author = resolveChatAuthorLabel(message);
+        const avatarInfo = resolveChatAvatarInfo(message, author);
+        const badge = document.createElement('span');
+        badge.className = 'chat-emote-pop-badge';
+
+        const avatar = document.createElement('span');
+        avatar.className = 'chat-emote-pop-avatar';
+        if (avatarInfo.imageSrc) {
+            const avatarImg = document.createElement('img');
+            avatarImg.src = avatarInfo.imageSrc;
+            avatarImg.alt = '';
+            avatarImg.onerror = () => {
+                avatar.textContent = avatarInfo.fallbackText;
+            };
+            avatar.appendChild(avatarImg);
+        } else {
+            avatar.textContent = avatarInfo.fallbackText;
+        }
+
+        const authorSpan = document.createElement('span');
+        authorSpan.className = 'chat-emote-pop-author';
+        authorSpan.textContent = author;
+
+        badge.appendChild(avatar);
+        badge.appendChild(authorSpan);
+
+        body.appendChild(sparkles);
+        body.appendChild(emoteView);
+        body.appendChild(badge);
+        item.appendChild(burst);
+        item.appendChild(body);
+        root.appendChild(item);
+
+        let settled = false;
+        const cleanup = () => {
+            if (settled) return;
+            settled = true;
+            emotePopTimeoutIds.delete(timeoutId);
+            if (item.isConnected) {
+                item.remove();
+            }
+            if (root.childElementCount === 0) {
+                root.remove();
+            }
+            resolve();
+        };
+
+        const timeoutId = window.setTimeout(cleanup, EMOTE_POP_DURATION_MS + 120);
+        emotePopTimeoutIds.add(timeoutId);
+        body.addEventListener('animationend', event => {
+            if (event.target !== body) return;
+            cleanup();
+        }, { once: true });
+    });
 }
 
 function enqueueChatBarrage(message) {
@@ -1855,6 +2055,31 @@ function dispatchChatBarrages() {
     }
 }
 
+function resolveChatBarrageLaneTop(root, item, laneIndex) {
+    const clampedIndex = Math.max(0, Math.min(laneIndex, CHAT_BARRAGE_LANE_TOPS.length - 1));
+    const fallbackTop = CHAT_BARRAGE_LANE_TOPS[clampedIndex] ?? 4;
+    const rootHeight = root?.clientHeight || 0;
+    if (rootHeight <= 0) {
+        return fallbackTop;
+    }
+
+    const isEmote = Boolean(item?.querySelector?.('.chat-barrage-emote'));
+    const minEstimatedHeight = isEmote ? 76 : 32;
+    const itemHeight = Math.max(item?.offsetHeight || 0, minEstimatedHeight);
+    const maxSafeTop = Math.max(4, rootHeight - itemHeight - 4);
+    const highestPresetTop = CHAT_BARRAGE_LANE_TOPS[CHAT_BARRAGE_LANE_TOPS.length - 1] ?? 4;
+    if (highestPresetTop <= maxSafeTop) {
+        return fallbackTop;
+    }
+
+    const laneCount = CHAT_BARRAGE_LANE_TOPS.length;
+    if (laneCount <= 1) {
+        return 4;
+    }
+    const step = (maxSafeTop - 4) / (laneCount - 1);
+    return Math.round(4 + clampedIndex * step);
+}
+
 function playSingleChatBarrage(message, laneIndex = 0) {
     return new Promise(resolve => {
         if (!message || !isGamePageActive()) {
@@ -1863,8 +2088,9 @@ function playSingleChatBarrage(message, laneIndex = 0) {
         }
 
         const root = ensureChatBarrageRoot();
+        const isEmote = isEmoteChatMessage(message);
         const item = document.createElement('div');
-        item.className = 'chat-barrage-item';
+        item.className = isEmote ? 'chat-barrage-item is-emote' : 'chat-barrage-item';
         const author = resolveChatAuthorLabel(message);
         const avatarInfo = resolveChatAvatarInfo(message, author);
 
@@ -1885,19 +2111,20 @@ function playSingleChatBarrage(message, laneIndex = 0) {
             avatar.textContent = avatarInfo.fallbackText;
         }
 
-        const content = isEmoteChatMessage(message)
+        const content = isEmote
             ? createEmoteImageView(message, 'chat-barrage-emote-img', 'chat-barrage-emote-fallback')
             : document.createElement('span');
-        if (!isEmoteChatMessage(message)) {
+        if (!isEmote) {
             content.className = 'chat-barrage-text';
             content.textContent = message.content || '';
         }
 
         item.appendChild(avatar);
         item.appendChild(content);
-        const laneTop = CHAT_BARRAGE_LANE_TOPS[Math.max(0, Math.min(laneIndex, CHAT_BARRAGE_LANE_TOPS.length - 1))] ?? 0;
-        item.style.top = `${laneTop}px`;
         root.appendChild(item);
+
+        const laneTop = resolveChatBarrageLaneTop(root, item, laneIndex);
+        item.style.top = `${laneTop}px`;
 
         const rootWidth = Math.max(root.clientWidth, window.innerWidth - 32);
         const itemWidth = Math.max(item.offsetWidth, 120);
@@ -1955,7 +2182,11 @@ export function appendInMatchChatMessage(message, playBarrage = false) {
     renderInMatchChatDock();
 
     if (playBarrage) {
-        enqueueChatBarrage(normalized);
+        if (isEmoteChatMessage(normalized)) {
+            enqueueEmoteStickerPop(normalized);
+        } else {
+            enqueueChatBarrage(normalized);
+        }
     }
 }
 

@@ -22,6 +22,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     public partial class PlayerState
     {
         public bool IsTakeTwo { get; set; }
+        public bool IsMirageOpponentProxy { get; init; }
         public MiragePlayerState? Mirage { get; set; }
         public bool IsMirageMode => Mirage != null;
         public int GetMirageGoldCap() => Mirage?.HardGoldCap > 0 ? Mirage.HardGoldCap : MirageRuleConfig.DefaultHardGoldCap;

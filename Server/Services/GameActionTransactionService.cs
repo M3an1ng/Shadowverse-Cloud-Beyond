@@ -426,13 +426,13 @@ namespace ShadowverseBeyond.Server.Services
             var player1Field = string.Join(",",
                 gameState.Player1.Field
                     .Where(card => card != null)
-                    .Select(card => card.InstanceId.ToString("N"))
-                    .OrderBy(id => id));
+                    .OrderBy(card => card.InstanceId)
+                    .Select(card => $"{card.InstanceId:N}:{card.ActsThisTurn.ToString(CultureInfo.InvariantCulture)}"));
             var player2Field = string.Join(",",
                 gameState.Player2.Field
                     .Where(card => card != null)
-                    .Select(card => card.InstanceId.ToString("N"))
-                    .OrderBy(id => id));
+                    .OrderBy(card => card.InstanceId)
+                    .Select(card => $"{card.InstanceId:N}:{card.ActsThisTurn.ToString(CultureInfo.InvariantCulture)}"));
 
             var mirageFingerprint = gameState.Mode == GameMode.Mirage && gameState.Mirage != null
                 ? string.Join(":",

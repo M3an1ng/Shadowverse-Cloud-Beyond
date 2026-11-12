@@ -1228,6 +1228,25 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                     IsMirageCard = true,
                     Keywords = new List<string>(),
                     AbilityIds = new List<long>()
+                },
+                new()
+                {
+                    Id = 900010,
+                    Name = "幻境创世神龙",
+                    Type = CardType.Follower,
+                    Rarity = CardRarity.Legend,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Dragoncraft,
+                    Cost = 7,
+                    MirageTavernTier = 7,
+                    Attack = 12,
+                    Health = 12,
+                    Description = string.Empty,
+                    IsCollectible = true,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long>()
                 }
             };
 

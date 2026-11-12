@@ -48,6 +48,7 @@ import {
     mirageRedeemTicketRequest,
     mirageSelectLeaderRequest,
     abortMirageCombatPlayback,
+    switchMirageSpectateTargetRequest,
     submitPlayerChoice,
     cancelPlayerChoice
 } from './gameManager.js';
@@ -55,6 +56,48 @@ import {
 function isMirageMode(state = gameState) {
     const rawMode = state?.mode ?? state?.Mode;
     return rawMode === 'Mirage' || rawMode === 1;
+}
+
+function buildMirageTierBadgeInnerHtml(tier) {
+    const safeTier = Math.max(1, Math.trunc(Number(tier) || 1));
+    return `<svg class="mirage-tier-glyph" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0.7L7.45 4.55L11.3 6L7.45 7.45L6 11.3L4.55 7.45L0.7 6L4.55 4.55Z" fill="currentColor"/></svg><span class="mirage-tier-num">${safeTier}</span>`;
+}
+
+function buildMirageTavernAstrolabeSvg(tavernTier, maxTavernTier = 6) {
+    const count = Math.min(8, Math.max(6, Math.trunc(Number(maxTavernTier) || 6)));
+    const litCount = Math.max(1, Math.min(count, Math.trunc(Number(tavernTier) || 1)));
+    const orbitR = 20.5;
+    const hexPoints = [];
+    const nodesSvg = [];
+    for (let i = 0; i < count; i++) {
+        const rad = ((-90 + (360 / count) * i) * Math.PI) / 180;
+        const nx = 32 + orbitR * Math.cos(rad);
+        const ny = 32 + orbitR * Math.sin(rad);
+        hexPoints.push(`${nx.toFixed(2)},${ny.toFixed(2)}`);
+        if (i < litCount) {
+            nodesSvg.push(
+                `<polygon class="astrolabe-node is-lit" points="${nx.toFixed(2)},${(ny - 3.1).toFixed(2)} ${(nx + 2.3).toFixed(2)},${ny.toFixed(2)} ${nx.toFixed(2)},${(ny + 3.1).toFixed(2)} ${(nx - 2.3).toFixed(2)},${ny.toFixed(2)}"/>`
+            );
+        } else {
+            nodesSvg.push(
+                `<circle class="astrolabe-node is-dim" cx="${nx.toFixed(2)}" cy="${ny.toFixed(2)}" r="1.55"/>`
+            );
+        }
+    }
+    return `
+        <svg class="tavern-astrolabe-svg" viewBox="0 0 64 64" aria-hidden="true">
+            <circle class="astrolabe-outer-ring" cx="32" cy="32" r="27.5" stroke-dasharray="1.4 3.1"/>
+            <path class="astrolabe-crosshair" d="M32 2.5V6.5M32 57.5V61.5M2.5 32H6.5M57.5 32H61.5"/>
+            <rect class="astrolabe-square-frame" x="17" y="17" width="30" height="30" rx="1"/>
+            <polygon class="astrolabe-diamond-frame" points="32,10.5 53.5,32 32,53.5 10.5,32"/>
+            <polygon class="astrolabe-hex-track" points="${hexPoints.join(' ')}"/>
+            <polygon class="astrolabe-core-plate" points="32,19.2 42.8,32 32,44.8 21.2,32"/>
+            <path class="astrolabe-chalice" d="M25.8 26.2L32 28.8L38.2 26.2L35.7 33.2L32 35.4L28.3 33.2Z"/>
+            <path class="astrolabe-chalice-stem" d="M32 35.4V39.8M28.4 39.8H35.6"/>
+            <polygon class="astrolabe-core-spark" points="32,21.8 33.3,24.3 32,26.4 30.7,24.3"/>
+            ${nodesSvg.join('')}
+        </svg>
+    `;
 }
 import {
     buildDebugLogLine,
@@ -83,7 +126,7 @@ import {
     findLogCardInstanceByUid,
     buildMatchHistoryPreviewCard
 } from './ui/logPanel.js';
-import { createCardAnimationSystem } from './ui/cardAnimationSystem.js';
+import { createCardAnimationSystem, reconcileCardElementInPlace } from './ui/cardAnimationSystem.js';
 import { createBattleMotionController, createCleanCardClone, toStageRect } from './ui/battleCardMotion.js';
 import { isPresentationFastForward } from './revealPresentationGate.js';
 import { buildCounterSummaryEntries, PLAYER_SYSTEM_COUNTER_KEYS } from './counterSummary.js';
@@ -531,6 +574,7 @@ function resetHandDragState({ keepGhost = false, preserveSourceClass = false } =
     handDragState.dragFramePending = false;
     handDragState.renderedGhostX = 0;
     handDragState.renderedGhostY = 0;
+    refreshSelfPpPreview();
 }
 
 function resolveAvatarLeaderUid(avatarElement) {
@@ -913,6 +957,7 @@ function activateHandDragIfNeeded() {
 
     updateHandDragDropLaneLayout(findCardInstanceByUid(cardUid));
     scheduleHandDragGhostUpdate();
+    refreshSelfPpPreview();
 }
 
 function animateHandDragGhostToSource(ghostEl, sourceElement) {
@@ -1122,22 +1167,69 @@ function clearMulliganVisualState() {
     }
 }
 
+let hoveredHandPreviewUid = null;
+
+function resolveActiveSelfPpPreviewCost() {
+    if (gameState.isSpectator) return 0;
+    const localPlayerId = gameState.localPlayerId;
+    if (!localPlayerId) return 0;
+
+    const isMirage = isMirageMode(gameState);
+    if (isMirage) {
+        if (gameState.phase !== 'Recruit') return 0;
+    } else {
+        if (gameState.currentPlayerId !== localPlayerId) return 0;
+        if (gameState.phase !== 'Main' && gameState.phase !== 'TurnStart') return 0;
+    }
+
+    const candidateUid = String(
+        (handDragState.isActive && handDragState.cardUid)
+        || hoveredHandPreviewUid
+        || gameState.selectedCardUid
+        || ''
+    ).trim();
+    if (!candidateUid) return 0;
+
+    const cardInstance = findCardInstanceByUid(candidateUid);
+    if (!cardInstance) return 0;
+    const ownerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId;
+    if (!isSamePlayerId(ownerId, localPlayerId)) return 0;
+    if (!equalsIgnoreCase(cardInstance.zone, 'Hand')) return 0;
+
+    const costInfo = resolveCardCostDisplay(cardInstance, 'hand');
+    const numericCost = Number(costInfo?.displayCost);
+    return Number.isFinite(numericCost) && numericCost > 0 ? Math.trunc(numericCost) : 0;
+}
+
+function refreshSelfPpPreview() {
+    const localPlayerId = gameState.localPlayerId;
+    if (!localPlayerId) return;
+    const localPlayer = getPlayerState(localPlayerId);
+    if (!localPlayer) return;
+    updatePpDisplay(
+        localPlayer.id,
+        localPlayer.pp ?? 0,
+        localPlayer.maxPP ?? 0,
+        localPlayer.ppBoostArmed === true
+    );
+}
+
 function setFloatingHandCard(cardUid) {
     const nextUid = selectHandCard(cardUid);
 
     document.querySelectorAll('.hand-card.hand-card-floated')
         .forEach(el => el.classList.remove('hand-card-floated'));
 
-    if (!nextUid) {
-        return;
+    if (nextUid) {
+        document.querySelectorAll('.hand-card[data-uid]')
+            .forEach(el => {
+                if (String(el.dataset.uid ?? '') === nextUid) {
+                    el.classList.add('hand-card-floated');
+                }
+            });
     }
 
-    document.querySelectorAll('.hand-card[data-uid]')
-        .forEach(el => {
-            if (String(el.dataset.uid ?? '') === nextUid) {
-                el.classList.add('hand-card-floated');
-            }
-        });
+    refreshSelfPpPreview();
 }
 
 function preserveCardStateClasses(sourceEl, targetEl) {
@@ -1301,18 +1393,18 @@ function ensureEagerCardArt(cardEl, cardData) {
     }
 }
 
-function buildStandaloneMotionCardClone(cardDtoOrInstance) {
+function buildStandaloneMotionCardClone(cardDtoOrInstance, paidCost = null, playMode = null) {
     if (!cardDtoOrInstance) return null;
     const hydrated = createDiscoverPreviewCard(cardDtoOrInstance) ?? cardDtoOrInstance;
-    const paidCostRaw = cardDtoOrInstance.CurrentCost
+    const snapshotCost = cardDtoOrInstance.CurrentCost
         ?? cardDtoOrInstance.currentCost
         ?? cardDtoOrInstance.Cost
         ?? cardDtoOrInstance.cost;
-    if (hydrated && hydrated !== cardDtoOrInstance && Number.isFinite(Number(paidCostRaw))) {
-        hydrated.currentCost = Number(paidCostRaw);
-        hydrated.cost = Number(paidCostRaw);
+    if (hydrated && hydrated !== cardDtoOrInstance && Number.isFinite(Number(snapshotCost))) {
+        hydrated.currentCost = Number(snapshotCost);
+        hydrated.cost = Number(snapshotCost);
     }
-    const rawCardEl = createCardElement(hydrated, 'hand');
+    const rawCardEl = createCardElement(hydrated, 'hand', paidCost, playMode);
     if (!rawCardEl) return null;
     ensureEagerCardArt(rawCardEl, cardDtoOrInstance);
     return createCleanCardClone(rawCardEl, 102, 140);
@@ -1348,7 +1440,7 @@ function playUnitEvolutionEffect(unitUid, isSuper = false) {
     return getBattleMotionController().playEvolveBurst(String(unitUid), Boolean(isSuper));
 }
 
-function notifyCardPlayed(playedCardDto, sourcePlayerId) {
+function notifyCardPlayed(playedCardDto, sourcePlayerId, paidCost, playMode) {
     if (!isGamePageActive() || !playedCardDto) return undefined;
     const stageEl = gameContainerEl ?? document.getElementById('game-container');
     if (!stageEl) return undefined;
@@ -1391,11 +1483,13 @@ function notifyCardPlayed(playedCardDto, sourcePlayerId) {
         }
     }
 
-    const cardHtmlElement = buildStandaloneMotionCardClone(playedCardDto);
+    const cardHtmlElement = buildStandaloneMotionCardClone(playedCardDto, paidCost, playMode);
     if (!cardHtmlElement) return undefined;
 
     const rawType = String(playedCardDto.Type ?? playedCardDto.type ?? '').trim().toLowerCase();
     const isSpell = rawType === 'spell';
+    const legacyName = playMode == null ? (playedCardDto.Name ?? playedCardDto.name ?? '') : '';
+    const alternateAnimation = playModeVisual(playMode, legacyName).animation;
 
     markTimedUidFlag(suppressedExitUids, cardUid, 2600);
     if (!isSpell) {
@@ -1409,6 +1503,7 @@ function notifyCardPlayed(playedCardDto, sourcePlayerId) {
         isOpponent,
         isFromDrag,
         isSpell,
+        alternateAnimation,
         createdAt: now
     });
     return undefined;
@@ -1448,13 +1543,7 @@ function prepareCardMoveVisual(moveContext) {
 
     if (
         (hasPendingPlay && toZone === 'field')
-        || (toZone === 'hand'
-            && isFaceUpHandForOwner(ownerId)
-            && (moveReason === 'drawn'
-                || moveReason === 'addedtohand'
-                || moveReason === 'returnedtohand'
-                || fromZone === 'deck'
-                || fromZone === 'field'))
+        || (toZone === 'hand' && isFaceUpHandForOwner(ownerId))
     ) {
         markTimedUidFlag(suppressedEnterUids, cardUid, 2200);
     }
@@ -1482,6 +1571,7 @@ function commitCardMoveVisual(moveContext, preMoveVisual, movedInstance) {
             isSpell: toZone !== 'field',
             isOpponent: pendingPlay.isOpponent,
             isFromDrag: pendingPlay.isFromDrag,
+            alternateAnimation: pendingPlay.alternateAnimation,
             fastForward: isPresentationFastForward()
         });
     }
@@ -1533,13 +1623,22 @@ function commitCardMoveVisual(moveContext, preMoveVisual, movedInstance) {
     if (moveReason === 'returnedtohand' || (fromZone === 'field' && toZone === 'hand')) {
         if (isFaceUpHandForOwner(ownerId)) {
             const newHandEl = gameContainerEl?.querySelector(`.hand-card[data-uid="${cardUid}"]`);
-            const sourceRect = preMoveVisual?.snap?.rect ?? (isOwnerLocal ? anchors?.selfDeckRect : anchors?.oppHandRect);
+            const sourceRect = preMoveVisual?.snap?.rect ?? null;
             if (newHandEl && sourceRect) {
                 motion.runCrossZoneCarrierFlight({
                     targetUid: cardUid,
                     targetEl: newHandEl,
                     sourceRect,
                     durationMs: 250,
+                    pulseTone: 'cyan'
+                });
+                return undefined;
+            }
+            if (newHandEl) {
+                motion.playHandRightSlideIn({
+                    targetUid: cardUid,
+                    targetEl: newHandEl,
+                    durationMs: 240,
                     pulseTone: 'cyan'
                 });
                 return undefined;
@@ -1559,29 +1658,12 @@ function commitCardMoveVisual(moveContext, preMoveVisual, movedInstance) {
         return undefined;
     }
 
-    if (
-        toZone === 'hand'
-        && isFaceUpHandForOwner(ownerId)
-        && (moveReason === 'drawn' || moveReason === 'addedtohand' || fromZone === 'deck')
-    ) {
+    if (toZone === 'hand' && isFaceUpHandForOwner(ownerId)) {
         const newHandEl = gameContainerEl?.querySelector(`.hand-card[data-uid="${cardUid}"]`);
-        if (newHandEl && anchors) {
-            const isDeckDraw = fromZone === 'deck' || moveReason === 'drawn';
-            const fallbackCenter = {
-                left: anchors.stageRect.width * 0.5 - 36,
-                top: anchors.stageRect.height * 0.46 - 50,
-                width: 72,
-                height: 100,
-                cx: anchors.stageRect.width * 0.5,
-                cy: anchors.stageRect.height * 0.46
-            };
-            const sourceRect = isDeckDraw
-                ? (isOwnerLocal ? anchors.selfDeckRect : anchors.oppDeckRect)
-                : fallbackCenter;
-            motion.runCrossZoneCarrierFlight({
+        if (newHandEl) {
+            motion.playHandRightSlideIn({
                 targetUid: cardUid,
                 targetEl: newHandEl,
-                sourceRect,
                 durationMs: 240,
                 pulseTone: 'cyan'
             });
@@ -1815,17 +1897,22 @@ function updatePpDisplay(playerId, currentPp, maxPp, isPpBoostArmed = false) {
 
     const ppLabelEl = document.getElementById(`${prefix}-pp-label`);
     if (ppLabelEl) {
-        if (isLocalPlayer) {
-            ppLabelEl.textContent = isMirageMode(gameState) ? 'GOLD' : 'PP';
-        } else {
-            ppLabelEl.textContent = 'OPP PP';
-        }
+        ppLabelEl.textContent = (isLocalPlayer && isMirageMode(gameState)) ? 'GP' : 'PP';
     }
+
+    const previewCost = isLocalPlayer ? resolveActiveSelfPpPreviewCost() : 0;
+    const isPreviewEnough = previewCost > 0 && previewCost <= displayCurrentPp;
+    const isPreviewInsufficient = previewCost > displayCurrentPp;
 
     const ppTextEl = document.getElementById(`${prefix}-pp-text`)
         ?? document.getElementById(`${prefix}-stats`)?.querySelector('.pp-text');
     if (ppTextEl) {
-        ppTextEl.textContent = `${displayCurrentPp} / ${maxPp ?? 0}`;
+        const curLabel = isPreviewEnough
+            ? `${displayCurrentPp}→${displayCurrentPp - previewCost}`
+            : `${displayCurrentPp}`;
+        ppTextEl.innerHTML = `<span class="pp-cur">${curLabel}</span><span class="pp-max">/ ${maxPp ?? 0}</span>`;
+        ppTextEl.classList.toggle('is-previewing', isPreviewEnough);
+        ppTextEl.classList.toggle('is-insufficient', isPreviewInsufficient);
     }
 
     const selfPpWrapper = isLocalPlayer ? document.getElementById('right-dock-self-pp') : document.getElementById('right-dock-upper-pp');
@@ -1833,7 +1920,7 @@ function updatePpDisplay(playerId, currentPp, maxPp, isPpBoostArmed = false) {
         selfPpWrapper.classList.toggle('is-gold', isMirageMode(gameState));
     }
 
-    // Render PP Bar Segments
+    // Render PP Bar Segments (with live PP cost preview on self gauge)
     if (ppBarContainer) {
         ppBarContainer.classList.remove('is-six');
         ppBarContainer.innerHTML = '';
@@ -1842,6 +1929,9 @@ function updatePpDisplay(playerId, currentPp, maxPp, isPpBoostArmed = false) {
         const safeBaseFilled = Math.max(0, Math.min(baseFilledCount, safeMax));
         const safeOverflowStart = Math.max(0, Math.min(safeBaseFilled, displayMax));
         const safeOverflowCount = Math.max(0, Math.min(overflowCount, Math.max(0, displayMax - safeOverflowStart)));
+        const safeAvailTotal = Math.min(displayMax, safeBaseFilled + safeOverflowCount);
+        const spendStartIdx = isPreviewEnough ? Math.max(0, safeAvailTotal - previewCost) : -1;
+        const insufficientEndIdx = isPreviewInsufficient ? Math.min(displayMax, previewCost) : -1;
 
         for (let i = 0; i < displayMax; i++) {
             const segment = document.createElement('div');
@@ -1855,6 +1945,12 @@ function updatePpDisplay(playerId, currentPp, maxPp, isPpBoostArmed = false) {
                 segment.classList.add('empty', 'unlocked'); // Unlocked this match, spent this turn
             } else {
                 segment.classList.add('empty', 'locked'); // Locked/Max capacity limit
+            }
+
+            if (isPreviewEnough && i >= spendStartIdx && i < safeAvailTotal) {
+                segment.classList.add('will-spend');
+            } else if (isPreviewInsufficient && i >= safeAvailTotal && i < insufficientEndIdx) {
+                segment.classList.add('insufficient-preview');
             }
 
             ppBarContainer.appendChild(segment);
@@ -2061,6 +2157,9 @@ function updateHealthDisplay(unitInstance) {
     if (unitInstance.type === 'Leader') {
         // 根据ownerId和本地玩家ID，判断是player1还是player2
         const uiPlayerPrefix = (unitInstance.ownerId === gameState.localPlayerId) ? 'player1' : 'player2';
+        if (uiPlayerPrefix === 'player2' && document.getElementById('player2-info')?.classList.contains('is-mirage-tavern')) {
+            return;
+        }
         const hpContainer = document.getElementById(`${uiPlayerPrefix}-hp`);
 
         if (hpContainer) {
@@ -2400,13 +2499,14 @@ function updateUnitDisplay(unitInstance) {
     preserveCardStateClasses(unitElement, replacement);
 
     const unitUid = getCardUid(unitInstance);
-    replacement.dataset.renderKey = unitElement.dataset.renderKey
+    const prevRenderKey = unitElement.dataset.renderKey
         || (unitUid ? `field-${unitUid}` : replacement.dataset.renderKey || '');
-    if (unitUid) {
-        getBattleMotionController().syncEntityElementVisibility(unitUid, replacement);
-    }
 
-    unitElement.replaceWith(replacement);
+    reconcileCardElementInPlace(unitElement, replacement, preserveCardStateClasses);
+    unitElement.dataset.renderKey = prevRenderKey;
+    if (unitUid) {
+        getBattleMotionController().syncEntityElementVisibility(unitUid, unitElement);
+    }
 }
 
 function refreshCardInstanceUi(cardInstance, handOwnersToRefresh = null, emblemOwnersToRefresh = null) {
@@ -2809,20 +2909,30 @@ function canSelectChoiceTarget(targetUid) {
     return true;
 }
 
+function formatChoiceCountLabel(selectedCount, min, max) {
+    return min === max ? `${selectedCount} / ${max}` : `${selectedCount} / ${min}-${max}`;
+}
+
 function updateChoiceOverlayUI() {
     if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
 
     const { min, max } = getChoiceMinMax(currentChoiceRequest);
     const selectedCount = currentChoiceSelectedTargetIds.size;
+    const isValid = isChoiceSelectionValid(currentChoiceRequest, selectedCount);
 
     const countEl = document.getElementById('choice-selected-count');
     if (countEl) {
-        countEl.textContent = `${selectedCount}/${min}-${max}`;
+        countEl.textContent = formatChoiceCountLabel(selectedCount, min, max);
+    }
+
+    const controlsEl = document.querySelector('#choice-overlay-root .choice-controls-overlay');
+    if (controlsEl) {
+        controlsEl.classList.toggle('is-satisfied', isValid);
     }
 
     const confirmBtn = document.getElementById('choice-confirm-btn');
     if (confirmBtn) {
-        confirmBtn.disabled = !isChoiceSelectionValid(currentChoiceRequest, selectedCount);
+        confirmBtn.disabled = !isValid;
     }
 
     const cancelBtn = document.getElementById('choice-cancel-btn');
@@ -3052,10 +3162,12 @@ function renderGame(currentGameState) { // Remove second parameter
     let localPlayer = null;
     let opponentPlayerState = null;
 
-    // 方法1: 使用localPlayerId进行查找（主要方法）
-    if (gameState.localPlayerId) {
-        localPlayer = currentGameState.players.find(p => p.id === gameState.localPlayerId);
-        opponentPlayerState = currentGameState.players.find(p => p.id !== gameState.localPlayerId);
+    // 方法1: 优先使用观战视角或localPlayerId进行查找（主要方法，支持观战补位AI时不反置阵营）
+    const primarySeatId = currentGameState.viewingPlayerId || gameState.localPlayerId;
+    if (primarySeatId) {
+        const normalizedSeatId = String(primarySeatId).trim().toLowerCase();
+        localPlayer = currentGameState.players.find(p => String(p?.id ?? '').trim().toLowerCase() === normalizedSeatId);
+        opponentPlayerState = currentGameState.players.find(p => p !== localPlayer);
     }
 
     // 方法2: 如果localPlayerId未设置或查找失败，仅在“人类 vs AI”场景下使用 IsAI 属性进行区分
@@ -3093,9 +3205,16 @@ function renderGame(currentGameState) { // Remove second parameter
 
     // Call helper functions to render specific parts of the UI using game state and cached elements
 
-    // 1. Render Player Stats
+    const isMirageRecruitHud = isMirageMode(currentGameState) && currentGameState.phase === 'Recruit';
+
+    // 1. Render Player Stats (In Mirage Recruit phase, #player2-info renders as the Neutral Tavern HUD)
     renderPlayerStats(player1, 'player1');
-    renderPlayerStats(player2, 'player2');
+    if (isMirageRecruitHud) {
+        renderMirageNeutralTavernHud(currentGameState, player1);
+    } else {
+        clearMirageNeutralTavernHud();
+        renderPlayerStats(player2, 'player2');
+    }
 
     // 2. Render Hands (Ensure hand array exists, fallback to empty array)
     // Always render local player's hand with full details at the bottom
@@ -3123,6 +3242,7 @@ function renderGame(currentGameState) { // Remove second parameter
     // 6. Render Action Buttons based on Game Phase
     renderActionButtons(currentGameState);
     renderMirageShopPanel(currentGameState, player1);
+    renderMirage8PHudAndModal(currentGameState, player1);
 
     const activePreviewUid = battleCardPreviewEl?.dataset?.previewUid;
     if (activePreviewUid) {
@@ -3132,33 +3252,14 @@ function renderGame(currentGameState) { // Remove second parameter
 
 }
 
-function syncMirageRightDockUpperTier(currentGameState, localPlayer) {
+function syncMirageRightDockUpperTier(currentGameState, _localPlayer) {
     const upperPpBox = document.getElementById('right-dock-upper-pp');
-    const labelEl = document.getElementById('player2-pp-label');
-    const textEl = document.getElementById('player2-pp-text');
     const barEl = document.getElementById('player2-pp-bar');
     if (!upperPpBox || !barEl) return;
 
     if (!isMirageMode(currentGameState)) {
         upperPpBox.classList.remove('is-gold');
         barEl.classList.remove('is-six');
-        return;
-    }
-
-    const miragePlayer = localPlayer?.mirage ?? {};
-    const tavernTier = Math.max(1, Number(miragePlayer.tavernTier ?? miragePlayer.TavernTier ?? 1) || 1);
-    const maxTavernTier = Math.max(1, Number(miragePlayer.maxTavernTier ?? miragePlayer.MaxTavernTier ?? 6) || 6);
-
-    upperPpBox.classList.add('is-gold');
-    if (labelEl) labelEl.textContent = 'TAVERN TIER';
-    if (textEl) textEl.textContent = `★${tavernTier} / ${maxTavernTier}`;
-
-    barEl.classList.add('is-six');
-    barEl.innerHTML = '';
-    for (let i = 0; i < maxTavernTier; i++) {
-        const seg = document.createElement('div');
-        seg.className = i < tavernTier ? 'pp-segment active' : 'pp-segment empty unlocked';
-        barEl.appendChild(seg);
     }
 }
 
@@ -3242,7 +3343,8 @@ function renderMirageShopPanel(currentGameState, localPlayer) {
         upperFieldZone.classList.toggle('is-frozen', isShopFrozen);
     }
     if (upperZoneTag) {
-        upperZoneTag.textContent = `MIRAGE TAVERN · R${roundNumber} · ★${tavernTier}${isShopFrozen ? ' · FROZEN' : ''}`;
+        const shopCount = offers.length;
+        upperZoneTag.textContent = `TAVERN · ${shopCount}`;
     }
     if (lowerZoneTag) {
         const warbandCount = Array.isArray(localPlayer?.field) ? localPlayer.field.length : 0;
@@ -3272,18 +3374,23 @@ function renderMirageShopPanel(currentGameState, localPlayer) {
             const atk = Number(offer.attack ?? offer.Attack ?? 0);
             const hp = Number(offer.health ?? offer.Health ?? 0);
             const buyCost = Number(offer.buyCost ?? offer.BuyCost ?? 3);
+            const rawPoolCopies = offer.remainingPoolCopies ?? offer.RemainingPoolCopies;
+            const hasPoolCopies = rawPoolCopies !== null && rawPoolCopies !== undefined && Number.isFinite(Number(rawPoolCopies));
+            const poolCopiesBadge = hasPoolCopies ? ` · 池余${Number(rawPoolCopies)}` : '';
             const canBuy = !isSpectator && !isReady && !isHandFull && currentPp >= buyCost;
             const artStyle = artPreview ? `background-image:url('${artPreview}');` : '';
-            return `<div class="mirage-offer-card mirage-shop-offer-card ${isShopFrozen ? 'is-frozen' : ''}" data-offer-id="${offerId}" title="${desc || name}">
+            const tierBadgeInner = buildMirageTierBadgeInnerHtml(tier);
+            return `<div class="mirage-offer-card mirage-shop-offer-card ${isShopFrozen ? 'is-frozen' : ''}" data-offer-id="${offerId}" title="${escapeAttributeValue(`${desc || name}${poolCopiesBadge}`)}">
                 <div class="mirage-offer-art" style="${artStyle}"></div>
                 <div class="mirage-offer-top">
-                    <span class="mirage-offer-tier">★${tier}</span>
+                    <span class="mirage-offer-tier ${tier >= 7 ? 'is-mythic' : ''}" data-tier="${tier}" title="酒馆星级 ★${tier}">${tierBadgeInner}</span>
                     <span class="mirage-offer-name">${name}</span>
+                    <button type="button" class="mirage-offer-cost mirage-buy-offer-btn" data-mirage-buy-offer="${offerId}" ${canBuy ? '' : 'disabled'} title="${canBuy ? `点击招募 (${buyCost} 金币)` : `招募需要 ${buyCost} 金币`}">${buyCost}</button>
                 </div>
                 ${desc ? `<div class="mirage-offer-desc">${desc}</div>` : ''}
+                <button type="button" class="mirage-offer-hover-cta" data-mirage-buy-offer="${offerId}" ${canBuy ? '' : 'disabled'}>招募</button>
                 <div class="mirage-offer-stats-row">
                     <span class="mirage-offer-stat mirage-offer-atk" title="攻击力">${atk}</span>
-                    <button type="button" class="mirage-offer-buy-btn mirage-buy-offer-btn" data-mirage-buy-offer="${offerId}" ${canBuy ? '' : 'disabled'}>招募 ${buyCost}G</button>
                     <span class="mirage-offer-stat mirage-offer-hp" title="生命值">${hp}</span>
                 </div>
             </div>`;
@@ -3296,11 +3403,15 @@ function renderMirageShopPanel(currentGameState, localPlayer) {
     const needsLeaderSelection = !hasSelectedLeader && leaderCandidates.length > 0 && roundNumber === 1;
     if (needsLeaderSelection) {
         const canSelectLeader = !isSpectator && !isReady;
+        const fallbackCrest = CLASS_ICON_URL_MAP.Neutral || '';
         drawerEl.style.display = 'block';
         drawerEl.innerHTML = `
             <div class="mirage-drawer-header">
-                <span class="mirage-drawer-title">选择你的幻境主战者 (3 选 1)</span>
-                <span class="mirage-drawer-subtitle">决定本局专属技能与初始生命值</span>
+                <div class="mirage-drawer-title-group">
+                    <span class="mirage-drawer-kicker">COMMANDER SELECTION</span>
+                    <span class="mirage-drawer-title">选择幻境主战者</span>
+                </div>
+                <span class="mirage-drawer-subtitle">决定本局专属统帅技能与初始生命上限</span>
             </div>
             <div class="mirage-drawer-grid">
                 ${leaderCandidates.map(cand => {
@@ -3309,17 +3420,22 @@ function renderMirageShopPanel(currentGameState, localPlayer) {
                     const cDesc = escapeAttributeValue(cand.description ?? cand.Description ?? '');
                     const cHp = Number(cand.health ?? cand.Health ?? 20);
                     const cArt = escapeAttributeValue(cand.artPreview ?? cand.ArtPreview ?? '');
-                    const avatarStyle = cArt ? `background-image:url('${cArt}');` : '';
+                    const artImgHtml = cArt
+                        ? `<img class="mirage-choice-avatar-img" src="${cArt}" alt="" onerror="this.remove()">`
+                        : '';
+                    const fallbackImgHtml = fallbackCrest
+                        ? `<img class="mirage-choice-avatar-fallback" src="${fallbackCrest}" alt="" aria-hidden="true">`
+                        : '';
                     return `<button type="button" class="mirage-choice-card" data-mirage-select-leader="${defId}" ${canSelectLeader ? '' : 'disabled'}>
                         <div class="mirage-choice-card-top">
-                            <div class="mirage-choice-avatar" style="${avatarStyle}"></div>
+                            <div class="mirage-choice-avatar">${fallbackImgHtml}${artImgHtml}</div>
                             <div class="mirage-choice-meta">
                                 <div class="mirage-choice-name">${cName}</div>
-                                <div class="mirage-choice-stats">${cHp} HP · 主战者</div>
+                                <div class="mirage-choice-stats">${cHp} HP · COMMANDER</div>
                             </div>
                         </div>
                         <div class="mirage-choice-desc">${cDesc || '无技能说明'}</div>
-                        <span class="mirage-choice-cta">选择该主战者</span>
+                        <span class="mirage-choice-cta">选定主战者</span>
                     </button>`;
                 }).join('')}
             </div>
@@ -3337,8 +3453,11 @@ function renderMirageShopPanel(currentGameState, localPlayer) {
         drawerEl.style.display = 'block';
         drawerEl.innerHTML = `
             <div class="mirage-drawer-header">
-                <span class="mirage-drawer-title">三连奖励 · 发现 ★${targetTier} 随从</span>
-                <span class="mirage-drawer-subtitle">待兑现凭据：${pendingTickets.length} 张</span>
+                <div class="mirage-drawer-title-group">
+                    <span class="mirage-drawer-kicker">TRIPLE REWARD · TIER ${targetTier}</span>
+                    <span class="mirage-drawer-title">三连发现奖励（★${targetTier}）</span>
+                </div>
+                <span class="mirage-drawer-subtitle">待兑现凭据：${pendingTickets.length}</span>
             </div>
             <div class="mirage-drawer-grid">
                 ${candidates.map(cand => {
@@ -3348,18 +3467,26 @@ function renderMirageShopPanel(currentGameState, localPlayer) {
                     const cAtk = Number(cand.attack ?? cand.Attack ?? 0);
                     const cHp = Number(cand.health ?? cand.Health ?? 0);
                     const cTier = Number(cand.tavernTier ?? cand.TavernTier ?? targetTier);
+                    const starIdx = Math.min(7, Math.max(1, cTier));
+                    const rawPoolCopies = cand.remainingPoolCopies ?? cand.RemainingPoolCopies;
+                    const poolText = (rawPoolCopies !== null && rawPoolCopies !== undefined && Number.isFinite(Number(rawPoolCopies)))
+                        ? ` · 池余 ${Number(rawPoolCopies)}`
+                        : '';
                     const cArt = escapeAttributeValue(cand.artPreview ?? cand.ArtPreview ?? '');
-                    const avatarStyle = cArt ? `background-image:url('${cArt}');` : '';
+                    const artImgHtml = cArt
+                        ? `<img class="mirage-choice-avatar-img" src="${cArt}" alt="" onerror="this.remove()">`
+                        : '';
+                    const fallbackImgHtml = `<img class="mirage-choice-avatar-fallback" src="/mse-beyond/numbers/mirage-stars/${starIdx}.png" alt="" aria-hidden="true">`;
                     return `<button type="button" class="mirage-choice-card" data-mirage-redeem-ticket="${ticketId}" data-mirage-redeem-card="${defId}" title="${cDesc}" ${canRedeem ? '' : 'disabled'}>
                         <div class="mirage-choice-card-top">
-                            <div class="mirage-choice-avatar" style="${avatarStyle}"></div>
+                            <div class="mirage-choice-avatar">${fallbackImgHtml}${artImgHtml}</div>
                             <div class="mirage-choice-meta">
                                 <div class="mirage-choice-name">${cName}</div>
-                                <div class="mirage-choice-stats">★${cTier} · ATK ${cAtk} / HP ${cHp}</div>
+                                <div class="mirage-choice-stats">★${cTier} · ATK ${cAtk} / HP ${cHp}${poolText}</div>
                             </div>
                         </div>
                         <div class="mirage-choice-desc">${cDesc || '白板战棋随从'}</div>
-                        <span class="mirage-choice-cta">领取随从</span>
+                        <span class="mirage-choice-cta">招募至手牌</span>
                     </button>`;
                 }).join('')}
             </div>
@@ -3390,16 +3517,63 @@ function ensureMirageCombatOverlayElement() {
     return overlayEl;
 }
 
-function renderMirageCombatBoardFromStateDto(stateDto, activeAttackerUid = null, activeDefenderUid = null) {
+function hydrateCombatPlayerHudState(playerDto) {
+    if (!playerDto) return null;
+    const rawLeader = playerDto.leaderCard ?? playerDto.LeaderCard ?? null;
+    let leaderCard = null;
+    if (rawLeader) {
+        leaderCard = createDiscoverPreviewCard(rawLeader) ?? { ...rawLeader };
+        leaderCard.id = Number(rawLeader.cardDefinitionId ?? rawLeader.CardDefinitionId ?? rawLeader.id ?? rawLeader.Id ?? leaderCard.id ?? 0);
+        leaderCard.uid = rawLeader.instanceId ?? rawLeader.InstanceId ?? rawLeader.uid ?? leaderCard.uid ?? '';
+        leaderCard.name = rawLeader.name ?? rawLeader.Name ?? leaderCard.name ?? '';
+        leaderCard.description = rawLeader.description ?? rawLeader.Description ?? leaderCard.description ?? '';
+        leaderCard.artPreview = rawLeader.artPreview ?? rawLeader.ArtPreview ?? leaderCard.artPreview ?? '';
+        leaderCard.currentHealth = rawLeader.currentHealth ?? rawLeader.CurrentHealth ?? leaderCard.currentHealth ?? 20;
+        leaderCard.maxHealth = rawLeader.maxHealth ?? rawLeader.MaxHealth ?? rawLeader.health ?? rawLeader.Health ?? leaderCard.maxHealth ?? 20;
+        leaderCard.actAbilities = rawLeader.actAbilities ?? rawLeader.ActAbilities ?? leaderCard.actAbilities ?? [];
+        leaderCard.actsThisTurn = rawLeader.actsThisTurn ?? rawLeader.ActsThisTurn ?? leaderCard.actsThisTurn ?? 0;
+        leaderCard.maxActsPerTurn = rawLeader.maxActsPerTurn ?? rawLeader.MaxActsPerTurn ?? leaderCard.maxActsPerTurn ?? 1;
+    }
+    return {
+        id: playerDto.playerId ?? playerDto.PlayerId ?? '',
+        displayName: playerDto.displayName ?? playerDto.DisplayName ?? '',
+        avatarUrl: playerDto.avatarUrl ?? playerDto.AvatarUrl ?? '',
+        class: playerDto.class ?? playerDto.Class ?? 'Neutral',
+        isAI: Boolean(playerDto.isAI ?? playerDto.IsAI),
+        pp: Number(playerDto.currentPP ?? playerDto.CurrentPP ?? playerDto.pp ?? 0),
+        maxPP: Number(playerDto.maxPP ?? playerDto.MaxPP ?? 0),
+        ep: Number(playerDto.currentEP ?? playerDto.CurrentEP ?? playerDto.ep ?? 0),
+        maxEP: Number(playerDto.maxEP ?? playerDto.MaxEP ?? 2),
+        sep: Number(playerDto.currentSEP ?? playerDto.CurrentSEP ?? playerDto.sep ?? 0),
+        maxSEP: Number(playerDto.maxSEP ?? playerDto.MaxSEP ?? 2),
+        deckCount: Number(playerDto.deckCount ?? playerDto.DeckCount ?? 0),
+        graveyardCount: Number(playerDto.graveyardCount ?? playerDto.GraveyardCount ?? 0),
+        bloodPool: Number(playerDto.bloodPool ?? playerDto.BloodPool ?? 0),
+        hand: Array.isArray(playerDto.hand ?? playerDto.Hand) ? (playerDto.hand ?? playerDto.Hand) : [],
+        emblem: Array.isArray(playerDto.emblem ?? playerDto.Emblem) ? (playerDto.emblem ?? playerDto.Emblem) : [],
+        mirage: playerDto.mirage ?? playerDto.Mirage ?? null,
+        leaderCard
+    };
+}
+
+function renderMirageCombatBoardFromStateDto(stateDto, activeAttackerUid = null, activeDefenderUid = null, options = {}) {
     if (!stateDto) return;
     const playersDto = Array.isArray(stateDto.players ?? stateDto.Players)
         ? (stateDto.players ?? stateDto.Players)
         : [];
     if (playersDto.length === 0) return;
 
-    const localId = String(gameState.localPlayerId ?? '').trim().toLowerCase();
+    const localId = String(gameState.viewingPlayerId || gameState.localPlayerId || '').trim().toLowerCase();
     const localDto = playersDto.find(p => String(p?.playerId ?? p?.PlayerId ?? '').trim().toLowerCase() === localId) ?? playersDto[0];
     const opponentDto = playersDto.find(p => p !== localDto) ?? playersDto[1];
+
+    if (options.syncOpponentHud && opponentDto) {
+        clearMirageNeutralTavernHud();
+        const hydratedOpp = hydrateCombatPlayerHudState(opponentDto);
+        if (hydratedOpp) {
+            renderPlayerStats(hydratedOpp, 'player2');
+        }
+    }
 
     const hydrateCombatField = (fieldDtos, ownerId) => {
         if (!Array.isArray(fieldDtos)) return [];
@@ -3443,6 +3617,17 @@ function renderMirageCombatBoardFromStateDto(stateDto, activeAttackerUid = null,
 }
 
 export function startMirageCombatPlaybackUi(replayDto) {
+    if (gameContainerEl) {
+        gameContainerEl.dataset.miragePhase = 'AutoCombat';
+    }
+    clearMirageNeutralTavernHud();
+    const upperFieldZone = document.getElementById('upper-field-zone');
+    if (upperFieldZone) upperFieldZone.classList.remove('is-tavern', 'is-frozen');
+    const upperZoneTag = document.getElementById('upper-zone-tag');
+    if (upperZoneTag) upperZoneTag.textContent = 'OPPONENT WARBAND';
+    const mirageSubActions = document.getElementById('mirage-dock-sub-actions');
+    if (mirageSubActions) mirageSubActions.hidden = true;
+
     const shopPanel = document.getElementById('mirage-shop-panel');
     if (shopPanel) shopPanel.style.display = 'none';
     const stageEl = document.getElementById('mirage-tavern-stage');
@@ -3465,7 +3650,7 @@ export function startMirageCombatPlaybackUi(replayDto) {
         `;
     }
     const initialState = replayDto?.initialState ?? replayDto?.InitialState;
-    renderMirageCombatBoardFromStateDto(initialState);
+    renderMirageCombatBoardFromStateDto(initialState, null, null, { syncOpponentHud: true });
 }
 
 export function renderMirageCombatStep(stepDto, replayDto, stepIndex = 0) {
@@ -3577,13 +3762,164 @@ export function renderMirageCombatOutcome(replayDto) {
     const isTie = Boolean(outcome.isTie ?? outcome.IsTie);
     const damage = Number(outcome.leaderDamage ?? outcome.LeaderDamage ?? 0);
     const winnerId = String(outcome.winnerPlayerId ?? outcome.WinnerPlayerId ?? '').trim().toLowerCase();
-    const localId = String(gameState.localPlayerId ?? '').trim().toLowerCase();
+    const localId = String(gameState.viewingPlayerId || gameState.localPlayerId || '').trim().toLowerCase();
     if (isTie || damage <= 0) {
         statusEl.textContent = '本轮交战平局（0 伤害）';
     } else if (winnerId && winnerId === localId) {
         statusEl.textContent = `本轮获胜！对敌方主战者造成 ${damage} 点伤害`;
     } else {
-        statusEl.textContent = `本轮落败，我方主战者受到 ${damage} 点伤害`;
+        statusEl.textContent = `本轮落败，主战者受到 ${damage} 点伤害`;
+    }
+}
+
+function renderMirage8PHudAndModal(currentGameState, localPlayer) {
+    let standingsPodEl = document.getElementById('mirage-8p-standings-pod');
+    let placementModalEl = document.getElementById('mirage-8p-placement-modal');
+
+    const isTournamentSeat = isMirageMode(currentGameState)
+        && Boolean(currentGameState.mirage?.tournamentRoomId ?? currentGameState.mirage?.TournamentRoomId ?? currentGameState.mirageStandings);
+    const standings = currentGameState.mirageStandings;
+    const entries = Array.isArray(standings?.entries ?? standings?.Entries)
+        ? (standings.entries ?? standings.Entries)
+        : [];
+
+    if (!isTournamentSeat || entries.length === 0) {
+        if (standingsPodEl) standingsPodEl.remove();
+        if (placementModalEl) placementModalEl.remove();
+        return;
+    }
+
+    const cornerHost = document.getElementById('player1-corner-pod') ?? gameContainerEl;
+    if (cornerHost) {
+        if (!standingsPodEl) {
+            standingsPodEl = document.createElement('div');
+            standingsPodEl.id = 'mirage-8p-standings-pod';
+            standingsPodEl.className = 'mirage-standings-pod';
+            standingsPodEl.addEventListener('click', (e) => {
+                const row = e.target?.closest?.('[data-mirage-spectate-player]');
+                if (!row) return;
+                const targetPid = row.dataset.mirageSpectatePlayer;
+                if (targetPid) {
+                    void switchMirageSpectateTargetRequest(targetPid);
+                }
+            });
+            cornerHost.prepend(standingsPodEl);
+        } else if (standingsPodEl.parentElement !== cornerHost) {
+            cornerHost.prepend(standingsPodEl);
+        }
+
+        const viewingId = String(currentGameState.viewingPlayerId || currentGameState.localPlayerId || '').toLowerCase();
+        const selfOrigId = String(currentGameState.selfOriginalPlayerId || '').toLowerCase();
+        const nextMap = standings?.nextOpponentsByPlayerId ?? standings?.NextOpponentsByPlayerId ?? {};
+        const findNextOpp = () => {
+            for (const [k, v] of Object.entries(nextMap)) {
+                if (String(k).toLowerCase() === viewingId) return v;
+            }
+            return null;
+        };
+        const nextOpp = findNextOpp();
+        const nextOppId = String(nextOpp?.playerId ?? nextOpp?.PlayerId ?? '').toLowerCase();
+        const nextIsGhost = Boolean(nextOpp?.isGhost ?? nextOpp?.IsGhost);
+        const canSwitchSpectate = currentGameState.isSpectator === true || currentGameState.gameOver === true;
+        const aliveCount = Number(standings?.aliveCount ?? standings?.AliveCount ?? entries.filter(e => !(e.isEliminated ?? e.IsEliminated)).length);
+        const readyCount = Number(standings?.readyCount ?? standings?.ReadyCount ?? 0);
+
+        const rowsHtml = entries.map(entry => {
+            const pid = String(entry.playerId ?? entry.PlayerId ?? '');
+            const pidLower = pid.toLowerCase();
+            const rank = Number(entry.rank ?? entry.Rank ?? 1);
+            const name = escapeAttributeValue(entry.displayName ?? entry.DisplayName ?? '旅人');
+            const isAi = Boolean(entry.isAi ?? entry.IsAi);
+            const isEliminated = Boolean(entry.isEliminated ?? entry.IsEliminated);
+            const hp = Number(entry.currentHp ?? entry.CurrentHp ?? 0);
+            const tier = Number(entry.tavernTier ?? entry.TavernTier ?? 1);
+            const ready = Boolean(entry.isReady ?? entry.IsReady);
+            const isSelf = selfOrigId && pidLower === selfOrigId;
+            const isViewing = viewingId && pidLower === viewingId;
+            const isNext = !nextIsGhost && nextOppId && pidLower === nextOppId;
+            const clickable = canSwitchSpectate && !isEliminated && pidLower !== viewingId;
+
+            return `
+                <div class="mirage-standing-row ${isSelf ? 'is-self' : ''} ${isViewing ? 'is-viewing' : ''} ${isNext ? 'is-next' : ''} ${isEliminated ? 'is-eliminated' : ''} ${clickable ? 'is-clickable' : ''}"
+                     ${clickable ? `data-mirage-spectate-player="${escapeAttributeValue(pid)}"` : ''}
+                     title="${name}${isAi ? ' (AI)' : ''}${isNext ? ' · 本轮交战对手' : ''}${clickable ? ' · 点击切换观战视角' : ''}">
+                    <span class="mirage-standing-rank">#${rank}</span>
+                    <span class="mirage-standing-name">${isNext ? '<span class="mirage-standing-vs-tag">VS</span>' : ''}<span>${name}${ready && !isEliminated ? ' · ✓' : ''}</span></span>
+                    <span class="mirage-standing-tier">★${tier}</span>
+                    <span class="mirage-standing-hp">${isEliminated ? 'OUT' : `${hp}`}</span>
+                </div>
+            `;
+        }).join('');
+
+        standingsPodEl.innerHTML = `
+            <div class="mirage-standings-header">
+                <span>MIRAGE 8P · 存活 ${aliveCount}/8</span>
+                <span>就绪 ${readyCount}/${aliveCount}</span>
+            </div>
+            ${rowsHtml}
+        `;
+
+        // Top Tavern HUD (#player2-info) already shows next opponent summary in Recruit phase
+        void nextOpp;
+    }
+
+    // Placement Result Modal when local human player finishes (Champion #1 or Eliminated #2..#8)
+    const shouldShowPlacementModal = currentGameState.gameOver === true
+        && currentGameState.isSpectator !== true
+        && currentGameState.miragePlacementModalDismissed !== true;
+
+    if (!shouldShowPlacementModal) {
+        if (placementModalEl) placementModalEl.remove();
+        return;
+    }
+
+    const selfOrigLower = String(currentGameState.selfOriginalPlayerId || currentGameState.localPlayerId || '').toLowerCase();
+    const selfEntry = entries.find(e => String(e.playerId ?? e.PlayerId ?? '').toLowerCase() === selfOrigLower);
+    const isChampion = Boolean(currentGameState.winner && String(currentGameState.winner).toLowerCase() === selfOrigLower)
+        || Number(selfEntry?.finalPlacement ?? selfEntry?.FinalPlacement) === 1;
+    const placement = isChampion ? 1 : Number(selfEntry?.finalPlacement ?? selfEntry?.FinalPlacement ?? selfEntry?.rank ?? 8);
+    const aliveRemaining = Number(standings?.aliveCount ?? standings?.AliveCount ?? 0);
+    const tourneyFinished = String(standings?.phase ?? standings?.Phase ?? '') === 'Finished' || aliveRemaining <= 1;
+    const canStaySpectate = !isChampion && !tourneyFinished && aliveRemaining >= 1;
+
+    if (!placementModalEl && gameContainerEl) {
+        placementModalEl = document.createElement('div');
+        placementModalEl.id = 'mirage-8p-placement-modal';
+        placementModalEl.className = 'mirage-placement-modal';
+        placementModalEl.addEventListener('click', (e) => {
+            if (e.target?.closest?.('[data-mirage-modal-stay-spectate]')) {
+                const topAlive = entries.find(en => !(en.isEliminated ?? en.IsEliminated));
+                const targetId = topAlive?.playerId ?? topAlive?.PlayerId ?? null;
+                document.dispatchEvent(new CustomEvent('svb:mirage-stay-spectate', { detail: { targetPlayerId: targetId } }));
+                placementModalEl?.remove();
+                return;
+            }
+            if (e.target?.closest?.('[data-mirage-modal-dismiss]')) {
+                currentGameState.miragePlacementModalDismissed = true;
+                placementModalEl?.remove();
+                return;
+            }
+            if (e.target?.closest?.('[data-mirage-modal-back-lobby]')) {
+                document.dispatchEvent(new CustomEvent('svb:mirage-return-lobby'));
+            }
+        });
+        gameContainerEl.appendChild(placementModalEl);
+    }
+
+    if (placementModalEl) {
+        placementModalEl.innerHTML = `
+            <div class="mirage-placement-card ${isChampion ? 'is-champion' : ''}">
+                <div class="mirage-placement-rank">#${placement}</div>
+                <div class="mirage-placement-title">${isChampion ? 'VICTORY · 星界幻境霸主' : `第 ${placement} 名 · 征程结束`}</div>
+                <div class="mirage-placement-desc">${escapeAttributeValue(currentGameState.gameMessage || (isChampion ? '击败全部对手夺得第一名！' : '可留场全公开观战剩余选手对决，或直接返回幻境大厅开启下一局。'))}</div>
+                <div class="mirage-placement-actions">
+                    ${canStaySpectate
+                        ? `<button type="button" class="mlobby-btn is-primary" data-mirage-modal-stay-spectate="1">留场观战（全公开视角）</button>`
+                        : `<button type="button" class="mlobby-btn" data-mirage-modal-dismiss="1">查看最终战场</button>`}
+                    <button type="button" class="mlobby-btn is-gold" data-mirage-modal-back-lobby="1">返回多人对战</button>
+                </div>
+            </div>
+        `;
     }
 }
 
@@ -3629,9 +3965,9 @@ function updateEmblemDisplay(playerState, prefix) {
     emblemZone.classList.toggle('is-empty', activeEmblems.length === 0);
     emblemZone.dataset.emblemCount = String(activeEmblems.length);
 
-    // Top-right opponent emblems fill right-to-left in the W-shaped 5-ring grid [2, 1, 0, 4, 3]
+    // Top-right opponent emblems fill right-to-left in the single-row 5-slot crest dock
     const alignRight = prefix === 'player2';
-    const slotOrder = alignRight ? [2, 1, 0, 4, 3] : [0, 1, 2, 3, 4];
+    const slotOrder = alignRight ? [4, 3, 2, 1, 0] : [0, 1, 2, 3, 4];
     const slotMap = new Array(EMBLEM_SLOT_COUNT).fill(null);
     activeEmblems.forEach((emblem, idx) => {
         slotMap[slotOrder[idx]] = emblem;
@@ -3888,12 +4224,189 @@ function renderCornerExtraCounters(playerState, prefix) {
     extraContainer.innerHTML = entries
         .slice(0, 2)
         .map(entry => `
-            <div class="resource-box extra-counter-box">
+            <div class="resource-box extra-counter-box is-pill">
                 <span class="resource-label">${escapeAttributeValue(entry.label)}</span>
                 <span class="resource-value">${entry.value}</span>
             </div>
         `.trim())
         .join('');
+}
+
+function resolveMirageNextOpponentSummary(currentGameState) {
+    const standings = currentGameState?.mirageStandings;
+    const nextMap = standings?.nextOpponentsByPlayerId ?? standings?.NextOpponentsByPlayerId;
+    if (!nextMap || typeof nextMap !== 'object') return null;
+    const viewingId = String(currentGameState?.viewingPlayerId || currentGameState?.localPlayerId || '').trim().toLowerCase();
+    if (!viewingId) return null;
+    for (const [k, v] of Object.entries(nextMap)) {
+        if (String(k).trim().toLowerCase() === viewingId) {
+            return v || null;
+        }
+    }
+    return null;
+}
+
+function clearMirageNeutralTavernHud() {
+    const p2Info = document.getElementById('player2-info');
+    if (!p2Info) return;
+    p2Info.classList.remove('is-mirage-tavern', 'is-tavern-frozen');
+    const avatarEl = p2Info.querySelector('.stats-avatar');
+    if (avatarEl) {
+        avatarEl.classList.remove('is-tavern-emblem');
+    }
+    const tavernUpgradePod = p2Info.querySelector('.mirage-tavern-upgrade-pod');
+    if (tavernUpgradePod) {
+        tavernUpgradePod.style.display = 'none';
+        tavernUpgradePod.innerHTML = '';
+    }
+    const tavernTierBar = p2Info.querySelector('.mirage-tavern-tier-segments');
+    if (tavernTierBar) {
+        tavernTierBar.style.display = 'none';
+    }
+}
+
+function renderMirageNeutralTavernHud(currentGameState, localPlayer) {
+    const p2Info = document.getElementById('player2-info');
+    const statsContainer = p2Info?.querySelector('.player-stats');
+    if (!p2Info || !statsContainer) return;
+
+    const mirageInfo = localPlayer?.mirage ?? {};
+    const roundNumber = Math.max(1, Number(currentGameState?.mirage?.roundNumber ?? currentGameState?.mirage?.RoundNumber ?? 1) || 1);
+    const tavernTier = Math.max(1, Number(mirageInfo.tavernTier ?? mirageInfo.TavernTier ?? 1) || 1);
+    const maxTavernTier = Math.max(1, Number(mirageInfo.maxTavernTier ?? mirageInfo.MaxTavernTier ?? 6) || 6);
+    const upgradeCost = Math.max(0, Number(mirageInfo.upgradeCost ?? mirageInfo.UpgradeCost ?? 0) || 0);
+    const canUpgradeTier = Boolean(mirageInfo.canUpgradeTier ?? mirageInfo.CanUpgradeTier);
+    const isShopFrozen = Boolean(mirageInfo.isShopFrozen ?? mirageInfo.IsShopFrozen);
+    const isReady = Boolean(mirageInfo.isReady ?? mirageInfo.IsReady);
+    const isSpectator = currentGameState?.isSpectator === true;
+    const starSpriteIndex = Math.min(7, Math.max(1, tavernTier));
+
+    p2Info.classList.add('is-mirage-tavern');
+    p2Info.classList.toggle('is-tavern-frozen', isShopFrozen);
+    p2Info.classList.remove('is-danger', 'attack-drag-hover', 'attack-drag-invalid', 'is-attack-confirmed');
+
+    const oppSkillPod = statsContainer.querySelector('.mirage-leader-skill-pod');
+    if (oppSkillPod) {
+        oppSkillPod.style.display = 'none';
+        oppSkillPod.innerHTML = '';
+    }
+    updateEmblemDisplay({ emblem: [] }, 'player2');
+
+    const avatarEl = statsContainer.querySelector('.stats-avatar');
+    if (avatarEl) {
+        avatarEl.classList.remove('mirage-leader-avatar', 'targetable', 'targetable-spell', 'targetable-restricted', 'choice-selected', 'hand-drag-target-valid');
+        avatarEl.classList.add('has-image', 'is-tavern-emblem');
+        avatarEl.innerHTML = buildMirageTavernAstrolabeSvg(tavernTier, maxTavernTier);
+    }
+
+    const classIconEl = document.getElementById('player2-class-icon');
+    if (classIconEl) {
+        const neutralIcon = CLASS_ICON_URL_MAP.Neutral;
+        if (neutralIcon) {
+            classIconEl.src = neutralIcon;
+            classIconEl.hidden = false;
+        } else {
+            classIconEl.hidden = true;
+        }
+    }
+
+    const playerNameEl = statsContainer.querySelector('.player-name');
+    if (playerNameEl) {
+        playerNameEl.textContent = '';
+        const nameTextEl = document.createElement('span');
+        nameTextEl.className = 'player-name-text';
+        nameTextEl.textContent = '星界酒馆';
+        playerNameEl.appendChild(nameTextEl);
+
+        const badgeEl = document.createElement('span');
+        badgeEl.className = `player-order-badge tavern-badge ${isShopFrozen ? 'is-frozen' : ''}`;
+        badgeEl.textContent = isShopFrozen ? 'FROZEN' : `R${roundNumber}`;
+        playerNameEl.appendChild(badgeEl);
+    }
+
+    const classEl = statsContainer.querySelector('.class-name');
+    if (classEl) {
+        const nextOpp = resolveMirageNextOpponentSummary(currentGameState);
+        if (nextOpp) {
+            const oppName = String(nextOpp.displayName ?? nextOpp.DisplayName ?? '未知对手');
+            const oppIsGhost = Boolean(nextOpp.isGhost ?? nextOpp.IsGhost);
+            classEl.textContent = `VS ${oppName}${oppIsGhost ? ' (残影)' : ''}`;
+        } else {
+            classEl.textContent = 'NEUTRAL TAVERN';
+        }
+    }
+
+    const slotsRow = document.getElementById('player2-slots-row') ?? statsContainer.querySelector('.leader-rpg-slots-row');
+    let upgradePod = statsContainer.querySelector('.mirage-tavern-upgrade-pod');
+    if (!upgradePod) {
+        upgradePod = document.createElement('div');
+        upgradePod.className = 'mirage-tavern-upgrade-pod';
+        if (slotsRow) {
+            slotsRow.appendChild(upgradePod);
+        } else {
+            statsContainer.appendChild(upgradePod);
+        }
+    }
+    upgradePod.style.display = 'inline-flex';
+
+    const isMaxTier = tavernTier >= maxTavernTier;
+    const canUp = !isSpectator && !isReady && canUpgradeTier && !isMaxTier;
+
+    if (isMaxTier) {
+        upgradePod.innerHTML = `
+            <button type="button" class="leader-rpg-chip is-tavern-upgrade mirage-hud-upgrade-btn is-max" data-mirage-action="upgrade" disabled title="酒馆已达最高等级 ★${maxTavernTier}">
+                <span class="resource-label tavern-up-tier">酒馆 ★${tavernTier}</span>
+                <span class="mirage-chip-val tavern-up-cost">MAX</span>
+            </button>
+        `;
+    } else {
+        const nextTier = Math.min(maxTavernTier, tavernTier + 1);
+        const tooltip = escapeAttributeValue(
+            isSpectator
+                ? `当前酒馆 ★${tavernTier} · 升级至 ★${nextTier} 需 ${upgradeCost} 金币`
+                : `当前酒馆 ★${tavernTier} · 点击花费 ${upgradeCost} 金币升至 ★${nextTier}`
+        );
+        upgradePod.innerHTML = `
+            <button type="button" class="leader-rpg-chip is-tavern-upgrade mirage-hud-upgrade-btn ${canUp ? 'is-affordable' : ''}" data-mirage-action="upgrade" ${canUp ? '' : 'disabled'} title="${tooltip}">
+                <span class="resource-label tavern-up-tier">★${tavernTier}▸★${nextTier}</span>
+                <span class="mirage-chip-val tavern-up-cost">${upgradeCost}G</span>
+            </button>
+        `;
+    }
+
+    const hpContainer = statsContainer.querySelector('.hp-display');
+    const hpValueEl = statsContainer.querySelector('.hp-value');
+    const hpMaxEl = statsContainer.querySelector('.hp-max');
+
+    if (hpValueEl) {
+        hpValueEl.textContent = `★${tavernTier}`;
+        hpValueEl.style.color = '';
+    }
+    if (hpMaxEl) {
+        hpMaxEl.textContent = `/ ${maxTavernTier}`;
+    }
+    if (hpContainer) {
+        const existingTimer = hpGhostSettleTimers.get(hpContainer.id || 'player2-hp');
+        if (existingTimer) {
+            window.clearTimeout(existingTimer);
+            hpGhostSettleTimers.delete(hpContainer.id || 'player2-hp');
+        }
+        delete hpContainer.dataset.lastHpPct;
+        hpContainer.classList.remove('is-danger', 'is-low');
+
+        let tierSegmentsEl = hpContainer.querySelector('.mirage-tavern-tier-segments');
+        if (!tierSegmentsEl) {
+            tierSegmentsEl = document.createElement('div');
+            tierSegmentsEl.className = 'mirage-tavern-tier-segments';
+            tierSegmentsEl.setAttribute('aria-hidden', 'true');
+            hpContainer.prepend(tierSegmentsEl);
+        }
+        tierSegmentsEl.style.display = 'grid';
+        tierSegmentsEl.style.gridTemplateColumns = `repeat(${maxTavernTier}, 1fr)`;
+        tierSegmentsEl.innerHTML = Array.from({ length: maxTavernTier }, (_, idx) => (
+            `<span class="tavern-tier-seg ${idx < tavernTier ? 'is-active' : ''}"></span>`
+        )).join('');
+    }
 }
 
 function renderMirageLeaderSkillPod(playerState, statsContainer, isLocal, prefix = 'player1') {
@@ -3922,10 +4435,6 @@ function renderMirageLeaderSkillPod(playerState, statsContainer, isLocal, prefix
     podEl.style.display = 'inline-flex';
 
     const mirageInfo = playerState?.mirage ?? {};
-    const tavernTier = Number(mirageInfo.tavernTier ?? mirageInfo.TavernTier ?? 1);
-    const maxTavernTier = Number(mirageInfo.maxTavernTier ?? mirageInfo.MaxTavernTier ?? 6);
-    const upgradeCost = Number(mirageInfo.upgradeCost ?? mirageInfo.UpgradeCost ?? 0);
-    const canUpgradeTier = Boolean(mirageInfo.canUpgradeTier ?? mirageInfo.CanUpgradeTier);
     const isReady = Boolean(mirageInfo.isReady ?? mirageInfo.IsReady);
 
     const rawActAbilities = Array.isArray(leaderCard.actAbilities)
@@ -3938,26 +4447,6 @@ function renderMirageLeaderSkillPod(playerState, statsContainer, isLocal, prefix
     const hasAct = actAbilities.length > 0 || Boolean(actionState?.showAct);
     const desc = escapeAttributeValue(leaderCard.description ?? leaderCard.Description ?? '无技能说明');
     const leaderUid = escapeAttributeValue(getCardUid(leaderCard) ?? '');
-
-    let upgradeChipHtml = '';
-    if (isLocal && !gameState.isSpectator) {
-        const canUp = gameState.phase === 'Recruit' && !isReady && canUpgradeTier && tavernTier < maxTavernTier;
-        const nextTierText = tavernTier >= maxTavernTier ? 'MAX' : `升★${Math.min(maxTavernTier, tavernTier + 1)}`;
-        const costValText = tavernTier >= maxTavernTier ? `★${maxTavernTier}` : `${upgradeCost}G`;
-        upgradeChipHtml = `
-            <button type="button" class="leader-rpg-chip is-ep mirage-hud-upgrade-btn" data-mirage-action="upgrade" ${canUp ? '' : 'disabled'} title="升级幻境酒馆星级">
-                <span class="resource-label ep-label">${nextTierText}</span>
-                <span class="mirage-chip-val">${costValText}</span>
-            </button>
-        `;
-    } else {
-        upgradeChipHtml = `
-            <span class="leader-rpg-chip is-ep">
-                <span class="resource-label ep-label">酒馆</span>
-                <span class="mirage-chip-val">★${tavernTier}</span>
-            </span>
-        `;
-    }
 
     let skillChipHtml = '';
     if (hasAct) {
@@ -4020,7 +4509,7 @@ function renderMirageLeaderSkillPod(playerState, statsContainer, isLocal, prefix
         `;
     }
 
-    podEl.innerHTML = `${upgradeChipHtml}${skillChipHtml}`;
+    podEl.innerHTML = skillChipHtml;
 }
 
 function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'player2'
@@ -4155,7 +4644,7 @@ function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'play
             nameTextEl.textContent = displayName;
             playerNameEl.appendChild(nameTextEl);
 
-            const orderBadge = resolvePlayerOrderBadge(playerState);
+            const orderBadge = isMirageMode(gameState) ? null : resolvePlayerOrderBadge(playerState);
             if (orderBadge) {
                 const badgeEl = document.createElement('span');
                 badgeEl.className = `player-order-badge ${orderBadge.className}`;
@@ -4239,23 +4728,18 @@ function renderPlayerHand(handCards = [], handElement) {
 
     if (newlyDrawnUids.length > 0) {
         const motion = getBattleMotionController();
-        const anchors = motion.getAnchorRects();
-        const sourceRect = isLocal ? anchors?.selfDeckRect : anchors?.oppDeckRect;
-        if (sourceRect) {
-            newlyDrawnUids.forEach((uid, idx) => {
-                const targetEl = handElement.querySelector(`.card[data-uid="${uid}"]`);
-                if (targetEl) {
-                    motion.runCrossZoneCarrierFlight({
-                        targetUid: uid,
-                        targetEl,
-                        sourceRect,
-                        delayMs: Math.min(idx * 45, 180),
-                        durationMs: 240,
-                        pulseTone: 'cyan'
-                    });
-                }
-            });
-        }
+        newlyDrawnUids.forEach((uid, idx) => {
+            const targetEl = handElement.querySelector(`.card[data-uid="${uid}"]`);
+            if (targetEl) {
+                motion.playHandRightSlideIn({
+                    targetUid: uid,
+                    targetEl,
+                    delayMs: Math.min(idx * 50, 200),
+                    durationMs: 240,
+                    pulseTone: 'cyan'
+                });
+            }
+        });
     }
 
     if (isLocal) {
@@ -4451,7 +4935,7 @@ function getCardActionState(cardInstance, context) {
         const isLeaderCard = equalsIgnoreCase(cardType, 'Leader')
             || resolvedContext === 'leader'
             || equalsIgnoreCase(cardInstance.zone ?? cardInstance.Zone, 'Leader');
-        if (isLeaderCard) {
+        if (isLeaderCard || isFieldContext) {
             const actAbilityList = Array.isArray(cardInstance.actAbilities)
                 ? cardInstance.actAbilities
                 : (Array.isArray(cardInstance.ActAbilities) ? cardInstance.ActAbilities : []);
@@ -4652,7 +5136,7 @@ function buildKeywordBadgesHtml(cardInstance, context) {
     return `<div class="keyword-badges${denseClass}">${badges.join('')}</div>`;
 }
 
-function createCardElement(cardInstance, context = 'hand') { // context: 'hand', 'field'
+function createCardElement(cardInstance, context = 'hand', displayCostOverride = null, playModeOverride = null) { // context: 'hand', 'field'
     if (!cardInstance) {
         return null;
     }
@@ -4694,13 +5178,19 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
     }
 
     const costInfo = resolveCardCostDisplay(cardInstance, context);
-    if (costInfo.enhanceActive) {
+    const effectiveDisplayCost = displayCostOverride ?? costInfo.displayCost;
+    const overrideModeVisual = playModeOverride != null
+        ? playModeVisual(playModeOverride, cardInstance.name ?? cardInstance.Name ?? '')
+        : null;
+    const activeModeVisual = overrideModeVisual?.label ? overrideModeVisual : costInfo.modeVisual;
+    const isEnhanceActive = overrideModeVisual ? Boolean(overrideModeVisual.label) : costInfo.enhanceActive;
+    if (isEnhanceActive) {
         cardDiv.classList.add('enhance-active');
     }
 
-    cardDiv.classList.toggle('alternate-active', costInfo.modeVisual.alternate);
-    cardDiv.dataset.playModeLabel = costInfo.modeVisual.label;
-    cardDiv.style.setProperty('--play-mode-label', JSON.stringify(costInfo.modeVisual.label));
+    cardDiv.classList.toggle('alternate-active', activeModeVisual.alternate);
+    cardDiv.dataset.playModeLabel = activeModeVisual.label;
+    cardDiv.style.setProperty('--play-mode-label', JSON.stringify(activeModeVisual.label));
 
     const countdownValue = cardInstance.countdown
         ?? cardInstance.CurrentCountdown
@@ -4731,11 +5221,23 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
         ? '<span class="bui-sevo-ring" aria-hidden="true"></span>'
         : '';
 
+    const isMirageHandZeroCostFollower = context === 'hand'
+        && isMirageMode(gameState)
+        && isFollowerType
+        && Number(effectiveDisplayCost) === 0;
+    const isMirageTierBadge = (context === 'field' && isMirageMode(gameState)) || isMirageHandZeroCostFollower;
+    const rawBaseTier = cardInstance.cost ?? cardInstance.Cost ?? effectiveDisplayCost;
+    const mirageFieldTier = Math.max(1, Math.trunc(Number(rawBaseTier) || 1));
+    const costBadgeHtml = isMirageTierBadge
+        ? `<div class="cost is-mirage-tier ${mirageFieldTier >= 7 ? 'is-mythic' : ''}" data-tier="${mirageFieldTier}" title="酒馆星级 ★${mirageFieldTier}">${buildMirageTierBadgeInnerHtml(mirageFieldTier)}</div>`
+        : `<div class="cost"><span>${effectiveDisplayCost ?? '?'}</span></div>`;
+
     cardDiv.innerHTML = `
           <div class="card-art"></div>
           ${archetypeOrnamentHtml}
           ${sevoRingHtml}
-          <div class="cost"><span>${costInfo.displayCost ?? '?'}</span></div>
+          <span class="target-hover-ring" aria-hidden="true"></span>
+          ${costBadgeHtml}
           <div class="name">${cardInstance.Name ?? cardInstance.name ?? 'Unknown Card'}</div>
           ${
         isFollowerType ?
@@ -5502,17 +6004,27 @@ function buildBattlePreviewHtml(cardInstance) {
     const buffSummaryHtml = getBuffSummaryHtml(cardInstance);
     const counterSummaryHtml = getCounterSummaryHtml(cardInstance);
 
+    const rawMirageBuyCost = cardInstance.mirageBuyCost ?? cardInstance.MirageBuyCost ?? cardInstance.buyCost ?? cardInstance.BuyCost;
+    const isMiragePreview = isMirageMode(gameState) || Boolean(cardInstance.isMirageCard ?? cardInstance.IsMirageCard);
+    const showMirageTierInSlate = isMiragePreview && !isLeader && (!isHandZone || (isFollower && Number(costValue) === 0));
+    const effectiveSlateCost = showMirageTierInSlate
+        ? Math.max(1, Math.trunc(Number(cardInstance.cost ?? cardInstance.Cost ?? costValue) || 1))
+        : costValue;
+
     return buildPreviewSlateHtml({
         rarityClass,
         rarityLabel,
         classLabel,
         typeLabel,
         name: cardInstance.name ?? cardInstance.Name ?? 'UNTITLED',
-        costValue,
+        costValue: effectiveSlateCost,
         enhanceActive: previewCostInfo.enhanceActive,
         modeLabel: previewCostInfo.modeVisual.label,
         alternateActive: previewCostInfo.modeVisual.alternate,
         isFollower,
+        isLeader,
+        isMirageCard: showMirageTierInSlate,
+        mirageBuyCost: isMiragePreview && !isLeader && rawMirageBuyCost !== undefined ? rawMirageBuyCost : null,
         attackValue,
         healthValue,
         countdownValue,
@@ -6205,14 +6717,18 @@ function renderActionButtons(currentGameState) {
         confirmMulliganButtonEl.disabled = true;
         endTurnButtonEl.style.display = 'none';
         endTurnButtonEl.disabled = true;
+        document.getElementById('battle-right-dock')?.classList.add('is-hidden-hub');
         return;
     }
 
     // --- REVISED BUTTON LOGIC: Base visibility/enabled state on localPlayerId vs currentPlayerId ---
     const isLocalPlayerTurn = currentGameState.localPlayerId === currentGameState.currentPlayerId;
     const endTurnLabelEl = endTurnButtonEl.querySelector('.end-turn-label');
+    const rightDockEl = document.getElementById('battle-right-dock');
+    const phaseTagEl = document.getElementById('turn-hub-phase-tag');
 
     endTurnButtonEl.classList.remove('is-self-turn', 'is-enemy-turn', 'is-mirage-recruit', 'is-mirage-locked');
+    rightDockEl?.classList.remove('is-hidden-hub', 'is-self-turn', 'is-enemy-turn', 'is-mirage-recruit', 'is-mirage-locked');
 
     if (isMirageMode(currentGameState)) {
         confirmMulliganButtonEl.style.display = 'none';
@@ -6220,16 +6736,27 @@ function renderActionButtons(currentGameState) {
         if (currentGameState.phase === 'Recruit') {
             const localPlayer = getPlayerState(currentGameState.localPlayerId);
             const isReady = Boolean(localPlayer?.mirage?.isReady ?? localPlayer?.mirage?.IsReady);
+            const gateClosed = Boolean(currentGameState.mirage?.isNextRoundGateClosed ?? currentGameState.mirage?.IsNextRoundGateClosed);
+            const standings = currentGameState.mirageStandings;
+            const aliveCnt = Number(standings?.aliveCount ?? standings?.AliveCount ?? 0);
+            const readyCnt = Number(standings?.readyCount ?? standings?.ReadyCount ?? 0);
+            const countSuffix = aliveCnt > 0 ? ` (${readyCnt}/${aliveCnt})` : '';
             endTurnButtonEl.style.display = 'inline-block';
-            endTurnButtonEl.disabled = isConnectionLocked || isReady;
-            endTurnButtonEl.classList.add(isReady ? 'is-mirage-locked' : 'is-mirage-recruit');
-            if (endTurnLabelEl) {
-                endTurnLabelEl.textContent = isReady ? 'LOCKED' : 'LOCK LINEUP';
+            endTurnButtonEl.disabled = isConnectionLocked || isReady || gateClosed;
+            const mirageStateCls = isReady ? 'is-mirage-locked' : 'is-mirage-recruit';
+            endTurnButtonEl.classList.add(mirageStateCls);
+            rightDockEl?.classList.add(mirageStateCls);
+            if (phaseTagEl) {
+                phaseTagEl.textContent = isReady ? 'LINEUP LOCKED' : 'RECRUIT PHASE';
             }
-            endTurnButtonEl.title = isReady ? '已锁定阵容，等待对手或招募结束' : '锁定本轮幻境阵容';
+            if (endTurnLabelEl) {
+                endTurnLabelEl.textContent = isReady ? `LOCKED${countSuffix}` : `LOCK LINEUP${countSuffix}`;
+            }
+            endTurnButtonEl.title = isReady ? `已锁定阵容${countSuffix}，等待全房就绪或招募结束` : '锁定本轮幻境阵容';
         } else {
             endTurnButtonEl.style.display = 'none';
             endTurnButtonEl.disabled = true;
+            rightDockEl?.classList.add('is-hidden-hub');
         }
         return;
     }
@@ -6247,17 +6774,22 @@ function renderActionButtons(currentGameState) {
 
         endTurnButtonEl.style.display = 'none';
         endTurnButtonEl.disabled = true; // Also disable
+        rightDockEl?.classList.add('is-hidden-hub');
     } else if (currentGameState.phase === 'TurnStart' || currentGameState.phase === 'Main') {
         // TurnStart or Main Phase: Show end turn, hide confirm. Enable/disable based on whose turn it is.
         confirmMulliganButtonEl.style.display = 'none';
         confirmMulliganButtonEl.disabled = isConnectionLocked;
         confirmMulliganButtonEl.textContent = '确认调度';
         endTurnButtonEl.style.display = 'inline-block';
-        endTurnButtonEl.classList.add(isLocalPlayerTurn ? 'is-self-turn' : 'is-enemy-turn');
+        const turnStateCls = isLocalPlayerTurn ? 'is-self-turn' : 'is-enemy-turn';
+        endTurnButtonEl.classList.add(turnStateCls);
+        rightDockEl?.classList.add(turnStateCls);
+        if (phaseTagEl) {
+            phaseTagEl.textContent = isLocalPlayerTurn ? 'YOUR TURN' : 'OPPONENT';
+        }
         if (endTurnLabelEl) {
             endTurnLabelEl.textContent = isLocalPlayerTurn ? 'END TURN' : 'ENEMY TURN';
         }
-        // ADDED: Detailed log before setting disabled state
         endTurnButtonEl.disabled = isConnectionLocked || !isLocalPlayerTurn; // Disable if not local player's turn
     } else {
         // Other phases or opponent's turn: Hide both (or just hide confirm, end turn might be handled by turn manager logic implicitly)
@@ -6266,6 +6798,7 @@ function renderActionButtons(currentGameState) {
         confirmMulliganButtonEl.textContent = '确认调度';
         endTurnButtonEl.style.display = 'none'; // Hide end turn if not P1's main phase
         endTurnButtonEl.disabled = true; // Also disable when hidden
+        rightDockEl?.classList.add('is-hidden-hub');
     }
 }
 
@@ -6643,6 +7176,26 @@ function handleAttackDragPointerCancel(event) {
     finalizeAttackDrag(event, { wasCancelled: true });
 }
 
+function handleHandPreviewPointerOver(event) {
+    const cardEl = event.target?.closest?.('#player1-hand .hand-card[data-uid]');
+    const nextUid = cardEl?.dataset?.uid ? String(cardEl.dataset.uid) : null;
+    if (nextUid === hoveredHandPreviewUid) return;
+    hoveredHandPreviewUid = nextUid;
+    refreshSelfPpPreview();
+}
+
+function handleHandPreviewPointerOut(event) {
+    if (!hoveredHandPreviewUid) return;
+    const fromCard = event.target?.closest?.('#player1-hand .hand-card[data-uid]');
+    if (!fromCard) return;
+    const toCard = event.relatedTarget?.closest?.('#player1-hand .hand-card[data-uid]');
+    if (toCard === fromCard) return;
+    const nextUid = toCard?.dataset?.uid ? String(toCard.dataset.uid) : null;
+    if (nextUid === hoveredHandPreviewUid) return;
+    hoveredHandPreviewUid = nextUid;
+    refreshSelfPpPreview();
+}
+
 // 设置全局事件监听器 (事件委托模式)
 function setupGlobalEventListeners() {
     if (!gameContainerEl) {
@@ -6654,6 +7207,8 @@ function setupGlobalEventListeners() {
     gameContainerEl.removeEventListener('dragstart', preventNativeGameDrag, true);
     gameContainerEl.removeEventListener('pointerdown', handleHandDragPointerDown);
     gameContainerEl.removeEventListener('pointerdown', handleAttackDragPointerDown);
+    gameContainerEl.removeEventListener('pointerover', handleHandPreviewPointerOver);
+    gameContainerEl.removeEventListener('pointerout', handleHandPreviewPointerOut);
     window.removeEventListener('pointermove', handleHandDragPointerMove);
     window.removeEventListener('pointerup', handleHandDragPointerUp);
     window.removeEventListener('pointercancel', handleHandDragPointerCancel);
@@ -6664,6 +7219,8 @@ function setupGlobalEventListeners() {
     gameContainerEl.addEventListener('dragstart', preventNativeGameDrag, true);
     gameContainerEl.addEventListener('pointerdown', handleHandDragPointerDown);
     gameContainerEl.addEventListener('pointerdown', handleAttackDragPointerDown);
+    gameContainerEl.addEventListener('pointerover', handleHandPreviewPointerOver);
+    gameContainerEl.addEventListener('pointerout', handleHandPreviewPointerOut);
     window.addEventListener('pointermove', handleHandDragPointerMove);
     window.addEventListener('pointerup', handleHandDragPointerUp);
     window.addEventListener('pointercancel', handleHandDragPointerCancel);
@@ -6696,35 +7253,55 @@ function togglePlayerInfoCollapse(targetId) {
 function updatePpBoostDisplay(playerId, usesAvailable, isArmed = false) {
     const isLocalPlayer = (playerId === gameState.localPlayerId);
     const prefix = isLocalPlayer ? 'player1' : 'player2';
-    const countEl = document.getElementById(`${prefix}-pp-boost-count`);
-    const buttonEl = document.getElementById(`${prefix}-pp-boost-button`);
+    const playerState = getPlayerState(playerId);
+    const rawIsFirst = playerState?.isFirst ?? playerState?.IsFirst;
+    const isSecondPlayer = rawIsFirst === false;
+    const safeLeft = Math.max(0, Number(usesAvailable) || 0);
+    const isMirage = isMirageMode(gameState);
+    const shouldShowSecondSlot = !isMirage && (isSecondPlayer || safeLeft > 0 || isArmed);
 
+    const countEl = document.getElementById(`${prefix}-pp-boost-count`);
     if (countEl) {
-        const safeLeft = Math.max(0, Number(usesAvailable) || 0);
         countEl.textContent = `×${safeLeft}`;
-        countEl.style.display = (!isArmed && safeLeft > 0) ? 'inline' : 'none';
+        countEl.style.display = isArmed ? 'none' : 'inline';
     }
 
-    if (buttonEl) {
+    if (isLocalPlayer) {
+        const buttonEl = document.getElementById('player1-pp-boost-button');
+        if (!buttonEl) return;
+        buttonEl.hidden = !shouldShowSecondSlot;
+        if (!shouldShowSecondSlot) return;
+
         const isLocalTurn = gameState.currentPlayerId === gameState.localPlayerId;
         const isTurnPhase = gameState.phase === 'Main' || gameState.phase === 'TurnStart';
         const canUse = !isConnectionLocked
-            && isLocalPlayer
             && isLocalTurn
             && isTurnPhase
-            && (((usesAvailable ?? 0) > 0) || isArmed)
+            && (safeLeft > 0 || isArmed)
             && !gameState.isSpectator;
 
         buttonEl.disabled = !canUse;
         buttonEl.classList.toggle('available', canUse);
         buttonEl.classList.toggle('armed', isArmed);
+        buttonEl.classList.toggle('is-spent', !isArmed && safeLeft <= 0);
 
         const textEl = buttonEl.querySelector('.pp-boost-action-text');
         if (textEl) {
-            textEl.textContent = isArmed ? '取消 PP+1' : 'PP+1 BOOST';
+            textEl.textContent = isArmed ? '+1PP ON' : '+1PP';
         }
-
-        buttonEl.title = '';
+        buttonEl.title = isArmed
+            ? '点击取消本回合额外能量点'
+            : (safeLeft > 0 ? `后手额外能量点（剩余 ${safeLeft} 次）` : '后手额外能量点已耗尽');
+    } else {
+        const oppBadgeEl = document.getElementById('player2-pp-boost-badge');
+        if (!oppBadgeEl) return;
+        const showOpp = shouldShowSecondSlot && (safeLeft > 0 || isArmed);
+        oppBadgeEl.hidden = !showOpp;
+        oppBadgeEl.classList.toggle('armed', isArmed);
+        const textEl = oppBadgeEl.querySelector('.pp-boost-action-text');
+        if (textEl) {
+            textEl.textContent = isArmed ? '+1PP ON' : '+1PP';
+        }
     }
 }
 
@@ -6946,11 +7523,13 @@ async function handleGameClick(event) {
                 Description: matchedOffer.description ?? matchedOffer.Description ?? '',
                 ArtPreview: matchedOffer.artPreview ?? matchedOffer.ArtPreview ?? '',
                 Type: matchedOffer.type ?? matchedOffer.Type ?? 'Follower',
-                Cost: matchedOffer.buyCost ?? matchedOffer.BuyCost ?? 3,
+                Cost: matchedOffer.tavernTier ?? matchedOffer.TavernTier ?? 1,
                 Attack: matchedOffer.attack ?? matchedOffer.Attack ?? 0,
                 Health: matchedOffer.health ?? matchedOffer.Health ?? 0
             });
             if (previewCard) {
+                previewCard.isMirageCard = true;
+                previewCard.mirageBuyCost = matchedOffer.buyCost ?? matchedOffer.BuyCost ?? 3;
                 renderBattleCardPreview(previewCard);
             }
         }
@@ -7157,6 +7736,9 @@ async function handleGameClick(event) {
     } else if (clickedEmblemElement) {
         targetUid = clickedEmblemElement.dataset.uid;
     } else if ((clickedPlayer1Hud || clickedPlayer2Hud) && !event.target.closest('button')) {
+        if (clickedPlayer2Hud && !isAwaitingPlayerChoice && clickedPlayer2Hud.classList.contains('is-mirage-tavern')) {
+            return;
+        }
         const clickedAvatarId = clickedPlayer1Hud ? 'player1-avatar' : 'player2-avatar';
 
         const localPlayerId = gameState.localPlayerId;
@@ -7588,6 +8170,7 @@ document.addEventListener('cleanupGame', () => {
     isAwaitingPlayerChoice = false;
     currentChoiceRequest = null;
     currentChoiceSelectedTargetIds = new Set();
+    hoveredHandPreviewUid = null;
     gameContainerEl?.classList.remove('player-choice-active');
     setFloatingHandCard(null);
     renderBattleCardPreview(null);
@@ -7797,21 +8380,34 @@ function renderChoiceOverlayUI() {
     const { min, max } = getChoiceMinMax(currentChoiceRequest);
     const hasSelectableTargets = Array.isArray(currentChoiceRequest.SelectableTargetIds)
         && currentChoiceRequest.SelectableTargetIds.length > 0;
+    const isCancellable = currentChoiceRequest.IsCancellable === true;
+    const isDecisionKind = currentChoiceRequest.TargetKey === 'decision';
 
     const controls = document.createElement('div');
-    controls.className = 'choice-controls-overlay choice-overlay';
+    controls.className = `choice-controls-overlay choice-overlay${hasSelectableTargets ? '' : ' is-empty-targets'}`;
     controls.addEventListener('click', e => e.stopPropagation());
 
     const message = currentChoiceRequest.Message || '请选择目标';
+    const kickerLabel = isDecisionKind
+        ? 'MODE SELECT'
+        : (hasSelectableTargets ? 'TARGET SELECT' : 'NO TARGET');
     const hint = hasSelectableTargets
-        ? (currentChoiceRequest.IsCancellable === true ? '点击目标进行选择；点击确定提交，取消可中止' : '点击目标进行选择；点击确定提交')
-        : (currentChoiceRequest.IsCancellable === true ? '当前无可选目标；点击确定提交空选择，或取消中止' : '当前无可选目标；点击确定继续');
+        ? (min === max
+            ? (isCancellable ? `点选 ${max} 个高亮目标（可取消）` : `点选 ${max} 个高亮目标后提交`)
+            : (min === 0 ? `可选至多 ${max} 个目标，确定提交` : `请选择 ${min}~${max} 个目标后提交`))
+        : (isCancellable ? '当前无可选目标，确定继续或取消中止' : '当前无可选目标，点击确定继续');
 
     controls.innerHTML = `
+        <div class="choice-pod-header">
+            <span class="choice-pod-kicker">
+                <span class="choice-pod-reticle" aria-hidden="true"></span>
+                <span class="choice-pod-kicker-label">${kickerLabel}</span>
+            </span>
+            <div class="choice-selected-count"><span class="choice-count-prefix">已选</span><span id="choice-selected-count">${formatChoiceCountLabel(0, min, max)}</span></div>
+        </div>
         <div class="choice-prompt-text">${escapeAttributeValue(message)}</div>
         <div class="choice-prompt-hint">${hint}</div>
         <div class="choice-controls-row">
-            <div class="choice-selected-count">已选：<span id="choice-selected-count">0/${min}-${max}</span></div>
             <div class="choice-controls-actions">
                 <button id="choice-confirm-btn" class="choice-btn choice-confirm-btn" type="button">确定</button>
                 <button id="choice-cancel-btn" class="choice-btn choice-cancel-btn" type="button">取消</button>

@@ -1,4 +1,5 @@
 import { exportPoolCode, importPoolCode } from './takeTwoPoolCode.js';
+import { isRoomSeatAlreadyReleased } from './roomExitDecisionPolicy.js';
 import { createPoolEnvironmentPicker } from "./poolEnvironmentPicker.js";
 import {
   formatRoomHandshake,
@@ -483,6 +484,13 @@ async function viewPool(environment) {
 }
 let waitingLobby = null;
 let activeDraftRoom = null;
+let runRoomEntry;
+export function configureTakeTwoRoomEntry(handler) {
+  runRoomEntry = handler;
+}
+export function getActiveTakeTwoRoom() {
+  return activeDraftRoom;
+}
 function setActiveDraftRoom(room) {
   activeDraftRoom = room;
   document.dispatchEvent(new CustomEvent("svb:draft-room-state"));
@@ -690,6 +698,7 @@ export async function openDraft(initial) {
   };
   const leave = async () => {
     if (await confirmDialog("是否退出房间？")) {
+      if (closed) return;
       try {
         // Leaving must not wait behind queued picks or depend on their sequence.
         await api(`/rooms/${room.id}/leave`, { method: "POST", headers });
@@ -1148,11 +1157,13 @@ export function initializeTakeTwo() {
       syncRoomControls();
       try {
         if (!getUserSession().userId) throw Error("请先登录");
-        const room = await api("/rooms", {
-          method: "POST",
-          body: JSON.stringify({ environment, pool }),
+        await runRoomEntry(async () => {
+          const room = await api("/rooms", {
+            method: "POST",
+            body: JSON.stringify({ environment, pool }),
+          });
+          await enterTakeTwoRoom({ ...room, role: "host" });
         });
-        await enterTakeTwoRoom({ ...room, role: "host" });
       } catch (e) {
         reportDraftError(e);
       } finally {
@@ -1167,7 +1178,7 @@ export function initializeTakeTwo() {
     const modeDescriptions = {
       standard: "创建房间并生成邀请码，等待对手加入并自动就绪",
       takeTwo: "创建双选轮抽房间，与对手完成轮抽构筑后对战",
-      mirage: "创建幻境战棋房间，使用独立酒馆卡池招募交战",
+      mirage: "创建幻境战棋多人房（支持 1～8 人同局，空位开局由 AI 补齐）",
     };
     for (const [value, label] of [
       ["standard", "普通模式"],
@@ -1282,15 +1293,31 @@ export function initializeTakeTwo() {
   }
 }
 
-export function stopTakeTwoWaitingLobby() {
-  waitingLobby?.stop();
+export async function leaveTakeTwoRoom() {
+  const room = activeDraftRoom;
+  if (!room) return;
+  try {
+    await api(`/rooms/${room.id}/leave`, {
+      method: "POST", headers: { "X-Take-Two-Token": room.player.token },
+    });
+  } catch (error) {
+    const handedOff = error?.status !== 504 && !(error instanceof TypeError) && /选牌已结束/.test(error?.message || '');
+    if (!isRoomSeatAlreadyReleased(error) && !handedOff) throw error;
+  }
+  if (activeDraftRoom?.id !== room.id) return;
+  releaseDraftRoom();
+  const localButton = document.getElementById("mp-go-game");
+  if (localButton) localButton.disabled = document.getElementById("take-two-create")?.hidden === false;
+  const output = document.getElementById(room.role === "guest" ? "mp-join-output" : "mp-create-output");
+  if (output) output.textContent = "已退出双选房间。";
 }
-export async function tryJoinTakeTwo(roomId, code) {
+export async function tryJoinTakeTwo(roomId, code, beforeJoin) {
   const trimmedRoomId = String(roomId || "").trim();
   const trimmedCode = String(code || "").trim();
   if (!trimmedCode) return false;
   if (!trimmedRoomId) {
     if (!/^[0-9]{6}$/.test(trimmedCode)) return false;
+    await beforeJoin();
     await enterTakeTwoRoom(
       await api("/join", {
         method: "POST",
@@ -1306,6 +1333,7 @@ export async function tryJoinTakeTwo(roomId, code) {
   if (!response.ok) throw Error("房间类型查询失败");
   const kind = await response.json();
   if (!kind.takeTwo) return false;
+  await beforeJoin();
   await enterTakeTwoRoom(
     await api("/join", {
       method: "POST",

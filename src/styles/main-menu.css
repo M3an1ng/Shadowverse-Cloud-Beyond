@@ -9,8 +9,8 @@
     --menu-ease-out-quint: cubic-bezier(0.23, 1, 0.32, 1);
 
     position: absolute;
-    top: 20px;
-    right: 24px;
+    top: calc(20px + var(--safe-top, 0px));
+    right: calc(24px + var(--safe-right, 0px));
     display: flex;
     gap: 12px;
     z-index: 100;
@@ -2031,6 +2031,7 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
     position: relative;
     width: 100vw;
     height: 100vh;
+    height: var(--app-height, 100dvh);
     display: none;
     flex-direction: column;
     justify-content: center;
@@ -3419,6 +3420,211 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
 
     .deck-picker-modal .deck-picker-actions-overlay {
         opacity: 1;
+    }
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .nav-item .nav-desc {
+        height: auto;
+        opacity: 0.72;
+        transform: translateY(0);
+        margin-top: 2px;
+    }
+
+    .deck-picker-modal .deck-picker-card .deck-actions-overlay {
+        inset: auto 12px 10px auto;
+        background: transparent;
+        backdrop-filter: none;
+        opacity: 1;
+        padding: 0;
+        gap: 8px;
+    }
+}
+
+/* --- Mobile Landscape Fullscreen Adaptation (<= 540px height) --- */
+@media (max-height: 540px) and (orientation: landscape) {
+    .top-nav-bar {
+        top: calc(8px + var(--safe-top, 0px));
+        right: calc(12px + var(--safe-right, 0px));
+        gap: 8px;
+    }
+
+    .top-nav-bar .icon-btn {
+        width: 30px;
+        height: 30px;
+    }
+
+    .top-nav-bar .icon-svg {
+        width: 15px;
+        height: 15px;
+    }
+
+    .user-card-popup,
+    .about-card-popup,
+    .daily-quest-card,
+    .battle-customization-card {
+        position: fixed;
+        top: calc(44px + var(--safe-top, 0px));
+        right: calc(12px + var(--safe-right, 0px));
+        max-width: min(400px, calc(100vw - 24px - var(--safe-left, 0px) - var(--safe-right, 0px)));
+        max-height: calc(var(--app-height, 100dvh) - 52px - var(--safe-top, 0px) - var(--safe-bottom, 0px));
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        padding: 12px 14px;
+        gap: 10px;
+        z-index: 220;
+    }
+
+    .daily-quest-list {
+        max-height: min(200px, calc(var(--app-height, 100dvh) - 150px));
+    }
+
+    .about-changelog {
+        max-height: min(140px, calc(var(--app-height, 100dvh) - 210px));
+    }
+
+    #navigation-page {
+        --menu-nav-item-width: clamp(122px, calc((100vw - 56px - var(--safe-left, 0px) - var(--safe-right, 0px)) / 5.4), 184px);
+        --menu-nav-item-height: 48px;
+        --menu-nav-gap: clamp(8px, 1.3vw, 18px);
+        --menu-nav-bottom: max(10%, calc(16px + var(--safe-bottom, 0px)));
+    }
+
+    #navigation-page .nav-menu {
+        flex-direction: row;
+    }
+
+    .title-container {
+        top: 32%;
+        gap: 0.1rem;
+    }
+
+    .main-title {
+        font-size: 0.85rem;
+        letter-spacing: 0.55em;
+    }
+
+    .hero-subtitle {
+        font-size: clamp(2.1rem, 5.4vw, 3.2rem);
+    }
+
+    .deco-line {
+        margin-top: 0.45rem;
+    }
+
+    .nav-text {
+        font-size: clamp(0.86rem, 1.45vw, 1.05rem);
+        letter-spacing: 0.12em;
+    }
+
+    .mp-panel {
+        top: calc(44px + var(--safe-top, 0px));
+        bottom: calc(8px + var(--safe-bottom, 0px));
+        width: min(1060px, calc(100vw - 24px - var(--safe-left, 0px) - var(--safe-right, 0px)));
+        max-height: none;
+        padding: 12px 16px;
+        --mp-card-height: auto;
+    }
+
+    .mp-header {
+        column-gap: 12px;
+        row-gap: 6px;
+        margin-bottom: 10px;
+    }
+
+    .mp-title {
+        font-size: 1.25rem;
+    }
+
+    .mp-deck-switcher {
+        margin-top: 0;
+    }
+
+    .mp-deck-current {
+        min-width: 180px;
+        max-width: 320px;
+        padding: 4px 8px;
+        font-size: 0.85rem;
+    }
+
+    .mp-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+
+    .mp-card {
+        min-height: 0;
+        padding: 10px 12px;
+        gap: 6px;
+    }
+
+    .mp-card-title {
+        font-size: 0.98rem;
+    }
+
+    .mp-card-desc {
+        font-size: 0.76rem;
+        line-height: 1.35;
+    }
+
+    .mp-field input,
+    .mp-field select {
+        padding: 5px 8px;
+    }
+
+    .mp-btn {
+        padding: 7px 10px;
+    }
+
+    .mp-output {
+        min-height: 18px;
+        font-size: 0.75rem;
+    }
+
+    .mp-footer {
+        flex-direction: row;
+        align-items: center;
+    }
+
+    .mp-hint {
+        font-size: 0.76rem;
+    }
+
+    .deck-picker-modal {
+        padding:
+            calc(8px + var(--safe-top, 0px))
+            calc(12px + var(--safe-right, 0px))
+            calc(8px + var(--safe-bottom, 0px))
+            calc(12px + var(--safe-left, 0px));
+    }
+
+    .deck-picker-modal .deck-picker-selection-view {
+        width: 100%;
+        max-height: calc(var(--app-height, 100dvh) - 16px - var(--safe-top, 0px) - var(--safe-bottom, 0px));
+        padding: 14px 16px;
+    }
+
+    .deck-picker-modal .deck-picker-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+    }
+
+    .deck-picker-modal .deck-picker-card {
+        height: 108px;
+    }
+
+    .deck-picker-modal .deck-picker-card .deck-name {
+        font-size: 1.1rem;
+    }
+
+    .mp-room-modal {
+        padding: 8px 12px;
+    }
+
+    .mp-room-modal-card {
+        max-height: calc(var(--app-height, 100dvh) - 16px);
+        padding: 12px 14px;
     }
 }
 

@@ -4,6 +4,8 @@
 //       全卡种无遮罩悬停展示（随从/护符/法术均先悬停再落位/生效）、接触式攻击冲撞与致死交接、
 //       同波受击震动/浮字、进化爆发与语义化退场（破坏/消失/回手）。
 
+import { alternateCastTimings, castCardPose, paintAlternateCastEffect } from './alternateCastEffect.js';
+
 const STRIP_CLONE_CLASSES = [
     'is-selected',
     'is-targetable',
@@ -40,6 +42,13 @@ const STRIP_CLONE_CLASSES = [
 
 function normalizeMotionUid(uid) {
     return String(uid ?? '').trim().toLowerCase();
+}
+
+function safeAnimate(el, keyframes, options) {
+    if (!el || typeof el.animate !== 'function') {
+        return { finished: Promise.resolve(), cancel() {} };
+    }
+    return el.animate(keyframes, options);
 }
 
 export function prefersReducedMotion() {
@@ -144,6 +153,7 @@ export function createBattleMotionController({
     let generation = 1;
     const activeAnimations = new Set();
     const activeTimers = new Set();
+    const activeAlternateCasts = new Set();
     const hiddenRealElements = new Map();
     const hiddenEntityUidCounts = new Map();
     const flipAnimationsByElement = new WeakMap();
@@ -247,6 +257,7 @@ export function createBattleMotionController({
 
     function cancelAll() {
         generation += 1;
+        activeAlternateCasts.forEach(cancel => cancel());
         activeTimers.forEach(id => window.clearTimeout(id));
         activeTimers.clear();
         activeAnimations.forEach(anim => {
@@ -434,7 +445,7 @@ export function createBattleMotionController({
                     if (prevAnim) {
                         try { prevAnim.cancel(); } catch { /* ignore */ }
                     }
-                    const anim = trackAnimation(el.animate(
+                    const anim = trackAnimation(safeAnimate(el,
                         [
                             { translate: `${dx.toFixed(1)}px ${dy.toFixed(1)}px` },
                             { translate: '0px 0px' }
@@ -452,19 +463,15 @@ export function createBattleMotionController({
                 const delayMs = Math.min(enterStaggerIndex * 45, 220);
                 enterStaggerIndex += 1;
                 if (nextInfo.zone === 'self:hand') {
-                    runCrossZoneCarrierFlight({
+                    playHandRightSlideIn({
                         targetUid: uid,
                         targetEl: el,
-                        targetRect: nextInfo.rect,
-                        targetW: nextInfo.unscaledW,
-                        targetH: nextInfo.unscaledH,
-                        sourceRect: prevSnapshot.selfDeckRect,
                         delayMs,
                         durationMs: 240,
                         pulseTone: 'cyan'
                     });
                 } else {
-                    trackAnimation(el.animate(
+                    trackAnimation(safeAnimate(el,
                         [
                             { opacity: 0, translate: '0px -16px', scale: '0.92' },
                             { opacity: 1, translate: '0px 0px', scale: '1' }
@@ -537,7 +544,7 @@ export function createBattleMotionController({
         const dy = sourceRect.cy - resolvedTargetRect.cy;
         const startScale = Math.max(0.32, Math.min(1.18, (sourceRect.width || w) / w));
 
-        const anim = trackAnimation(carrier.animate(
+        const anim = trackAnimation(safeAnimate(carrier,
             [
                 {
                     translate: `${dx.toFixed(1)}px ${dy.toFixed(1)}px`,
@@ -577,12 +584,64 @@ export function createBattleMotionController({
         anim?.finished?.then(finalize, finalize);
     }
 
+    function playHandRightSlideIn({
+        targetUid = null,
+        targetEl,
+        delayMs = 0,
+        durationMs = 240,
+        pulseTone = 'cyan'
+    }) {
+        if (!targetEl || prefersReducedMotion()) return;
+        const token = generation;
+        const w = targetEl.offsetWidth || Math.round(targetEl.getBoundingClientRect().width) || 102;
+        const slideOffsetX = Math.max(72, Math.round(w * 1.08));
+
+        const fadeAnim = trackAnimation(safeAnimate(targetEl,
+            [
+                { opacity: 0, scale: '0.93' },
+                { opacity: 1, scale: '1.02', offset: 0.78 },
+                { opacity: 1, scale: '1' }
+            ],
+            {
+                duration: durationMs,
+                delay: delayMs,
+                easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+                fill: 'backwards'
+            }
+        ));
+
+        trackAnimation(safeAnimate(targetEl,
+            [
+                { translate: `${slideOffsetX}px 5px` },
+                { translate: '-3px -1px', offset: 0.78 },
+                { translate: '0px 0px' }
+            ],
+            {
+                duration: durationMs,
+                delay: delayMs,
+                easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+                fill: 'backwards',
+                composite: 'add'
+            }
+        ));
+
+        const finalize = () => {
+            if (!isCurrent(token)) return;
+            const liveTarget = (targetUid ? queryBoardEntityElement(targetUid) : null) || targetEl;
+            if (liveTarget?.isConnected && pulseTone) {
+                playLandingPulse(liveTarget, pulseTone);
+            }
+        };
+
+        fadeAnim?.finished?.then(finalize, finalize);
+    }
+
     function playLandingPulse(cardEl, tone = 'cyan') {
         if (!cardEl || prefersReducedMotion()) return;
         const ring = document.createElement('div');
         ring.className = `bui-landing-pulse is-${tone}`;
         cardEl.appendChild(ring);
-        const anim = trackAnimation(ring.animate(
+        const anim = trackAnimation(safeAnimate(ring,
             [
                 { opacity: 0.95, scale: '0.86' },
                 { opacity: 0, scale: '1.22' }
@@ -599,7 +658,7 @@ export function createBattleMotionController({
             : (tone === 'damage' || tone === 'debuff')
                 ? 'rgba(248, 113, 113, 0.88)'
                 : 'rgba(250, 204, 21, 0.82)';
-        trackAnimation(badgeEl.animate(
+        trackAnimation(safeAnimate(badgeEl,
             [
                 { scale: '1', filter: 'brightness(1)' },
                 { scale: '1.48', filter: `brightness(1.35) drop-shadow(0 0 8px ${glowColor})`, offset: 0.38 },
@@ -641,7 +700,7 @@ export function createBattleMotionController({
                 artEl.style.filter = 'hue-rotate(155deg) saturate(1.85) brightness(1.38)';
             }
 
-            trackAnimation(laser.animate(
+            trackAnimation(safeAnimate(laser,
                 [
                     { bottom: '0%', opacity: 1 },
                     { bottom: '100%', opacity: 0.9, offset: 0.88 },
@@ -650,7 +709,7 @@ export function createBattleMotionController({
                 { duration: 280, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' }
             ));
 
-            const anim = trackAnimation(shell.animate(
+            const anim = trackAnimation(safeAnimate(shell,
                 [
                     { clipPath: 'inset(0% 0% 0% 0%)', scale: '1 1', opacity: 1 },
                     { clipPath: 'inset(0% 0% 100% 0%)', scale: '1.06 0.96', opacity: 0.25 }
@@ -665,7 +724,7 @@ export function createBattleMotionController({
             layer.appendChild(shell);
             const dx = destinationRect.cx - cx;
             const dy = destinationRect.cy - cy;
-            const anim = trackAnimation(shell.animate(
+            const anim = trackAnimation(safeAnimate(shell,
                 [
                     { translate: '0px 0px', scale: '1', opacity: 1 },
                     { translate: `${dx.toFixed(1)}px ${dy.toFixed(1)}px`, scale: '0.32', opacity: 0.12 }
@@ -676,9 +735,6 @@ export function createBattleMotionController({
             return;
         }
 
-        const slash = document.createElement('div');
-        slash.className = 'bui-destroy-slash';
-        shell.appendChild(slash);
         layer.appendChild(shell);
 
         const artEl = clone.querySelector('.card-art');
@@ -686,7 +742,7 @@ export function createBattleMotionController({
             artEl.style.filter = 'grayscale(0.92) contrast(1.35) brightness(0.72)';
         }
 
-        const anim = trackAnimation(shell.animate(
+        const anim = trackAnimation(safeAnimate(shell,
             [
                 { translate: '0px 0px', scale: '1', opacity: 1 },
                 { translate: '-5px 2px', scale: '1.03', opacity: 0.96, offset: 0.18 },
@@ -724,7 +780,7 @@ export function createBattleMotionController({
                 impactBurst.style.left = `${rect.cx}px`;
                 impactBurst.style.top = `${rect.cy}px`;
                 layer.appendChild(impactBurst);
-                const burstAnim = trackAnimation(impactBurst.animate(
+                const burstAnim = trackAnimation(safeAnimate(impactBurst,
                     [
                         { opacity: 1, scale: '0.45', rotate: '-12deg' },
                         { opacity: 0.95, scale: '1.15', rotate: '0deg', offset: 0.45 },
@@ -741,7 +797,7 @@ export function createBattleMotionController({
                     || targetEl.closest?.('.leader-rpg-portrait')
                     || targetEl;
                 if (!isHeal) {
-                    trackAnimation(shakeTarget.animate(
+                    trackAnimation(safeAnimate(shakeTarget,
                         [
                             { translate: '0px 0px', filter: 'brightness(1.85) saturate(1.35)' },
                             { translate: '-7px 2px', filter: 'brightness(1.5)' },
@@ -753,7 +809,7 @@ export function createBattleMotionController({
                         { duration: 240, easing: 'ease-out' }
                     ));
                 } else {
-                    trackAnimation(shakeTarget.animate(
+                    trackAnimation(safeAnimate(shakeTarget,
                         [
                             { filter: 'brightness(1)' },
                             { filter: 'brightness(1.45) drop-shadow(0 0 12px rgba(52, 211, 153, 0.75))', offset: 0.4 },
@@ -773,7 +829,7 @@ export function createBattleMotionController({
             floatEl.style.top = `${rect.top + rect.height * 0.44}px`;
             layer.appendChild(floatEl);
 
-            const floatAnim = trackAnimation(floatEl.animate(
+            const floatAnim = trackAnimation(safeAnimate(floatEl,
                 reduced
                     ? [
                         { opacity: 1, translate: '-50% -50%' },
@@ -822,7 +878,7 @@ export function createBattleMotionController({
         layer.appendChild(burst);
 
         const durationMs = isSuper ? 480 : 420;
-        const ringAnim = trackAnimation(burst.animate(
+        const ringAnim = trackAnimation(safeAnimate(burst,
             [
                 { opacity: 0.95, scale: '0.42', rotate: '0deg' },
                 { opacity: 1, scale: isSuper ? '1.35' : '1.18', rotate: isSuper ? '45deg' : '25deg', offset: 0.52 },
@@ -832,7 +888,7 @@ export function createBattleMotionController({
         ));
         ringAnim?.finished?.then(() => burst.remove(), () => burst.remove());
 
-        trackAnimation(cardEl.animate(
+        trackAnimation(safeAnimate(cardEl,
             [
                 { scale: '1', translate: '0px 0px' },
                 { scale: isSuper ? '1.24' : '1.18', translate: '0px -10px', offset: 0.38 },
@@ -885,7 +941,7 @@ export function createBattleMotionController({
         const currentRealAttacker = queryBoardEntityElement(attackerUid);
         hideRealElement(currentRealAttacker, attackerUid);
 
-        const lungeAnim = trackAnimation(carrier.animate(
+        const lungeAnim = trackAnimation(safeAnimate(carrier,
             [
                 { translate: '0px 0px', scale: '1' },
                 { translate: `${(-vec.ux * 12).toFixed(1)}px ${(-vec.uy * 12).toFixed(1)}px`, scale: '0.94', offset: 0.28 },
@@ -927,7 +983,7 @@ export function createBattleMotionController({
                 }
             }
 
-            const reboundAnim = trackAnimation(carrier.animate(
+            const reboundAnim = trackAnimation(safeAnimate(carrier,
                 [
                     { translate: `${vec.contactX.toFixed(1)}px ${vec.contactY.toFixed(1)}px`, scale: '1.10' },
                     { translate: `${reboundEndX.toFixed(1)}px ${reboundEndY.toFixed(1)}px`, scale: '1' }
@@ -1012,7 +1068,7 @@ export function createBattleMotionController({
         activeLungesByUid.set(normalizedAttackerKey, lungeRecord);
 
         return new Promise(resolveGate => {
-            const lungeAnim = trackAnimation(carrier.animate(
+            const lungeAnim = trackAnimation(safeAnimate(carrier,
                 [
                     { translate: '0px 0px', scale: '1' },
                     { translate: `${(-vec.ux * 12).toFixed(1)}px ${(-vec.uy * 12).toFixed(1)}px`, scale: '0.94', offset: 0.28 },
@@ -1064,7 +1120,7 @@ export function createBattleMotionController({
                     const reboundEndX = postRect ? postRect.cx - attackerSnap.rect.cx : 0;
                     const reboundEndY = postRect ? postRect.cy - attackerSnap.rect.cy : 0;
 
-                    const reboundAnim = trackAnimation(carrier.animate(
+                    const reboundAnim = trackAnimation(safeAnimate(carrier,
                         [
                             { translate: `${vec.contactX.toFixed(1)}px ${vec.contactY.toFixed(1)}px`, scale: '1.10' },
                             { translate: `${reboundEndX.toFixed(1)}px ${reboundEndY.toFixed(1)}px`, scale: '1' }
@@ -1092,7 +1148,100 @@ export function createBattleMotionController({
         });
     }
 
-    // 6. 全卡种无遮罩悬停出牌展示（随从 / 护符 / 法术通用：飞入悬停点 -> 260ms 悬停展示 -> 落入战场槽位或绽放奥术环）
+    function playAlternateCast({
+        layer, carrier, stageEl, stageRect, geometry, mode, targetUid, fastForward, onResolveImpact
+    }) {
+        const { width, height } = stageRect;
+        if (!width || !height) return null;
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+
+        const timing = alternateCastTimings[mode];
+        const speed = fastForward ? 0.55 : 1;
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5, 1440 / width, 900 / height);
+        canvas.width = Math.max(1, Math.round(width * pixelRatio));
+        canvas.height = Math.max(1, Math.round(height * pixelRatio));
+        canvas.className = 'bui-alternate-cast-effect';
+        canvas.setAttribute('aria-hidden', 'true');
+        ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+
+        const label = document.createElement('div');
+        label.className = `bui-alternate-cast-label is-${mode}`;
+        label.textContent = timing.label;
+        carrier.append(label);
+        layer.append(canvas);
+
+        const targetEl = queryBoardEntityElement(targetUid);
+        if (targetUid) hideRealElement(targetEl, targetUid);
+        const updateTarget = () => {
+            const current = queryBoardEntityElement(targetUid);
+            const rect = current && toStageRect(current.getBoundingClientRect(), stageEl.getBoundingClientRect());
+            geometry.target = rect ? { x: rect.cx, y: rect.cy } : geometry.hover;
+        };
+        updateTarget();
+
+        let resolveSequence;
+        const sequence = new Promise(resolve => { resolveSequence = resolve; });
+        const startedAt = performance.now();
+        let frameId;
+        let impacted = false;
+        let flightStarted = false;
+
+        function resolveImpact() {
+            if (impacted) return;
+            impacted = true;
+            if (targetUid) restoreRealElement(targetEl, targetUid);
+            carrier.remove();
+            resolveSequence();
+            onResolveImpact?.();
+        }
+
+        function draw(ms) {
+            if (!flightStarted && ms >= timing.resolve) {
+                flightStarted = true;
+                updateTarget();
+            }
+            if (!impacted) {
+                const pose = castCardPose(mode, ms, geometry);
+                carrier.style.translate = `${pose.x - geometry.hover.x}px ${pose.y - geometry.hover.y}px`;
+                carrier.style.scale = `${pose.scaleX} ${pose.scaleY}`;
+                carrier.style.rotate = `${pose.rotate}deg`;
+                carrier.style.opacity = pose.opacity;
+                label.style.opacity = pose.labelOpacity;
+            }
+            ctx.clearRect(0, 0, width, height);
+            paintAlternateCastEffect(ctx, mode, ms, geometry);
+        }
+
+        function tick(now) {
+            const ms = Math.max(0, (now - startedAt) / speed);
+            draw(ms);
+            if (ms < timing.done) frameId = window.requestAnimationFrame(tick);
+        }
+
+        function cancel() {
+            activeAlternateCasts.delete(cancel);
+            window.cancelAnimationFrame(frameId);
+            window.clearTimeout(impactTimer);
+            window.clearTimeout(cleanupTimer);
+            canvas.remove();
+            carrier.remove();
+            if (!impacted && targetUid) restoreRealElement(targetEl, targetUid);
+            resolveSequence();
+        }
+
+        // Resolve the card move even when background tabs pause animation frames.
+        const impactTimer = window.setTimeout(resolveImpact, timing.impact * speed);
+        const cleanupTimer = window.setTimeout(cancel, timing.done * speed);
+        activeAlternateCasts.add(cancel);
+        draw(0);
+        frameId = window.requestAnimationFrame(tick);
+        return sequence;
+    }
+
+    // 6. 出牌展示（飞入悬停点，再落位或结算法术）
     function playCastHoverSequence({
         cardHtmlElement,
         sourceRect,
@@ -1100,6 +1249,7 @@ export function createBattleMotionController({
         isSpell = false,
         isOpponent = false,
         isFromDrag = false,
+        alternateAnimation = null,
         fastForward = false,
         pulseTone = null,
         onResolveImpact
@@ -1130,11 +1280,6 @@ export function createBattleMotionController({
         const startCy = sourceRect?.cy ?? (isOpponent ? 48 : stageRect.height - 80);
         const startScale = isOpponent ? 0.36 : (isFromDrag ? 1.06 : 0.96);
 
-        const targetEl = targetUid ? queryBoardEntityElement(targetUid) : null;
-        if (targetUid) {
-            hideRealElement(targetEl, targetUid);
-        }
-
         const carrier = document.createElement('div');
         carrier.className = `bui-motion-carrier is-cast-hover ${isOpponent ? 'is-opp-cast' : 'is-self-cast'}`;
         carrier.style.width = `${w}px`;
@@ -1142,11 +1287,27 @@ export function createBattleMotionController({
         carrier.style.left = `${hoverCx - w / 2}px`;
         carrier.style.top = `${hoverCy - h / 2}px`;
 
-        const halo = document.createElement('div');
-        halo.className = `bui-cast-hover-halo ${isOpponent ? 'is-opp' : 'is-self'}`;
-        carrier.appendChild(halo);
         carrier.appendChild(cardHtmlElement);
         layer.appendChild(carrier);
+
+        if (alternateAnimation === 'accelerate' || alternateAnimation === 'crystalize') {
+            const sequence = playAlternateCast({
+                layer, carrier, stageEl, stageRect, targetUid, fastForward, onResolveImpact,
+                mode: alternateAnimation,
+                geometry: {
+                    source: { x: startCx, y: startCy, scale: startScale },
+                    hover: { x: hoverCx, y: hoverCy },
+                    width: w, height: h, drag: isFromDrag
+                }
+            });
+            if (sequence) return sequence;
+        }
+
+        const targetEl = targetUid ? queryBoardEntityElement(targetUid) : null;
+        if (targetUid) hideRealElement(targetEl, targetUid);
+        const halo = document.createElement('div');
+        halo.className = `bui-cast-hover-halo ${isOpponent ? 'is-opp' : 'is-self'}`;
+        carrier.prepend(halo);
 
         const startDx = startCx - hoverCx;
         const startDy = startCy - hoverCy;
@@ -1157,7 +1318,7 @@ export function createBattleMotionController({
         const totalHoverPhaseMs = enterMs + hoverMs;
 
         return new Promise(resolveSequence => {
-            const enterAndHoverAnim = trackAnimation(carrier.animate(
+            const enterAndHoverAnim = trackAnimation(safeAnimate(carrier,
                 [
                     { translate: `${startDx.toFixed(1)}px ${startDy.toFixed(1)}px`, scale: `${startScale}`, opacity: isOpponent ? 0.72 : 1 },
                     { translate: '0px 0px', scale: '1.15', opacity: 1, offset: enterMs / totalHoverPhaseMs },
@@ -1184,7 +1345,7 @@ export function createBattleMotionController({
                     burst.style.left = `${hoverCx}px`;
                     burst.style.top = `${hoverCy}px`;
                     layer.appendChild(burst);
-                    const burstAnim = trackAnimation(burst.animate(
+                    const burstAnim = trackAnimation(safeAnimate(burst,
                         [
                             { opacity: 0.95, scale: '0.55' },
                             { opacity: 0, scale: '1.65' }
@@ -1196,7 +1357,7 @@ export function createBattleMotionController({
                     onResolveImpact?.();
                     resolveSequence();
 
-                    const fadeAnim = trackAnimation(carrier.animate(
+                    const fadeAnim = trackAnimation(safeAnimate(carrier,
                         [
                             { translate: '0px -6px', scale: '1.18', opacity: 1 },
                             { translate: '0px -14px', scale: '1.34', opacity: 0 }
@@ -1226,7 +1387,7 @@ export function createBattleMotionController({
                 const endDy = destRect.cy - hoverCy;
                 const endScale = (destRect.width || 96) / w;
 
-                const landAnim = trackAnimation(carrier.animate(
+                const landAnim = trackAnimation(safeAnimate(carrier,
                     [
                         { translate: '0px -6px', scale: '1.18', opacity: 1 },
                         { translate: `${endDx.toFixed(1)}px ${endDy.toFixed(1)}px`, scale: `${endScale.toFixed(3)}`, opacity: 1 }
@@ -1263,6 +1424,7 @@ export function createBattleMotionController({
         getAnchorRects,
         runPostRenderFlip,
         runCrossZoneCarrierFlight,
+        playHandRightSlideIn,
         animateStatPop,
         spawnSemanticExitClone,
         triggerWaveHits,

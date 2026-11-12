@@ -427,6 +427,44 @@
     font-size: 12px;
   }
 }
+
+@media (max-height: 540px) and (orientation: landscape) {
+  .draft-overlay {
+    padding:
+      calc(6px + var(--safe-top, 0px))
+      calc(10px + var(--safe-right, 0px))
+      calc(6px + var(--safe-bottom, 0px))
+      calc(10px + var(--safe-left, 0px));
+  }
+  .draft-overlay > .take-two-screen {
+    width: 100%;
+    height: calc(var(--app-height, 100dvh) - 12px - var(--safe-top, 0px) - var(--safe-bottom, 0px));
+    padding: 8px 14px;
+  }
+  .draft-overlay .draft-shell-header {
+    padding: 0 0 4px;
+    min-height: 20px;
+  }
+  .draft-overlay .take-two-header {
+    padding-bottom: 6px;
+    gap: 8px;
+  }
+  .draft-overlay .take-two-header h1 {
+    font-size: 19px;
+  }
+  .draft-overlay .take-two-professions button {
+    width: 34px;
+    height: 34px;
+    padding: 4px;
+  }
+  .mini-draft-preview .deck-preview-dialog,
+  .feature-dialog:has(.mini-draft-preview) {
+    max-height: calc(var(--app-height, 100dvh) - 16px);
+  }
+  .mini-draft-preview .deck-preview-grid {
+    grid-auto-columns: clamp(68px, 11vw, 96px);
+  }
+}
 /* The completed draft uses the persistent header deck entry. */
 .draft-overlay .take-two-wait {
   display: flex;

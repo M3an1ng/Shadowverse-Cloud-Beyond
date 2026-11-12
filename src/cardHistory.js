@@ -26,7 +26,7 @@ export async function historyRequest(path, options = {}) {
             ? "需要L10及以上权限"
             : `请求失败：${response.status}`),
       ),
-      { code: error?.code, saved: error?.saved, card: error?.card },
+      { status: response.status, code: error?.code, saved: error?.saved, card: error?.card },
     );
   }
   return response.status === 204 ? null : response.json();

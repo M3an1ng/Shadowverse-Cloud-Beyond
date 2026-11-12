@@ -554,6 +554,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         DebugIntent,
 
+        [Description("幻境八人赛席位轮次结算")]
+        MirageTournamentRoundSettled,
+
     }
 
 

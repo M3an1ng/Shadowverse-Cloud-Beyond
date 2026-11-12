@@ -44,6 +44,7 @@ const SKIP_PATH_PREFIXES = [
     ".tmp_",
     "Server.Tests/artifacts/",
     "Server/publish/",
+    "mobile-shell/android/",
 ];
 
 const SKIP_EXACT_FILES = new Set([

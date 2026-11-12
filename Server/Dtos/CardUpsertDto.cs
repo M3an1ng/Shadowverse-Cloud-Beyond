@@ -72,6 +72,9 @@ namespace ShadowverseBeyond.Server.Dtos
         [JsonPropertyName("mirageTavernTier")]
         public int? MirageTavernTier { get; init; }
 
+        [JsonPropertyName("mirageBuyCost")]
+        public int? MirageBuyCost { get; init; }
+
         [JsonPropertyName("keywords")]
         public List<string>? Keywords { get; init; }
 

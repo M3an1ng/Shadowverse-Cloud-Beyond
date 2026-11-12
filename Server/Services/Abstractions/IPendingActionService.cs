@@ -44,6 +44,10 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
         /// <param name="choiceId">The ID of the pending choice to force-resolve.</param>
         /// <param name="forcedResult">The result to force upon the choice.</param>
         void ForceResolveChoice(Guid choiceId, PlayerChoiceResult forcedResult);
+
+        // Room exit must also interrupt choices created by the transaction while it unwinds.
+        void CancelChoicesForGame(string gameId);
+        void ClearGameChoiceCancellation(string gameId);
     }
 
     /// <summary>

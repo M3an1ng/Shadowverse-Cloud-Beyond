@@ -16,6 +16,9 @@ export function buildPreviewSlateHtml(options) {
         modeLabel = 'ENH',
         alternateActive = false,
         isFollower = false,
+        isLeader = false,
+        isMirageCard = false,
+        mirageBuyCost = null,
         attackValue = 0,
         healthValue = 0,
         countdownValue = null,
@@ -103,15 +106,27 @@ export function buildPreviewSlateHtml(options) {
         ? `<div class="slate-art-image" style="background-image: url('${previewUrl}');"></div>`
         : '';
 
+    const showMirageStar = Boolean(isMirageCard) && !isLeader && Number(costValue) > 0;
+    const tierNum = Math.max(1, Math.trunc(Number(costValue) || 1));
+    const costBadgeInnerHtml = showMirageStar
+        ? `<span class="cost-value mirage-slate-tier"><svg viewBox="0 0 12 12" width="9" height="9" style="vertical-align:-1px;margin-right:1px;color:#ecd290;" aria-hidden="true"><path d="M6 0.7L7.45 4.55L11.3 6L7.45 7.45L6 11.3L4.55 7.45L0.7 6L4.55 4.55Z" fill="currentColor"/></svg>${tierNum}</span>`
+        : `<span class="cost-value">${costValue}</span>`;
+    const mirageGoldChipHtml = (Boolean(isMirageCard) && !isLeader && mirageBuyCost !== null && mirageBuyCost !== undefined && Number.isFinite(Number(mirageBuyCost)))
+        ? `<span class="meta-tag mirage-gold-tag" title="酒馆购买消耗金币" style="margin-left:auto;color:#fef3c7;border:1px solid rgba(251,191,36,0.75);background:rgba(92,57,11,0.72);font-weight:700;">${Number(mirageBuyCost)}G</span>`
+        : '';
+
     return `
         <div class="preview-slate rarity-${rarityClass}">
               <div class="slate-header">
                       <div class="slate-identity">
                       <div class="identity-top">
+                          ${(Boolean(isMirageCard) && isLeader) ? '' : `
                           <div class="${costClass}" data-play-mode-label="${['ACC','CRY','ENH'].includes(modeLabel) ? modeLabel : ''}">
-                              <span class="cost-value">${costValue}</span>
+                              ${costBadgeInnerHtml}
                           </div>
+                          `}
                           <h2 class="${nameClassAttr}"${nameAttr}>${name}</h2>
+                          ${mirageGoldChipHtml}
                       </div>
                       <div class="slate-meta">
                           <span class="meta-tag rarity-tag">${rarityLabel}</span>

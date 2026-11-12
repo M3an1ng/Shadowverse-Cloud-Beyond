@@ -63,6 +63,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         public MirageMatchState? Mirage { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool IsMirageTournamentSeat => Mode == GameMode.Mirage && Mirage?.IsTournamentSeat == true;
+
         public DateTime StartedAtUtc { get; set; } = DateTime.UtcNow;
 
         public int TurnTimeoutSeconds { get; set; } = GameConstants.Timing.DefaultTurnTimeoutSeconds;

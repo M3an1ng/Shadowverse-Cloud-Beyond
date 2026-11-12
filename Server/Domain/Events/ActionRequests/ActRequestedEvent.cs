@@ -42,7 +42,12 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         public DomainOperationResult Commit(GameContext context)
         {
             var result = new DomainOperationResult();
-            bool isMirageRecruit = context.CurrentGameState.Mode == GameMode.Mirage && !context.CurrentGameState.IsCombatSandbox;
+            if (context.CurrentGameState.IsCombatSandbox)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "Act cannot be used during auto-combat." };
+            }
+
+            bool isMirageRecruit = context.CurrentGameState.Mode == GameMode.Mirage;
 
             if (isMirageRecruit)
             {
@@ -100,9 +105,14 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = $"Player state not found for {PlayerId}." };
             }
 
-            if (isMirageRecruit && (!card.IsLeader || owner.Leader?.InstanceId != card.InstanceId))
+            if (isMirageRecruit)
             {
-                return new DomainOperationResult { Success = false, ErrorMessage = "Only the active Mirage Leader can use Act during Recruit phase." };
+                var isActiveLeader = card.IsLeader && owner.Leader?.InstanceId == card.InstanceId;
+                var isFieldUnit = !card.IsLeader && owner.Field.Any(c => c.InstanceId == card.InstanceId);
+                if (!isActiveLeader && !isFieldUnit)
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Only your active Mirage Leader or field cards can use Act during Recruit phase." };
+                }
             }
 
             var abilities = context.AbilityManager.GetEffectiveAbilitiesForCard(card.InstanceId, context)

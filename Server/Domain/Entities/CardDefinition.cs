@@ -130,9 +130,14 @@ public class CardDefinition
     public bool IsMirageCard { get; set; } = false;
 
     /// <summary>
-    /// Explicit tavern tier (1-6) when this card belongs to the Mirage card pool.
+    /// Synchronized Mirage star tier (equals Math.Max(1, Cost) for non-Leader Mirage cards, including 7+ star special cards; null for Leaders and Classic cards).
     /// </summary>
     public int? MirageTavernTier { get; set; }
+
+    /// <summary>
+    /// Optional custom tavern shop purchase gold cost for Mirage cards (null defaults to MirageRuleConfig.DefaultBuyCost = 3).
+    /// </summary>
+    public int? MirageBuyCost { get; set; }
 
     // Removed IsEvolved property - evolution is handled through the evolution system
 

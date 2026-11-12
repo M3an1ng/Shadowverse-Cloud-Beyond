@@ -30,8 +30,21 @@ public partial class GameHub
         Converters = { new JsonStringEnumConverter() }
     };
 
+    private bool IsSpectatorOrReadOnlyContext()
+    {
+        if (Context.Items.TryGetValue("IsReadOnlySpectator", out var ro) && ro is true)
+        {
+            return true;
+        }
+        return Context.Items.TryGetValue("ParticipantType", out var kind) && kind is ChatSenderType.Spectator;
+    }
+
     public object SubscribeActionReceipts()
     {
+        if (IsSpectatorOrReadOnlyContext())
+        {
+            throw new HubException("forbidden: spectators cannot subscribe to action receipts.");
+        }
         var gameId = GetGameIdForReplay() ?? throw new HubException("missing_match: no active match.");
         var game = _gameService.GetGameState(gameId) ?? throw new HubException("missing_match: game state is unavailable.");
         return MatchCommandObservation.Subscribe(game, Context.ConnectionId);
@@ -41,12 +54,23 @@ public partial class GameHub
 
     public object SubscribeEventStateReceipts()
     {
+        if (IsSpectatorOrReadOnlyContext())
+        {
+            throw new HubException("forbidden: spectators cannot subscribe to event state receipts.");
+        }
         var gameId = GetGameIdForReplay() ?? throw new HubException("missing_match");
         var game = _gameService.GetGameState(gameId) ?? throw new HubException("missing_match");
         return MatchCommandObservation.SubscribeEvents(game, Context.ConnectionId);
     }
 
-    public void UnsubscribeEventStateReceipts() => MatchCommandObservation.UnsubscribeEvents(GetGameIdForReplay() ?? throw new HubException("missing_match"), Context.ConnectionId);
+    public void UnsubscribeEventStateReceipts()
+    {
+        if (IsSpectatorOrReadOnlyContext())
+        {
+            return;
+        }
+        MatchCommandObservation.UnsubscribeEvents(GetGameIdForReplay() ?? throw new HubException("missing_match"), Context.ConnectionId);
+    }
 
     public async Task<JsonElement> RequestSpectatorGameState()
     {

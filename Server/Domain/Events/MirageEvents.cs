@@ -120,6 +120,92 @@ namespace ShadowverseBeyond.Server.Domain.Events
             context.BuffService.RefreshDerivedStateCache(context, cacheReason);
             return result;
         }
+
+        public static DomainOperationResult TryReplacePlayerMirageLeader(
+            GameContext context,
+            GameState gameState,
+            PlayerState player,
+            int leaderCardDefinitionId,
+            out CardInstance? createdLeader)
+        {
+            createdLeader = null;
+            var chosenDef = GameDataProvider.Instance?.GetCardDefinition(leaderCardDefinitionId);
+            if (chosenDef == null
+                || !chosenDef.IsMirageCard
+                || chosenDef.Type != CardType.Leader
+                || chosenDef.Id <= 0
+                || !chosenDef.IsCollectible)
+            {
+                return new DomainOperationResult
+                {
+                    Success = false,
+                    ErrorMessage = $"卡牌定义 {leaderCardDefinitionId} 不是合法的可选幻境主战者。"
+                };
+            }
+
+            var cardFactory = context.ServiceProvider.GetService<ICardFactory>();
+            if (cardFactory == null)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "ICardFactory is not available." };
+            }
+
+            var result = new DomainOperationResult { Success = true };
+            var oldLeader = player.Leader;
+            var oldDamage = Math.Max(0, oldLeader?.Damage ?? 0);
+            var oldBaseHealthOverride = oldLeader?.BaseHealthOverride;
+
+            if (oldLeader != null)
+            {
+                var removeBuffsResult = context.BuffService.RemoveAllBuffs(oldLeader.InstanceId, context)
+                    ?? new DomainOperationResult { Success = true };
+                if (!removeBuffsResult.Success)
+                {
+                    return removeBuffsResult;
+                }
+                result.GeneratedEvents.AddRange(removeBuffsResult.GeneratedEvents);
+
+                var auraUnregisterResult = context.AuraManager.UnregisterBySourceCard(oldLeader.InstanceId, context);
+                if (!auraUnregisterResult.Success)
+                {
+                    return auraUnregisterResult;
+                }
+                result.GeneratedEvents.AddRange(auraUnregisterResult.GeneratedEvents);
+
+                context.AbilityManager.UnregisterCardAbilities(oldLeader.InstanceId, "mirage_leader_replaced");
+                gameState.UnregisterCardInstance(oldLeader.InstanceId);
+            }
+
+            var newLeader = cardFactory.CreateAndRegisterNewCard(gameState, leaderCardDefinitionId, player.PlayerId, CardZone.Field);
+            if (oldBaseHealthOverride.HasValue)
+            {
+                var targetMaxHealth = oldBaseHealthOverride.Value;
+                newLeader.BaseHealthOverride = targetMaxHealth;
+                newLeader.Damage = Math.Clamp(oldDamage, 0, Math.Max(0, targetMaxHealth - 1));
+            }
+            else
+            {
+                var targetMaxHealth = chosenDef.Health ?? ShadowverseBeyond.Server.Domain.Constants.GameConstants.Health.PlayerMaxHealth;
+                newLeader.BaseHealthOverride = targetMaxHealth;
+                newLeader.Damage = 0;
+            }
+
+            player.Leader = newLeader;
+            player.Class = chosenDef.Class;
+            if (player.Mirage != null)
+            {
+                player.Mirage.HasSelectedLeader = true;
+                player.Mirage.LeaderCandidateCardIds.Clear();
+            }
+
+            createdLeader = newLeader;
+            var auraRefreshResult = RefreshAllBoardAuras(context, "mirage_leader_selected");
+            if (!auraRefreshResult.Success)
+            {
+                return auraRefreshResult;
+            }
+            result.GeneratedEvents.AddRange(auraRefreshResult.GeneratedEvents);
+            return result;
+        }
     }
 
     internal static class MirageRecruitValidation
@@ -148,6 +234,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 if (gameState.Phase != GamePhase.Recruit)
                 {
                     errorMessage = $"Action is only allowed during Recruit phase (Current: {gameState.Phase}).";
+                    return false;
+                }
+
+                if (gameState.Mirage.IsNextRoundGateClosed)
+                {
+                    errorMessage = "正在等待本轮全房结算同步完成，暂不可操作。";
                     return false;
                 }
 
@@ -282,8 +374,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
             var shopService = context.ServiceProvider.GetService<IMirageShopService>();
             if (shopService != null)
             {
-                shopService.RefreshShopForNewRound(gameState.Player1, mirage.Rules);
-                shopService.RefreshShopForNewRound(gameState.Player2, mirage.Rules);
+                shopService.RefreshShopForNewRound(gameState.Player1, mirage);
+                shopService.RefreshShopForNewRound(gameState.Player2, mirage);
             }
             else
             {
@@ -326,6 +418,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public bool TriggeredRoundAdvance { get; private set; }
         public Guid? ActivatedCombatId { get; private set; }
         public int ActivatedRoundNumber { get; private set; }
+        public bool SeatLockedInTournament { get; private set; }
+        public int LockedRoundNumber { get; private set; }
 
         public MirageSetReadyRequestedEvent(
             Guid playerId,
@@ -381,6 +475,50 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             Source = TargetInfo.ForPlayer(player);
+
+            if (gameState.IsMirageTournamentSeat)
+            {
+                var tournamentResult = new DomainOperationResult { Success = true };
+                lock (gameState.Mirage.RoundSyncLock)
+                {
+                    if (gameState.Mirage.IsNextRoundGateClosed)
+                    {
+                        return new DomainOperationResult
+                        {
+                            Success = false,
+                            ErrorMessage = "正在等待本轮全房结算同步完成，暂不可操作。"
+                        };
+                    }
+
+                    if (gameState.Mirage.RoundNumber == 1
+                        && player.Mirage is { HasSelectedLeader: false }
+                        && player.Mirage.LeaderCandidateCardIds.Count > 0)
+                    {
+                        var autoSelectResult = MirageCardRetirement.TryReplacePlayerMirageLeader(
+                            context,
+                            gameState,
+                            player,
+                            player.Mirage.LeaderCandidateCardIds[0],
+                            out _);
+                        if (!autoSelectResult.Success)
+                        {
+                            return autoSelectResult;
+                        }
+                        tournamentResult.GeneratedEvents.AddRange(autoSelectResult.GeneratedEvents);
+                    }
+                    else if (player.Mirage != null)
+                    {
+                        player.Mirage.HasSelectedLeader = true;
+                        player.Mirage.LeaderCandidateCardIds.Clear();
+                    }
+
+                    gameState.Mirage.ReadyPlayerIds.Add(gameState.Player1.PlayerId);
+                    SeatLockedInTournament = true;
+                    LockedRoundNumber = gameState.Mirage.RoundNumber;
+                }
+
+                return tournamentResult;
+            }
 
             bool bothReady;
             lock (gameState.Mirage.RoundSyncLock)
@@ -495,7 +633,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             player.ApplyPlayPointsCurrentChange(player.CurrentPlayPoints - refreshCost);
-            shopService.ForceRefreshShop(player, mirage.Rules);
+            shopService.ForceRefreshShop(player, mirage);
 
             return new DomainOperationResult { Success = true };
         }
@@ -704,6 +842,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             var purchasedCard = cardFactory.CreateAndRegisterNewCard(gameState, offer.CardDefinitionId, player.PlayerId, CardZone.Hand);
             purchasedCard.IsMirageRecruited = true;
+            purchasedCard.AddMiragePoolHolding(offer.CardDefinitionId, 1);
             purchasedCard.CostOverride = 0;
             PurchasedCard = purchasedCard;
             Target.Add(TargetInfo.ForCard(purchasedCard));
@@ -795,6 +934,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             Target.Add(TargetInfo.ForCard(cardToSell));
             SoldCardSnapshot = CardSnapshotCapture.Capture(cardToSell);
+
+            var shopService = context.ServiceProvider.GetService<IMirageShopService>();
+            shopService?.ReleaseCardInstancePoolHoldings(context.CurrentGameState, cardToSell);
 
             var retireResult = MirageCardRetirement.RetireCardFromPlay(cardToSell, player, context);
             if (!retireResult.Success)
@@ -1079,8 +1221,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             player.Mirage.PendingTickets.RemoveAt(ticketIndex);
 
+            bool skippedChosen = false;
+            foreach (var candidateId in ticket.CandidateCardDefinitionIds)
+            {
+                if (!skippedChosen && candidateId == ChosenCardDefinitionId)
+                {
+                    skippedChosen = true;
+                    continue;
+                }
+
+                shopService?.ReturnCopiesToPool(gameState.Mirage, candidateId, 1);
+            }
+
             var discoveredCard = cardFactory.CreateAndRegisterNewCard(gameState, ChosenCardDefinitionId, player.PlayerId, CardZone.Hand);
             discoveredCard.IsMirageRecruited = true;
+            discoveredCard.AddMiragePoolHolding(ChosenCardDefinitionId, 1);
             discoveredCard.CostOverride = 0;
             DiscoveredCard = discoveredCard;
             Target.Add(TargetInfo.ForCard(discoveredCard));
@@ -1185,83 +1340,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     };
                 }
 
-                var chosenDef = GameDataProvider.Instance?.GetCardDefinition(LeaderCardDefinitionId);
-                if (chosenDef == null
-                    || !chosenDef.IsMirageCard
-                    || chosenDef.Type != CardType.Leader
-                    || chosenDef.Id <= 0
-                    || !chosenDef.IsCollectible)
-                {
-                    return new DomainOperationResult
-                    {
-                        Success = false,
-                        ErrorMessage = $"卡牌定义 {LeaderCardDefinitionId} 不是合法的可选幻境主战者。"
-                    };
-                }
-
-                var cardFactory = context.ServiceProvider.GetService<ICardFactory>();
-                if (cardFactory == null)
-                {
-                    return new DomainOperationResult { Success = false, ErrorMessage = "ICardFactory is not available." };
-                }
-
                 Source = TargetInfo.ForPlayer(player);
-                var result = new DomainOperationResult { Success = true };
-
-                var oldLeader = player.Leader;
-                var oldDamage = Math.Max(0, oldLeader?.Damage ?? 0);
-                var oldBaseHealthOverride = oldLeader?.BaseHealthOverride;
-
-                if (oldLeader != null)
+                var replaceResult = MirageCardRetirement.TryReplacePlayerMirageLeader(
+                    context,
+                    gameState,
+                    player,
+                    LeaderCardDefinitionId,
+                    out var createdLeader);
+                if (!replaceResult.Success || createdLeader == null)
                 {
-                    var removeBuffsResult = context.BuffService.RemoveAllBuffs(oldLeader.InstanceId, context)
-                        ?? new DomainOperationResult { Success = true };
-                    if (!removeBuffsResult.Success)
-                    {
-                        return removeBuffsResult;
-                    }
-                    result.GeneratedEvents.AddRange(removeBuffsResult.GeneratedEvents);
-
-                    var auraUnregisterResult = context.AuraManager.UnregisterBySourceCard(oldLeader.InstanceId, context);
-                    if (!auraUnregisterResult.Success)
-                    {
-                        return auraUnregisterResult;
-                    }
-                    result.GeneratedEvents.AddRange(auraUnregisterResult.GeneratedEvents);
-
-                    context.AbilityManager.UnregisterCardAbilities(oldLeader.InstanceId, "mirage_leader_replaced");
-                    gameState.UnregisterCardInstance(oldLeader.InstanceId);
+                    return replaceResult;
                 }
 
-                var newLeader = cardFactory.CreateAndRegisterNewCard(gameState, LeaderCardDefinitionId, player.PlayerId, CardZone.Field);
-                if (oldBaseHealthOverride.HasValue)
-                {
-                    var targetMaxHealth = oldBaseHealthOverride.Value;
-                    newLeader.BaseHealthOverride = targetMaxHealth;
-                    newLeader.Damage = Math.Clamp(oldDamage, 0, Math.Max(0, targetMaxHealth - 1));
-                }
-                else
-                {
-                    var targetMaxHealth = chosenDef.Health ?? ShadowverseBeyond.Server.Domain.Constants.GameConstants.Health.PlayerMaxHealth;
-                    newLeader.BaseHealthOverride = targetMaxHealth;
-                    newLeader.Damage = 0;
-                }
-                player.Leader = newLeader;
-                player.Class = chosenDef.Class;
-                player.Mirage.HasSelectedLeader = true;
-                player.Mirage.LeaderCandidateCardIds.Clear();
-
-                SelectedLeader = newLeader;
-                Target.Add(TargetInfo.ForCard(newLeader));
-
-                var auraRefreshResult = MirageCardRetirement.RefreshAllBoardAuras(context, "mirage_leader_selected");
-                if (!auraRefreshResult.Success)
-                {
-                    return auraRefreshResult;
-                }
-                result.GeneratedEvents.AddRange(auraRefreshResult.GeneratedEvents);
-
-                return result;
+                SelectedLeader = createdLeader;
+                Target.Add(TargetInfo.ForCard(createdLeader));
+                return replaceResult;
             }
         }
 

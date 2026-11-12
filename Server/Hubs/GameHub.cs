@@ -59,6 +59,7 @@ namespace ShadowverseBeyond.Server.Hubs
         private readonly ReplayOptions _replayOptions;
         private readonly IRecordedEventMapper _recordedEventMapper;
         private readonly ISpectatorQuestProgressRecorder _spectatorQuestProgressRecorder;
+        private readonly IMirageLobbyService? _mirageLobbyService;
         private static readonly TimeSpan DisconnectGracePeriod = TimeSpan.FromSeconds(GameConstants.Network.DefaultConnectionTimeoutSeconds);
         private const string DisconnectCachePrefix = "PendingDisconnect";
         private static readonly ConcurrentDictionary<string, CancellationTokenSource> _disconnectTimeouts = new();
@@ -87,7 +88,8 @@ namespace ShadowverseBeyond.Server.Hubs
             ISnapshotStore snapshotStore,
             IRecordedEventMapper recordedEventMapper,
             ISpectatorQuestProgressRecorder spectatorQuestProgressRecorder,
-            IOptions<ReplayOptions> replayOptions) // Added mapper parameter
+            IOptions<ReplayOptions> replayOptions,
+            IMirageLobbyService? mirageLobbyService = null) // Added mapper parameter
         {
             _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -103,6 +105,7 @@ namespace ShadowverseBeyond.Server.Hubs
             _recordedEventMapper = recordedEventMapper ?? throw new ArgumentNullException(nameof(recordedEventMapper));
             _spectatorQuestProgressRecorder = spectatorQuestProgressRecorder ?? throw new ArgumentNullException(nameof(spectatorQuestProgressRecorder));
             _replayOptions = replayOptions.Value;
+            _mirageLobbyService = mirageLobbyService;
             _logger.LogInformation("<<<<< GameHub INSTANCE CREATED >>>>>"); // Existing log
         }
 
@@ -450,6 +453,13 @@ namespace ShadowverseBeyond.Server.Hubs
             var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
             if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId)) return;
 
+            var targetGameState = _gameService.GetGameState(gameId.ToString("D"));
+            if (targetGameState?.IsMirageTournamentSeat == true)
+            {
+                await Clients.Caller.ReceiveError("8 人幻境赛事战果由房间协调器统一结算，禁止客户端直接提交。");
+                return;
+            }
+
             try
             {
                 var wrapper = new PlayerActionWrapper
@@ -471,6 +481,33 @@ namespace ShadowverseBeyond.Server.Hubs
         /// </summary>
         public async Task RequestInitialGameState()
         {
+            if (Context.Items.TryGetValue("MirageRoomId", out var mRoomObj)
+                && mRoomObj is string mRoomId
+                && !string.IsNullOrWhiteSpace(mRoomId)
+                && Context.Items.TryGetValue("ViewingSeatGameId", out var viewSeatObj)
+                && viewSeatObj is string viewSeatGameId
+                && !string.IsNullOrWhiteSpace(viewSeatGameId))
+            {
+                var reqHttp = Context.GetHttpContext();
+                if (reqHttp != null)
+                {
+                    var viewingPid = Context.Items.TryGetValue("ViewingPlayerId", out var vpObj) && vpObj is Guid g ? g : Guid.Empty;
+                    var vEpoch = Context.Items.TryGetValue("ViewEpoch", out var epObj) && epObj is int ep ? ep : 1;
+                    var standings = _mirageLobbyService?.GetStandingsSnapshot(mRoomId);
+                    await SendMirageSeatStateToCallerAsync(reqHttp.RequestServices, viewSeatGameId, viewingPid, vEpoch, standings?.RoomVersion);
+                    if (standings != null)
+                    {
+                        await Clients.Caller.ReceiveMirageStandings(standings);
+                    }
+                    if (!(Context.Items.TryGetValue("IsReadOnlySpectator", out var roFlag) && roFlag is true) && viewingPid != Guid.Empty)
+                    {
+                        await _gameService.RefreshHandPlayabilityAsync(viewSeatGameId, viewingPid, Context.ConnectionAborted);
+                        await _gameService.RefreshActPlayabilityAsync(viewSeatGameId, viewingPid, Context.ConnectionAborted);
+                    }
+                }
+                return;
+            }
+
             var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
             if (gameId == Guid.Empty)
             {
@@ -1097,6 +1134,78 @@ namespace ShadowverseBeyond.Server.Hubs
         /// </summary>
         public async Task SendChatMessage(SendChatMessageActionDto actionDto)
         {
+            if (Context.Items.TryGetValue("MirageRoomId", out var mRoomObj)
+                && mRoomObj is string mirageRoomId
+                && !string.IsNullOrWhiteSpace(mirageRoomId)
+                && _mirageLobbyService != null)
+            {
+                var mRoomRes = _mirageLobbyService.GetRoom(mirageRoomId);
+                if (!mRoomRes.Success || mRoomRes.Room == null || mRoomRes.Room.Phase == "Closed")
+                {
+                    await Clients.Caller.ReceiveError($"ROOM_CLOSED:{mRoomRes.Message ?? "房间已关闭。"}");
+                    return;
+                }
+
+                var mMsgType = NormalizeChatMessageType(actionDto?.MessageType);
+                if (mMsgType == null)
+                {
+                    await Clients.Caller.ReceiveError("聊天发送失败：不支持的消息类型。");
+                    return;
+                }
+
+                var mContent = string.Empty;
+                string? mEmoteId = null, mEmoteName = null, mEmoteUrl = null;
+                if (mMsgType == "emote")
+                {
+                    if (!_emoteCatalogService.TryResolveEmote(actionDto?.EmoteId?.Trim(), out var emote))
+                    {
+                        await Clients.Caller.ReceiveError("聊天发送失败：表情不存在或已移除。");
+                        return;
+                    }
+                    mEmoteId = emote!.Id;
+                    mEmoteName = emote.Name;
+                    mEmoteUrl = emote.Url;
+                    mContent = emote.Name;
+                }
+                else if (!_gameChatService.TryNormalizeContent(actionDto?.Content, out mContent, out var valErr))
+                {
+                    await Clients.Caller.ReceiveError($"聊天发送失败：{valErr}");
+                    return;
+                }
+
+                var mSenderType = Context.Items.TryGetValue("ParticipantType", out var pt) && pt is ChatSenderType cst ? cst : ChatSenderType.Player;
+                var mSenderId = Context.Items.TryGetValue("ParticipantId", out var pid) && pid is string ps ? ps : Context.ConnectionId;
+                var mSenderName = Context.Items.TryGetValue("DisplayName", out var dn) && dn is string ds ? ds : "玩家";
+                var mAvatar = Context.Items.TryGetValue("AvatarUrl", out var av) && av is string avs ? avs : string.Empty;
+
+                var now = DateTime.UtcNow;
+                if (!_gameChatService.TryConsumeRateLimit($"{mirageRoomId}:{mSenderType}:{mSenderId}", now, out var wait))
+                {
+                    await Clients.Caller.ReceiveError($"发送过于频繁，请在 {Math.Max(1, (int)Math.Ceiling(wait.TotalSeconds))} 秒后重试。");
+                    return;
+                }
+
+                var mDto = new ChatMessageEventDto
+                {
+                    MessageId = Guid.NewGuid(),
+                    GameId = mirageRoomId,
+                    SenderType = mSenderType,
+                    SenderId = mSenderId,
+                    SenderName = mSenderName,
+                    SenderAvatarUrl = mAvatar,
+                    MessageType = mMsgType,
+                    Content = mContent,
+                    EmoteId = mEmoteId,
+                    EmoteName = mEmoteName,
+                    EmoteUrl = mEmoteUrl,
+                    SentAtUtc = now,
+                    ClientMessageId = string.IsNullOrWhiteSpace(actionDto?.ClientMessageId) ? null : actionDto.ClientMessageId.Trim()
+                };
+                _gameChatService.AppendMessage(mDto);
+                await Clients.Group(SignalRGroupNames.MirageRoom(mirageRoomId)).ChatMessage(mDto);
+                return;
+            }
+
             if (!TryResolveChatParticipantContext(out var roomId, out var gameId, out var senderType, out var senderId, out var senderName, out var senderAvatarUrl))
             {
                 await Clients.Caller.ReceiveError("聊天发送失败：无法识别当前连接上下文。");
@@ -1216,6 +1325,11 @@ namespace ShadowverseBeyond.Server.Hubs
             {
                 _logger.LogError("HttpContext is null for ConnectionId {ConnectionId} in OnConnectedAsync. Aborting.", Context.ConnectionId);
                 Context.Abort();
+                return;
+            }
+
+            if (await TryHandleMirageLobbyOnConnectedAsync(httpContext))
+            {
                 return;
             }
 
@@ -1433,6 +1547,7 @@ namespace ShadowverseBeyond.Server.Hubs
 
             if (hasActiveGameId)
             {
+                BumpDisconnectEpoch(activeGameIdForPlayer, playerGuid);
                 _playerConnections.Register(activeGameIdForPlayer, playerGuid, Context.ConnectionId);
                 var hadPendingDisconnect = CancelDisconnectTimeout(activeGameIdForPlayer, playerGuid);
                 await NotifyPlayerConnectionStatusAsync(roomIdStr, playerGuid, true, hadPendingDisconnect ? "Reconnect" : "Connected");
@@ -1520,6 +1635,27 @@ namespace ShadowverseBeyond.Server.Hubs
         /// </summary>
         public async Task Heartbeat()
         {
+            if (Context.Items.TryGetValue("MirageRoomId", out var mRoomObj)
+                && mRoomObj is string mirageRoomId
+                && !string.IsNullOrWhiteSpace(mirageRoomId)
+                && _mirageLobbyService != null)
+            {
+                var check = _mirageLobbyService.GetRoom(mirageRoomId);
+                if (!check.Success && check.Error is MirageLobbyError.Expired or MirageLobbyError.AlreadyClosed)
+                {
+                    await Clients.Caller.ReceiveError($"ROOM_CLOSED:{check.Message ?? "幻境房间已关闭。"}");
+                    Context.Abort();
+                    return;
+                }
+                if (Context.Items.TryGetValue("PlayerId", out var pidObj)
+                    && pidObj is string pidStr
+                    && Guid.TryParse(pidStr, out var mPid))
+                {
+                    _mirageLobbyService.RefreshExpiration(mirageRoomId, mPid);
+                }
+                return;
+            }
+
             var roomId = GetRoomIdFromContext();
             var (_, playerIdStr) = await GetGamePlayerInfoFromContextAsync();
 
@@ -1565,6 +1701,43 @@ namespace ShadowverseBeyond.Server.Hubs
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             MatchCommandObservation.Unsubscribe(Context.ConnectionId);
+
+            if (Context.Items.TryGetValue("MirageRoomId", out var mRoomObj)
+                && mRoomObj is string mirageRoomId
+                && !string.IsNullOrWhiteSpace(mirageRoomId))
+            {
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, SignalRGroupNames.MirageRoom(mirageRoomId));
+                _mirageLobbyService?.UnregisterSpectatorConnection(mirageRoomId, Context.ConnectionId);
+
+                if (Context.Items.TryGetValue("ViewingSeatGameId", out var viewSeatObj)
+                    && viewSeatObj is string viewSeatGameId
+                    && !string.IsNullOrWhiteSpace(viewSeatGameId))
+                {
+                    await Groups.RemoveFromGroupAsync(Context.ConnectionId, SignalRGroupNames.Game(viewSeatGameId));
+                }
+
+                if (Context.Items.TryGetValue("GameId", out var activeSeatObj)
+                    && activeSeatObj is string activeSeatGameId
+                    && Guid.TryParse(activeSeatGameId, out var seatGameGuid)
+                    && Context.Items.TryGetValue("PlayerId", out var pidObj)
+                    && pidObj is string mPidStr
+                    && Guid.TryParse(mPidStr, out var mPlayerGuid))
+                {
+                    await Groups.RemoveFromGroupAsync(Context.ConnectionId, SignalRGroupNames.Player(activeSeatGameId, mPlayerGuid));
+                    var stillConnected = _playerConnections.Unregister(seatGameGuid, mPlayerGuid, Context.ConnectionId);
+                    var activeSeatState = _gameService.GetGameState(activeSeatGameId);
+                    if (!stillConnected && activeSeatState is { IsGameOver: false })
+                    {
+                        _mirageLobbyService?.NotifySeatDisconnected(mirageRoomId, mPlayerGuid, DisconnectGracePeriod);
+                        _gameService.MarkPlayerDisconnected(activeSeatGameId, mPlayerGuid);
+                        ScheduleDisconnectTimeout(seatGameGuid, mPlayerGuid);
+                    }
+                }
+
+                await base.OnDisconnectedAsync(exception);
+                return;
+            }
+
             // Attempt to identify the game/player again for logging/cleanup purposes
             var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync(); // Use helper
             var roomId = GetRoomIdFromContext();
@@ -1664,6 +1837,7 @@ namespace ShadowverseBeyond.Server.Hubs
                 return;
             }
 
+            var expectedEpoch = BumpDisconnectEpoch(gameId, playerId);
             var cacheKey = GetDisconnectCacheKey(gameId, playerId);
             var cts = new CancellationTokenSource();
             _disconnectTimeouts.AddOrUpdate(
@@ -1704,10 +1878,10 @@ namespace ShadowverseBeyond.Server.Hubs
                 try
                 {
                     _logger.LogInformation("Disconnect timeout elapsed. Enqueuing disconnect action. GameId={GameId} PlayerId={PlayerId}", gameId, playerId);
-                    if (_playerConnections.IsConnected(gameId, playerId))
+                    if (_playerConnections.IsConnected(gameId, playerId) || !IsCurrentDisconnectEpoch(gameId, playerId, expectedEpoch))
                     {
                         _logger.LogInformation(
-                            "Disconnect timeout ignored because Player {PlayerId} reconnected before timeout resolution. GameId={GameId}",
+                            "Disconnect timeout ignored because Player {PlayerId} reconnected or epoch advanced before timeout resolution. GameId={GameId}",
                             playerId,
                             gameId);
                         return;
@@ -1724,7 +1898,7 @@ namespace ShadowverseBeyond.Server.Hubs
                         ActionType = "Disconnect",
                         Origin = "disconnect_timeout",
                         PlayerId = playerId,
-                        ActionData = new { Reason = "Timeout" }
+                        ActionData = new DisconnectTimeoutActionPayload("Timeout", expectedEpoch)
                     };
 
                     await EnqueueHubActionAsync(gameId.ToString(), wrapper);
@@ -2101,6 +2275,16 @@ namespace ShadowverseBeyond.Server.Hubs
                 return gameIdStrItem;
             }
 
+            if (Context.Items.ContainsKey("MirageRoomId")
+                || (Context.Items.TryGetValue("IsReadOnlySpectator", out var roFlag) && roFlag is true))
+            {
+                return Context.Items.TryGetValue("ViewingSeatGameId", out var viewSeatObj)
+                       && viewSeatObj is string viewSeatId
+                       && !string.IsNullOrWhiteSpace(viewSeatId)
+                    ? viewSeatId
+                    : null;
+            }
+
             var httpContext = Context.GetHttpContext();
             var gameIdFromQuery = httpContext?.Request.Query["gameId"].ToString();
             if (!string.IsNullOrWhiteSpace(gameIdFromQuery))
@@ -2143,6 +2327,11 @@ namespace ShadowverseBeyond.Server.Hubs
         /// <returns>A tuple containing GameId (Guid) and PlayerId (string?). Returns (Guid.Empty, null) if info not found.</returns>
         private Task<(Guid GameId, string? PlayerId)> GetGamePlayerInfoFromContextAsync()
         {
+            if (Context.Items.TryGetValue("IsReadOnlySpectator", out var readOnlyFlag) && readOnlyFlag is true)
+            {
+                return Task.FromResult((Guid.Empty, (string?)null));
+            }
+
             // First try items set during connection validation
             if (Context.Items.TryGetValue("GameId", out var gameIdItem) &&
                 Context.Items.TryGetValue("PlayerId", out var playerIdItem) &&

@@ -27,10 +27,12 @@ namespace ShadowverseBeyond.Server.Services
         private readonly TimeSpan _defaultTtl = RoomLifetime.DefaultTtl;
         private readonly TimeSpan _closedRetention = RoomLifetime.ClosedRetention;
         private readonly ILogger<MatchService> _logger;
+        private readonly IRoomJoinCodeRegistry? _joinCodeRegistry;
 
-        public MatchService(ILogger<MatchService> logger)
+        public MatchService(ILogger<MatchService> logger, IRoomJoinCodeRegistry? joinCodeRegistry = null)
         {
             _logger = logger;
+            _joinCodeRegistry = joinCodeRegistry;
         }
 
         public MatchOperationResult Create(Guid? hostPlayerId = null, bool useAiFallback = false, TimeSpan? ttl = null, DevMatchConfig? devMatchConfig = null, bool isPublic = true, GameMode mode = GameMode.Standard)
@@ -43,11 +45,14 @@ namespace ShadowverseBeyond.Server.Services
             MatchRoom room;
             lock (_creationGate)
             {
+                var joinCode = _joinCodeRegistry != null
+                    ? _joinCodeRegistry.AllocateUniqueCode(RegisteredRoomKind.Classic, roomId, RoomJoinCodeRegistry.DefaultAlphanumericAlphabet, 6)
+                    : GenerateUniqueJoinCode();
                 room = new MatchRoom
                 {
                     RoomId = roomId,
                     HostPlayerId = hostId,
-                    JoinCode = GenerateUniqueJoinCode(),
+                    JoinCode = joinCode,
                     HostToken = GenerateToken(),
                     Mode = mode,
                     UseAiFallback = useAiFallback,
@@ -62,6 +67,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 if (!_rooms.TryAdd(roomId, room))
                 {
+                    _joinCodeRegistry?.Release(joinCode, roomId);
                     return MatchOperationResult.Fail(MatchOperationError.Forbidden, "创建房间失败，请重试。");
                 }
             }
@@ -753,6 +759,7 @@ namespace ShadowverseBeyond.Server.Services
                 room.HostReady = false;
                 room.GuestReady = false;
                 room.ExpiresAt = DateTime.UtcNow.Add(_closedRetention);
+                _joinCodeRegistry?.Release(room.JoinCode, roomId);
                 _logger.LogInformation("[MatchService] Room {RoomId} closed: {Reason}", roomId, reason);
 
                 if (!string.IsNullOrWhiteSpace(activeGameId))

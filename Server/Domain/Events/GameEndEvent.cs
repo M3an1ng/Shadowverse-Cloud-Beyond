@@ -1,10 +1,12 @@
 using System;
+using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Domain.Identifiers;
+using ShadowverseBeyond.Server.Services;
 
 namespace ShadowverseBeyond.Server.Domain.Events;
 
@@ -33,6 +35,23 @@ public sealed class GameEndEvent : GameEventBase, ICommittableEvent, ILogAnnounc
         if (context.CurrentGameState.IsGameOver)
         {
             return result;
+        }
+
+        if (context.CurrentGameState.Mode == GameMode.Mirage && !context.CurrentGameState.IsCombatSandbox)
+        {
+            var shopService = context.ServiceProvider.GetService<IMirageShopService>();
+            if (shopService != null)
+            {
+                if (LoserId != Guid.Empty)
+                {
+                    shopService.ReturnEliminatedPlayerCardsToPool(context.CurrentGameState, LoserId);
+                }
+                else if (WinnerId == Guid.Empty)
+                {
+                    shopService.ReturnEliminatedPlayerCardsToPool(context.CurrentGameState, context.CurrentGameState.Player1.PlayerId);
+                    shopService.ReturnEliminatedPlayerCardsToPool(context.CurrentGameState, context.CurrentGameState.Player2.PlayerId);
+                }
+            }
         }
 
         context.CurrentGameState.Status = GameStatus.Finished;

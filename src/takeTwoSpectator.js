@@ -9,7 +9,7 @@ const api = (path, options) => historyRequest(`/api/take-two${path}`, options);
 const key = id => String(id || '').replaceAll('-', '').toLowerCase();
 const environmentLabel = value => ({ rotation: '指定', unlimited: '无限', open: '开放', as2p: 'AS2P' }[value] || '开放');
 
-export function mergeTakeTwoRooms(nativeRooms, drafts) {
+export function mergeTakeTwoRooms(nativeRooms, drafts, mirageRooms = []) {
   const result = nativeRooms.map(room => ({ ...room }));
   for (const draft of drafts) {
     if (draft.closed) continue;
@@ -32,12 +32,52 @@ export function mergeTakeTwoRooms(nativeRooms, drafts) {
       canSpectate: draft.status !== 'Waiting' && draft.players.length === 2,
     });
   }
+  for (const m of (Array.isArray(mirageRooms) ? mirageRooms : [])) {
+    const roomId = m?.roomId ?? m?.RoomId;
+    if (!roomId || result.some(room => key(room.roomId) === key(roomId))) continue;
+    const canJoin = Boolean(m.canJoin ?? m.CanJoin);
+    const canSpectate = Boolean(m.canSpectate ?? m.CanSpectate);
+    const humanCount = Number(m.humanCount ?? m.HumanCount ?? 1);
+    const maxSeats = Number(m.maxSeats ?? m.MaxSeats ?? 8);
+    const aliveCount = Number(m.aliveCount ?? m.AliveCount ?? maxSeats);
+    const roundNumber = Number(m.roundNumber ?? m.RoundNumber ?? 0);
+    result.push({
+      roomId,
+      isMirage: true,
+      isMirage8P: true,
+      isPublic: (m.isPublic ?? m.IsPublic) !== false,
+      hostDisplayName: m.hostDisplayName ?? m.HostDisplayName ?? '',
+      humanCount,
+      maxSeats,
+      aliveCount,
+      round: roundNumber > 0 ? roundNumber : 0,
+      hasGuest: !canJoin && humanCount >= maxSeats,
+      canJoin,
+      canSpectate,
+      status: canJoin ? 'Waiting' : 'Started',
+      statusLabel: m.statusLabel ?? m.StatusLabel ?? (canJoin ? '等待中' : '进行中'),
+    });
+  }
   return result.sort(compareSpectatorRooms);
 }
 
 export async function listSpectatableRooms(listMatches, normalize) {
-  const [native, drafts] = await Promise.all([listMatches(), api('/rooms')]);
-  return mergeTakeTwoRooms(normalize(native), drafts);
+  const fetchMirageRooms = async () => {
+    try {
+      const res = await fetch('/api/mirage/rooms');
+      if (!res.ok) return [];
+      const payload = await res.json();
+      return Array.isArray(payload?.items ?? payload?.Items) ? (payload.items ?? payload.Items) : [];
+    } catch {
+      return [];
+    }
+  };
+  const [native, drafts, mirageRooms] = await Promise.all([
+    listMatches(),
+    api('/rooms'),
+    fetchMirageRooms(),
+  ]);
+  return mergeTakeTwoRooms(normalize(native), drafts, mirageRooms);
 }
 
 export async function findTakeTwoSpectatorRoom(id) {

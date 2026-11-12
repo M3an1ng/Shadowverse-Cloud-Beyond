@@ -294,6 +294,9 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
                     b.Property<int?>("MirageTavernTier")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("MirageBuyCost")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Keywords")
                         .HasColumnType("TEXT");
 

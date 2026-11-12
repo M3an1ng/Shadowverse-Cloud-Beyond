@@ -259,14 +259,16 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Registered IMatchHistoryProjectionService.");
     builder.Services.AddScoped<ShadowverseBeyond.Server.Services.Abstractions.IDebugCommandParser, ShadowverseBeyond.Server.Services.DebugCommandParser>();
     Log.Information("Registered IDebugCommandParser."); // Added Log
+    builder.Services.AddSingleton<IRoomJoinCodeRegistry, RoomJoinCodeRegistry>();
     builder.Services.AddSingleton<IMatchService, MatchService>(); // Register in-memory match service for lobby
-    Log.Information("Registered IMatchService (in-memory lobby)."); // Added Log
+    Log.Information("Registered IRoomJoinCodeRegistry and IMatchService (in-memory lobby)."); // Added Log
     builder.Services.AddSingleton<IMirageShopService, MirageShopService>();
     builder.Services.AddSingleton<IMirageTripleService, MirageTripleService>();
     builder.Services.AddSingleton<IMirageCombatSnapshotBuilder, MirageCombatSnapshotBuilder>();
     builder.Services.AddSingleton<IMirageGhostService, MirageGhostService>();
     builder.Services.AddSingleton<IMirageCombatSimulator, MirageCombatSimulator>();
-    Log.Information("Registered IMirageShopService, IMirageTripleService, IMirageCombatSnapshotBuilder, IMirageGhostService, and IMirageCombatSimulator.");
+    builder.Services.AddSingleton<IMirageLobbyService, MirageLobbyService>();
+    Log.Information("Registered IMirageShopService, IMirageTripleService, IMirageCombatSnapshotBuilder, IMirageGhostService, IMirageCombatSimulator, and IMirageLobbyService.");
     builder.Services.AddSingleton<IFirstPlayerSelector, SecureFirstPlayerSelector>();
     Log.Information("Registered IFirstPlayerSelector (secure RNG).");
 
@@ -642,6 +644,11 @@ try // Wrap application startup in try-finally to ensure logs are flushed
             var isFingerprintedAsset = path.StartsWith("/assets/", StringComparison.OrdinalIgnoreCase)
                 && !path["/assets/".Length..].Contains('/')
                 && System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(path), @"-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+$");
+            var isStaticMseOrUiAsset = path.StartsWith("/mse-beyond/", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/assets/card-ui/", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/assets/fonts/", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/assets/reference-cost/", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith("/assets/reference-icons/", StringComparison.OrdinalIgnoreCase);
 
             CacheControlHeaderValue cacheControl;
             var appendImmutable = false;
@@ -654,6 +661,15 @@ try // Wrap application startup in try-finally to ensure logs are flushed
                     MaxAge = TimeSpan.FromDays(365)
                 };
                 appendImmutable = true;
+            }
+            else if (!app.Environment.IsDevelopment() && isStaticMseOrUiAsset)
+            {
+                // MSE fonts (~28.6 MB) and fixed UI templates rarely change; cache for 30 days to avoid repeated large downloads on VPS.
+                cacheControl = new CacheControlHeaderValue
+                {
+                    Public = true,
+                    MaxAge = TimeSpan.FromDays(30)
+                };
             }
             else
             {

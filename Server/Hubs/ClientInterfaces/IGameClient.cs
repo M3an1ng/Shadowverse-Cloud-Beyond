@@ -304,5 +304,15 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// Sends the Mirage auto-combat replay package to clients before committing the combat result.
         /// </summary>
         Task ReceiveMirageCombatReplay(MirageCombatReplayDto combatReplay);
+
+        /// <summary>
+        /// Sends the 8-player Mirage tournament standings and next-opponent summary snapshot.
+        /// </summary>
+        Task ReceiveMirageStandings(MirageStandingsSnapshotDto standings);
+
+        /// <summary>
+        /// Sends 8-player Mirage waiting room state updates to connected lobby clients.
+        /// </summary>
+        Task ReceiveMirageLobbyUpdated(MirageLobbyRoomDto room);
     }
 }

@@ -23,6 +23,7 @@ namespace ShadowverseBeyond.Server.Services
     public class PendingActionService : IPendingActionService
     {
         private readonly ConcurrentDictionary<Guid, PendingChoiceContext> _pendingChoices = new();
+        private readonly ConcurrentDictionary<string, byte> _endingGames = new(StringComparer.OrdinalIgnoreCase);
         private readonly IHubContext<GameHub, IGameClient> _hubContext;
         private readonly ILogger<PendingActionService> _logger;
         private readonly IServiceProvider _serviceProvider;
@@ -50,6 +51,13 @@ namespace ShadowverseBeyond.Server.Services
             {
                 _logger.LogError("Failed to add pending choice with ID {ChoiceId}. It may already exist.", request.PendingChoiceId);
                 throw new InvalidOperationException("Failed to store pending choice context.");
+            }
+
+            // Register first, then check the exit marker so concurrent room exit cannot miss this choice.
+            if (_endingGames.ContainsKey(gameId))
+            {
+                ForceResolveChoice(request.PendingChoiceId, PlayerChoiceResult.Cancelled);
+                return await tcs.Task;
             }
 
             cancellationToken.Register(() =>
@@ -261,6 +269,18 @@ namespace ShadowverseBeyond.Server.Services
 
             return result;
         }
+
+        public void CancelChoicesForGame(string gameId)
+        {
+            _endingGames[gameId] = 0;
+            foreach (var choice in _pendingChoices.Values.Where(c =>
+                         string.Equals(c.Request.GameId, gameId, StringComparison.OrdinalIgnoreCase)))
+            {
+                ForceResolveChoice(choice.Request.PendingChoiceId, PlayerChoiceResult.Cancelled);
+            }
+        }
+
+        public void ClearGameChoiceCancellation(string gameId) => _endingGames.TryRemove(gameId, out _);
 
         public void ForceResolveChoice(Guid choiceId, PlayerChoiceResult forcedResult)
         {

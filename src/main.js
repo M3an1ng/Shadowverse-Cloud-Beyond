@@ -4,7 +4,7 @@ import { createRevealPresentationGate } from "./revealPresentationGate.js";
 import { formatRoomHandshake } from "./multiplayerRoomPresentation.js";
 import { loadAboutChangelog } from "./aboutChangelog.js";
 import "./styles/mini-feature-theme.css";
-﻿import { initializeTakeTwo, tryJoinTakeTwo, stopTakeTwoWaitingLobby } from './takeTwo.js';
+import { initializeTakeTwo, tryJoinTakeTwo, leaveTakeTwoRoom, getActiveTakeTwoRoom, configureTakeTwoRoomEntry } from './takeTwo.js';
 import { listSpectatableRooms, showTakeTwoSpectator, findTakeTwoSpectatorRoom } from './takeTwoSpectator.js';
 import { confirmDialog } from './siteDialog.js';
 import { showAlert } from './siteDialog.js';
@@ -35,7 +35,7 @@ import {
     handleCardRevealed, handleFusion, handleAbilityTriggered, handleKeywordAdded, handleKeywordRemoved, handleCardInstanceUpdated,
     handleChatHistory, handleChatMessage, handleMatchHistorySync, surrenderGame,
     handleCardMoved, handleEmblemUpdated, handleCounterChanged, handleCardReturned, handleTuck, appendGameLog,
-    handleMirageCombatReplay, abortMirageCombatPlayback // 【新增】导入最大值更新处理函数与幻境战斗回放门禁
+    handleMirageCombatReplay, abortMirageCombatPlayback, handleMirageStandingsUpdated, switchMirageSpectateTargetRequest // 【新增】导入最大值更新处理函数与幻境战斗回放门禁
 } from './gameManager.js';
 // loadCards is obsolete now that the server is the single source of truth.
 import {
@@ -55,11 +55,18 @@ import {
 import { initDevConsole } from './devConsole.js'; // 开发者控制台
 import { ensureEnumLocalizations } from './enumLocalizationCache.js';
 import { getRouteNameFromHash, shouldReuseCachedHandshake } from './handshakePolicy.js';
-import { shouldDeferRoomLeaveForDecision } from './roomExitDecisionPolicy.js';
+import {
+    canShowRematchRoomButton,
+    isNonAiMultiplayerHandshake,
+    isRoomSeatAlreadyReleased,
+    resolveRematchPollStartedAction,
+    shouldDeferRoomLeaveForDecision
+} from './roomExitDecisionPolicy.js';
 import { getStoredValue, removeStoredValue, setStoredValue } from './storageFallback.js';
 import { buildDebugLogLine, getConnectionDebugId } from './debugDiagnostics.js';
 import { createDeckSelectionPickerModal } from './components/deckSelectionPickerModal.js';
 import { registerPwaServiceWorker, setupPwaInstallUI } from './pwaInstall.js';
+import { setupMobileViewport } from './mobileViewport.js';
 import {
     ensureDeckEnvironmentOptions,
     getDefaultDeckEnvironment
@@ -81,6 +88,11 @@ import { createLobbyNotificationSoundPlayer } from './lobbyNotificationSound.js'
 import { createGuestJoinSoundTracker } from './multiplayerRoomSoundPolicy.js';
 import { setupDailyQuestUI } from './dailyQuestMenu.js';
 import { setupUserInfoUI } from './userMenu.js';
+import menuBg1Url from './background/background_1.jpg';
+import menuBg2Url from './background/background_2.jpg';
+import menuBg3Url from './background/background_3.jpg';
+import menuBg4Url from './background/background_4.jpg';
+import menuBg5Url from './background/background_5.jpg';
 // 在页面初始化前接入真实 console；面板首次打开时才创建 DOM。
 bindGameView({
     renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual,
@@ -230,6 +242,8 @@ let connection = null; // Module-level variable for SignalR connection - Moved h
 let guestConnection = null;
 let initialStateReceived = false; // Flag to track if initial state has been handled
 let forceFullStateOnNextReceive = false;
+let reconnectEpochResetPending = false;
+let reconnectDesiredSpectateTarget = null;
 let reconnectInProgress = false;
 let lobbyHandshake = null; // { gameId, playerId, token, joinCode?, role, useAiFallback?, dualControl?, hostPlayerId?, hostToken?, guestPlayerId?, guestToken? }
 let pendingHandshake = null; // Set by multiplayer UI before initialization
@@ -237,6 +251,8 @@ let pendingRouteTransition = null; // { fromRoute, toRoute }
 let pendingRoomExitDecision = null; // { sourceRoute, targetRoute, gameId }
 let confirmedBattleExitSurrender = false;
 let returningToLobbyForRematch = false;
+let rematchExitedActiveGameId = null;
+let rematchCapabilityProbeGameId = null;
 let roomExitDecisionModalEl = null;
 let roomExitDecisionPromise = null;
 let roomExitDecisionResolve = null;
@@ -252,32 +268,26 @@ async function apiPostJson(url, body) {
         },
         body: JSON.stringify(body ?? {})
     });
-    let payload = null;
-    try {
-        payload = await response.json();
-    } catch (err) {
-        // ignore parse errors; fall back to status text
-    }
-    if (!response.ok) {
-        const message = (payload && (payload.message || payload.Message)) || response.statusText;
-        throw new Error(message || `HTTP ${response.status}`);
-    }
-    return payload;
+    return readApiJsonResponse(response);
 }
 
 async function apiGetJson(url) {
     const response = await fetch(url, { method: "GET" });
-    let payload = null;
+    return readApiJsonResponse(response);
+}
+
+async function readApiJsonResponse(response) {
+    const text = await response.text();
+    if (response.ok) return text ? JSON.parse(text) : null;
+    let payload = text || null;
     try {
-        payload = await response.json();
-    } catch (err) {
-        // ignore
+        if (text) payload = JSON.parse(text);
+    } catch {
+        // Error responses may be plain text rather than JSON.
     }
-    if (!response.ok) {
-        const message = (payload && (payload.message || payload.Message)) || response.statusText;
-        throw new Error(message || `HTTP ${response.status}`);
-    }
-    return payload;
+    const message = typeof payload === 'string' ? payload
+        : payload?.message || payload?.Message || payload?.error || response.statusText;
+    throw Object.assign(new Error(message || `HTTP ${response.status}`), { status: response.status });
 }
 
 async function bootstrapDecks() {
@@ -743,6 +753,10 @@ function loadCachedHandshake() {
             : getStoredValue(LOBBY_HANDSHAKE_STORAGE_KEY);
         if (raw) {
             const parsed = JSON.parse(raw);
+            if (parsed.kind === 'mirage-8p' && parsed.roomId) {
+                lobbyHandshake = parsed;
+                return parsed;
+            }
             if (parsed.gameId && parsed.playerId && parsed.token) {
                 lobbyHandshake = parsed;
                 return parsed;
@@ -757,6 +771,8 @@ function loadCachedHandshake() {
 function clearCachedHandshake() {
     lobbyHandshake = null;
     pendingHandshake = null;
+    rematchExitedActiveGameId = null;
+    rematchCapabilityProbeGameId = null;
     deckSelectionState.multiplayerFormat = null;
     clearPendingRoomExitDecision();
     const removed = new URLSearchParams(window.location.search).has('localDraftRoom')
@@ -834,8 +850,7 @@ function getActiveNonAiRoomHandshake() {
     const handshake = getReconnectHandshake();
     if (!handshake) return null;
     if (isSpectatorBattle(gameState, handshake)) return null;
-    if (handshake.useAiFallback === true) return null;
-    if (!handshake.gameId || !handshake.playerId || !handshake.token) return null;
+    if (!isNonAiMultiplayerHandshake(handshake)) return null;
     return handshake;
 }
 
@@ -1000,9 +1015,24 @@ function shouldWarnBeforeUnload() {
 }
 
 async function handleConfirmedBattleExit() {
-    if (isSpectatorBattle(gameState, getReconnectHandshake())) {
+    const handshake = getReconnectHandshake();
+    if (isSpectatorBattle(gameState, handshake)) {
         clearCachedHandshake();
         return true;
+    }
+    if (handshake?.kind === 'mirage-8p' && handshake.roomId && handshake.playerId && handshake.token) {
+        try {
+            await apiPostJson(`/api/mirage/rooms/${encodeURIComponent(handshake.roomId)}/leave`, {
+                playerId: handshake.playerId,
+                token: handshake.token
+            });
+            confirmedBattleExitSurrender = true;
+            clearCachedHandshake();
+            return true;
+        } catch (err) {
+            showAlert(`退赛失败：${err?.message || '未知错误'}`);
+            return false;
+        }
     }
     const result = await surrenderGame();
     if (!result?.ok) {
@@ -1078,7 +1108,8 @@ async function joinMatch(gameId, joinCode, options = {}) {
         useAiFallback: payload.useAiFallback,
         isPublic: payload.isPublic !== false,
         mode: resolvedMode,
-        isMirage
+        isMirage,
+        ...(typeof payload.canRematch === 'boolean' ? { canRematch: payload.canRematch } : {})
     };
 }
 
@@ -1127,9 +1158,21 @@ async function leaveCurrentPvpRoom(reasonForLog) {
         return;
     }
 
-    const { gameId, playerId, token } = handshake;
-    // 路由会等待退出结果；失败时保留房间信息，让错误可见且仍可重试退出。
-    await leaveMatch(gameId, playerId, token);
+    try {
+        if (handshake.kind === 'mirage-8p') {
+            if (handshake.roomId && handshake.playerId && handshake.token) {
+                await apiPostJson(`/api/mirage/rooms/${encodeURIComponent(handshake.roomId)}/leave`, {
+                    playerId: handshake.playerId,
+                    token: handshake.token
+                });
+            }
+        } else {
+            await leaveMatch(handshake.gameId, handshake.playerId, handshake.token);
+        }
+    } catch (error) {
+        // A missing seat needs no further release; transient failures still retain its credentials.
+        if (!isRoomSeatAlreadyReleased(error)) throw error;
+    }
     clearCachedHandshake();
 }
 
@@ -1153,7 +1196,18 @@ async function setupSignalRConnection(gameId, playerId, token, initialStateGate,
         initialStateReceived = false;
     }
 
-    const hubUrlWithParams = `${HUB_URL}?gameId=${encodeURIComponent(gameId)}&playerId=${encodeURIComponent(playerId)}&token=${encodeURIComponent(token)}`;
+    const activeHs = getReconnectHandshake();
+    const query = new URLSearchParams();
+    query.set('gameId', gameId);
+    query.set('playerId', playerId);
+    query.set('token', token);
+    if (activeHs?.kind === 'mirage-8p' && activeHs.roomId) {
+        query.set('mirageRoomId', activeHs.roomId);
+        if (activeHs.viewingPlayerId && activeHs.viewingPlayerId !== playerId) {
+            query.set('targetPlayerId', activeHs.viewingPlayerId);
+        }
+    }
+    const hubUrlWithParams = `${HUB_URL}?${query.toString()}`;
 
     const conn = new signalR.HubConnectionBuilder()
         .withUrl(hubUrlWithParams)
@@ -1307,9 +1361,16 @@ async function setupSpectatorSignalRConnection(gameId, initialStateGate, options
     }
 
     const session = getUserSession();
+    const activeHs = getReconnectHandshake();
     const query = new URLSearchParams();
     query.set('gameId', gameId);
     query.set('spectate', '1');
+    if (activeHs?.kind === 'mirage-8p' && activeHs.roomId) {
+        query.set('mirageRoomId', activeHs.roomId);
+        if (activeHs.viewingPlayerId) {
+            query.set('targetPlayerId', activeHs.viewingPlayerId);
+        }
+    }
 
     const spectatorName = String(session?.displayName || '').trim();
     if (spectatorName) {
@@ -1493,17 +1554,22 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
             // During Mulligan, the server may broadcast full GameState snapshots on opponent actions.
             // Applying the full snapshot forces a full UI re-render and can disrupt local interaction state.
             // We rely on incremental events (HandUpdated / PlayerMulliganCompleted) during Mulligan instead.
-            if (!forceFullStateOnNextReceive && gameState.phase === 'Mulligan' && receivedGameState?.Phase === 'Mulligan') {
+            if (!forceFullStateOnNextReceive && !reconnectEpochResetPending && gameState.phase === 'Mulligan' && receivedGameState?.Phase === 'Mulligan') {
                 return;
             }
+            const shouldResetViewEpoch = reconnectEpochResetPending;
             forceFullStateOnNextReceive = false;
+            reconnectEpochResetPending = false;
 
             // Subsequent state handling after initialization
             // Directly call gameManager's update function to handle the state and re-render
             // Ensure gameManager and updateFullGameState are imported correctly
             try {
                 setConnectionStatus('connected');
-                const hydrationSucceeded = updateFullGameState(receivedGameState, { isReconnectFullSync: true }); // Directly update the game state and UI
+                const hydrationSucceeded = updateFullGameState(receivedGameState, {
+                    isReconnectFullSync: true,
+                    resetViewEpoch: shouldResetViewEpoch
+                }); // Directly update the game state and UI
                 if (hydrationSucceeded === false) {
                     void handleStateHydrationFailure('重连失败').catch(error => console.error('MAIN: 状态同步失败后的连接清理失败。', error));
                     return;
@@ -1584,6 +1650,10 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
         logEventReceipt("ReceiveMirageCombatReplay", replayDto);
         void handleMirageCombatReplay(replayDto);
     });
+    onCurrentEvent("ReceiveMirageStandings", (standingsDto) => {
+        logEventReceipt("ReceiveMirageStandings", standingsDto);
+        handleMirageStandingsUpdated(standingsDto);
+    });
     // Generic log entries (for events without specific DTO)
     onCurrentEvent("LogEvent", (eventData) => {
         appendGameLog("LogEvent", eventData);
@@ -1656,12 +1726,18 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
         // Automatic reconnect is enabled, but we might want to disable UI elements here.
         connection = null; // Clear the connection variable
         reconnectInProgress = false;
+        reconnectEpochResetPending = false;
+        reconnectDesiredSpectateTarget = null;
         setSignalRConnection(null);
         setConnectionStatus('disconnected', '连接已断开');
     });
 
     conn.onreconnecting((error) => {
         if (connection !== conn) return;
+        reconnectDesiredSpectateTarget = gameState.isSpectator
+            ? (gameState.pendingSpectateTargetId || gameState.viewingPlayerId || null)
+            : null;
+        reconnectEpochResetPending = true;
         abortMirageCombatPlayback("reconnecting");
         setSignalRConnection(null);
         logPerfDebug('signalr-game', 'connection reconnecting', {
@@ -1684,13 +1760,32 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
             state: conn.state
         });
         showAlert("已重新连接到服务器。"); // Use alert instead of displayInfo
+        const targetToRestore = reconnectDesiredSpectateTarget;
+        reconnectDesiredSpectateTarget = null;
+        gameState.viewEpoch = 0;
+        gameState.pendingSpectateTargetId = null;
         forceFullStateOnNextReceive = true;
         reconnectInProgress = false;
         setSignalRConnection(conn);
         setConnectionStatus('reconnecting', '连接已恢复，正在同步...');
-        void requestFullStateSync("auto-reconnect").catch(error => {
-            console.error("MAIN: 自动重连同步失败。", error);
-        });
+        void (async () => {
+            try {
+                const synced = await requestFullStateSync("auto-reconnect");
+                if (!synced || connection !== conn) return;
+                const activeMirageRoom = gameState.mirageRoomId
+                    || gameState.mirage?.tournamentRoomId
+                    || gameState.mirage?.TournamentRoomId
+                    || null;
+                if (gameState.isSpectator
+                    && activeMirageRoom
+                    && targetToRestore
+                    && String(gameState.viewingPlayerId || '').toLowerCase() !== String(targetToRestore).toLowerCase()) {
+                    await switchMirageSpectateTargetRequest(targetToRestore);
+                }
+            } catch (error) {
+                console.error("MAIN: 自动重连同步失败。", error);
+            }
+        })();
         // Request latest state after reconnection if server doesn't push automatically
         // connection.invoke("RequestInitialGameState").catch(err => console.error("Request state after reconnect failed:", err));
     });
@@ -1744,7 +1839,13 @@ export async function respondToTargetSelection(requestId, selectedIds) {
 // --- Application Initialization ---
 
 async function ensureLobbyHandshake() {
-    // 0) Pending handshake set by multiplayer UI
+    // 0) Pending handshake set by multiplayer / mirage 8P UI
+    if (pendingHandshake && pendingHandshake.kind === 'mirage-8p' && pendingHandshake.roomId) {
+        if (pendingHandshake.role === 'spectator' || (pendingHandshake.playerId && pendingHandshake.token)) {
+            cacheHandshake(pendingHandshake);
+            return pendingHandshake;
+        }
+    }
     if (pendingHandshake && pendingHandshake.gameId && pendingHandshake.playerId && pendingHandshake.token) {
         cacheHandshake(pendingHandshake);
         return pendingHandshake;
@@ -1752,10 +1853,23 @@ async function ensureLobbyHandshake() {
 
     // 1) URL parameters (deep link)
     const urlParams = new URLSearchParams(window.location.search);
+    const urlMirageRoomId = urlParams.get("mirageRoomId");
     const urlGameId = urlParams.get("gameId");
     const urlSpectate = urlParams.get("spectate");
     const urlPlayerId = urlParams.get("playerId");
     const urlToken = urlParams.get("token");
+    if (urlMirageRoomId && (urlSpectate === "1" || urlSpectate === "true")) {
+        const specHs = {
+            kind: "mirage-8p",
+            roomId: urlMirageRoomId,
+            gameId: urlMirageRoomId,
+            role: "spectator",
+            isMirage: true,
+            mode: "Mirage"
+        };
+        cacheHandshake(specHs);
+        return specHs;
+    }
     if (urlGameId && (urlSpectate === "1" || urlSpectate === "true")) {
         return {
             gameId: urlGameId,
@@ -1780,10 +1894,31 @@ async function ensureLobbyHandshake() {
     const routeName = getRouteNameFromHash(window.location.hash);
     const isInMultiplayerUi = document.body.classList.contains('show-multiplayer');
     if (shouldReuseCachedHandshake(cached, { routeName, isInMultiplayerUi })) {
+        if (cached?.kind === 'mirage-8p' && cached.roomId && cached.role !== 'spectator' && cached.playerId && cached.token) {
+            try {
+                const roomState = await apiGetJson(
+                    `/api/mirage/rooms/${encodeURIComponent(cached.roomId)}?playerId=${encodeURIComponent(cached.playerId)}&token=${encodeURIComponent(cached.token)}`
+                );
+                if (roomState?.phase === 'Waiting') {
+                    setTimeout(() => void router.navigateTo('mirage-lobby'), 0);
+                    throw new Error("幻境房间仍在等待开局，正在返回准备室...");
+                }
+                if (roomState?.callerSeatGameId) {
+                    cached.seatGameId = roomState.callerSeatGameId;
+                    cached.gameId = roomState.callerSeatGameId;
+                }
+                if (roomState?.callerIsEliminated && cached.role === 'eliminated-spectator' && roomState.recommendedSpectatePlayerId) {
+                    cached.viewingPlayerId = cached.viewingPlayerId || roomState.recommendedSpectatePlayerId;
+                }
+                cacheHandshake(cached);
+            } catch (probeErr) {
+                if (String(probeErr?.message || '').includes('等待开局')) throw probeErr;
+            }
+        }
         return cached;
     }
 
-    throw new Error("请先在单人对战或多人对战面板选择卡组并开始。");
+    throw new Error("请先在单人对战或多人对战开始对局。");
 }
 
 function getReconnectHandshake() {
@@ -1944,13 +2079,20 @@ async function initializeApp() {
             }
 
             // 6. Initialize gameManager with context (AFTER connection and IDs are ready)
-            if (handshake.role === "spectator") {
-                initializeSpectator(gameId);
+            if (handshake.role === "spectator" || handshake.role === "eliminated-spectator") {
+                initializeSpectator(gameId, {
+                    viewingPlayerId: handshake.viewingPlayerId || null,
+                    mirageRoomId: handshake.mirageRoomId || null
+                });
+                if (handshake.playerId) {
+                    gameState.selfOriginalPlayerId = handshake.playerId;
+                }
             } else {
                 initializeGame(gameId, playerId, {
                     dualControl: handshake.dualControl === true,
                     hostPlayerId: handshake.hostPlayerId || playerId,
-                    guestPlayerId: handshake.guestPlayerId || null
+                    guestPlayerId: handshake.guestPlayerId || null,
+                    mirageRoomId: handshake.mirageRoomId || null
                 }); // Still needed to set IDs in gameManager
             }
 
@@ -2043,16 +2185,53 @@ function stopMultiplayerPolling() {
     }
 }
 
+function syncHandshakeRematchCapabilityFromRoom(handshake, room) {
+    if (!handshake || !room || typeof room.canRematch !== 'boolean') return;
+    if (!room.guestPlayerId && room.status !== 'Started' && room.canRematch === false) return;
+    if (handshake.canRematch === room.canRematch) return;
+    handshake.canRematch = room.canRematch;
+    cacheHandshake(handshake);
+}
+
+function probeHandshakeRematchCapability(handshake) {
+    const roomId = handshake?.gameId;
+    if (!roomId || rematchCapabilityProbeGameId === roomId) return;
+    rematchCapabilityProbeGameId = roomId;
+    getMatch(roomId, { playerId: handshake.playerId, token: handshake.token })
+        .then((room) => {
+            const latest = getActiveNonAiRoomHandshake();
+            if (!latest || latest.gameId !== roomId) return;
+            if (room?.status === 'Closed') {
+                latest.canRematch = false;
+                cacheHandshake(latest);
+            } else if (typeof room?.canRematch === 'boolean') {
+                latest.canRematch = room.canRematch;
+                cacheHandshake(latest);
+            }
+            syncRematchRoomButtonVisibility();
+        })
+        .catch(() => {
+            if (rematchCapabilityProbeGameId === roomId) {
+                rematchCapabilityProbeGameId = null;
+            }
+        });
+}
+
 function syncRematchRoomButtonVisibility() {
     const rematchBtn = document.getElementById('rematch-room-button');
     if (!rematchBtn) return;
     const handshake = getActiveNonAiRoomHandshake();
-    const canShow = Boolean(
+    if (
         gameState.gameOver === true &&
         handshake &&
         handshake.dualControl !== true &&
+        handshake.isTakeTwo !== true &&
+        typeof handshake.canRematch !== 'boolean' &&
         !isSpectatorBattle(gameState, handshake)
-    );
+    ) {
+        probeHandshakeRematchCapability(handshake);
+    }
+    const canShow = canShowRematchRoomButton(gameState, handshake);
     rematchBtn.style.display = canShow ? 'inline-flex' : 'none';
 }
 
@@ -2211,6 +2390,16 @@ function setupMultiplayerUI() {
     const buildSpectateRoomMeta = (room) => {
         const parts = [];
         parts.push(room.isPublic === false ? '私密房' : '公开房');
+        if (room.isMirage8P) {
+            if (room.canJoin) {
+                parts.push(`已入座 ${room.humanCount || 1}/${room.maxSeats || 8} 人（点击直接加入）`);
+            } else {
+                if (room.round) parts.push(`第 ${room.round} 轮`);
+                if (room.aliveCount) parts.push(`存活 ${room.aliveCount}/${room.maxSeats || 8} 人`);
+            }
+            parts.push('幻境模式');
+            return parts.join(' · ');
+        }
         if (room.round) {
             parts.push(`第 ${room.round} 局`);
         }
@@ -2296,7 +2485,11 @@ function setupMultiplayerUI() {
                     closeSpectateRoomModal();
                     if (inputJoinGame) inputJoinGame.value = room.roomId;
                     if (inputJoinCode) inputJoinCode.value = '';
-                    void executeJoinFlow(room.roomId, '', { isPublicDirectJoin: true, isMirage: room.isMirage === true });
+                    void executeJoinFlow(room.roomId, '', {
+                        isPublicDirectJoin: true,
+                        isMirage: room.isMirage === true,
+                        isMirage8P: room.isMirage8P === true
+                    });
                 });
             }
 
@@ -2528,6 +2721,25 @@ function setupMultiplayerUI() {
         return `${modeBadge}${scoreHtml}${prefixMessage ? `<div>${prefixMessage}</div>` : ''}${seatsHtml}${formatHandshakeOutput(handshake)}${actionsHtml}`;
     };
 
+    const enterStartedRoom = async (handshake, room, outputEl) => {
+        const action = resolveRematchPollStartedAction(room, rematchExitedActiveGameId);
+        if (action === 'wait-reset') {
+            setOutput(outputEl, buildLobbyStatusHtml(handshake, room, '正在结算上一局房间状态，请稍候...'));
+            return;
+        }
+        if (action === 'ended-no-rematch') {
+            stopMultiplayerPolling();
+            await leaveCurrentPvpRoom('rematch-unsupported');
+            setOutput(outputEl, '本局已结束，当前模式不支持原房间再战，请重新创建或加入房间。');
+            return;
+        }
+        if (action !== 'enter-game') return;
+        rematchExitedActiveGameId = null;
+        stopMultiplayerPolling();
+        suppressMultiplayerLeaveOnce = true;
+        await router.navigateTo('game');
+    };
+
     const startRoomLobbyPolling = (handshake, outputEl, intervalMs = 1300) => {
         stopMultiplayerPolling();
         const sessionId = ++mpPollSessionId;
@@ -2552,11 +2764,13 @@ function setupMultiplayerUI() {
                 if (sessionId !== mpPollSessionId) return;
 
                 updateMultiplayerFormatFromRoom(room);
+                syncHandshakeRematchCapabilityFromRoom(handshake, room);
                 const status = room.status;
                 const guestJoined = !!room.guestPlayerId;
                 guestJoinSoundTracker?.observe(room);
 
                 if (status === "Closed") {
+                    rematchExitedActiveGameId = null;
                     stopMultiplayerPolling();
                     const reason = room.closedReason || "房间已关闭。";
                     setOutput(outputEl, `房间已解散：${reason}<br>${formatHandshakeOutput(handshake)}`, true);
@@ -2565,6 +2779,7 @@ function setupMultiplayerUI() {
                 }
 
                 if (!isHost && !room.guestPlayerId) {
+                    rematchExitedActiveGameId = null;
                     stopMultiplayerPolling();
                     setOutput(outputEl, `已被房主移出房间或座位已失效。`, true);
                     clearCachedHandshake();
@@ -2575,6 +2790,7 @@ function setupMultiplayerUI() {
                 setOutput(outputEl, buildLobbyStatusHtml(handshake, room, statusText));
 
                 if (status === "Ready") {
+                    rematchExitedActiveGameId = null;
                     try {
                         await startMatch(handshake.gameId, handshake.playerId, handshake.token);
                     } catch {
@@ -2583,9 +2799,9 @@ function setupMultiplayerUI() {
                 }
 
                 if (status === "Started") {
-                    stopMultiplayerPolling();
-                    suppressMultiplayerLeaveOnce = true;
-                    router.navigateTo('game');
+                    await enterStartedRoom(handshake, room, outputEl);
+                } else {
+                    rematchExitedActiveGameId = null;
                 }
             } catch (err) {
                 if (sessionId !== mpPollSessionId) return;
@@ -2656,7 +2872,50 @@ function setupMultiplayerUI() {
         }
     });
 
-    bindButton(btnCreateHost, async () => {
+    const loadConfiguredMirageLobbyModule = async () => {
+        const lobbyMod = await import('./mirageLobby.js');
+        if (window.__svMirageLobbyHost) {
+            lobbyMod.configureMirageLobbyHost(window.__svMirageLobbyHost);
+        }
+        return lobbyMod;
+    };
+
+    let roomEntryInProgress = false;
+    const runRoomEntry = async (operation) => {
+        if (roomEntryInProgress) return;
+        roomEntryInProgress = true;
+        const controls = [btnCreateHost, btnJoin].filter(Boolean);
+        const disabledStates = controls.map(button => button.disabled);
+        controls.forEach(button => { button.disabled = true; });
+        stopMultiplayerPolling();
+        try {
+            await operation();
+        } finally {
+            roomEntryInProgress = false;
+            controls.forEach((button, index) => { button.disabled = disabledStates[index]; });
+            if (router.getCurrentRoute() === 'multiplayer') resumeMultiplayerPollingFn?.();
+        }
+    };
+
+    const prepareRoomEntry = async (roomId = '', joinCode = '') => {
+        const matchesTarget = (id, code) =>
+            (roomId && String(id || '').replaceAll('-', '').toLowerCase() === roomId.replaceAll('-', '').toLowerCase()) ||
+            (!roomId && joinCode && String(code || '').toLowerCase() === joinCode.toLowerCase());
+        const draft = getActiveTakeTwoRoom();
+        if (draft && !matchesTarget(draft.id, draft.code)) await leaveTakeTwoRoom();
+        const handshake = getReconnectHandshake();
+        if (handshake && !matchesTarget(handshake.roomId || handshake.gameId, handshake.joinCode)) {
+            await leaveCurrentPvpRoom('switch-room');
+        }
+        return handshake && matchesTarget(handshake.roomId || handshake.gameId, handshake.joinCode) ? handshake : null;
+    };
+
+    configureTakeTwoRoomEntry(createRoom => runRoomEntry(async () => {
+        await prepareRoomEntry();
+        await createRoom();
+    }));
+
+    bindButton(btnCreateHost, () => runRoomEntry(async () => {
         if (!outCreate) return;
         mpNotificationSoundPlayer.unlock();
         try {
@@ -2664,37 +2923,44 @@ function setupMultiplayerUI() {
                 ? 'Mirage'
                 : 'Standard';
             const isMirage = roomMode === 'Mirage';
-            let deckId = null;
-            if (!isMirage) {
-                deckId = await getSelectedMultiplayerDeckId();
-                if (!deckId) {
-                    setDeckOutput('请先选择卡组。', true);
-                    return;
-                }
-            }
             const isPublic = document.getElementById('mp-is-public')?.checked !== false;
+
+            if (isMirage) {
+                setOutput(outCreate, '创建幻境房间中...');
+                stopMultiplayerPolling();
+                await prepareRoomEntry();
+                const lobbyMod = await loadConfiguredMirageLobbyModule();
+                await lobbyMod.createMirage8PRoomFromMultiplayer({ isPublic });
+                setOutput(outCreate, '');
+                return;
+            }
+
+            const deckId = await getSelectedMultiplayerDeckId();
+            if (!deckId) {
+                setDeckOutput('请先选择卡组。', true);
+                return;
+            }
             setOutput(outCreate, '创建房间中...');
+            await prepareRoomEntry();
             const handshake = await createMatch(false, { isPublic, mode: roomMode });
             // Save handshake immediately so user can still retry or leave if deck submission fails
             setPendingHandshake(handshake);
 
-            if (!isMirage) {
-                const selection = await submitDeckSelection(handshake, { deckId });
-                if (!selection.ok) {
-                    setOutput(outCreate, buildLobbyStatusHtml(handshake, null, `房间已创建，但卡组选择失败：${selection.message}`), true);
-                    return;
-                }
-                markRoomDeckSynced(handshake, deckId);
+            const selection = await submitDeckSelection(handshake, { deckId });
+            if (!selection.ok) {
+                setOutput(outCreate, buildLobbyStatusHtml(handshake, null, `房间已创建，但卡组选择失败：${selection.message}`), true);
+                return;
             }
+            markRoomDeckSynced(handshake, deckId);
             const readyRoom = await markReady(handshake.gameId, handshake.playerId, handshake.token, true);
             setOutput(outCreate, buildLobbyStatusHtml(handshake, readyRoom, '房间已创建，等待对手加入。'));
             startRoomLobbyPolling(handshake, outCreate, 1500);
         } catch (err) {
             setOutput(outCreate, `创建失败：${err.message}`, true);
         }
-    });
+    }));
 
-    const executeJoinFlow = async (rawGameId, rawJoinCode, options = {}) => {
+    const executeJoinFlow = (rawGameId, rawJoinCode, options = {}) => runRoomEntry(async () => {
         if (!outJoin) return;
         const gameId = String(rawGameId || '').trim();
         const joinCode = String(rawJoinCode || '').trim();
@@ -2704,89 +2970,90 @@ function setupMultiplayerUI() {
         }
 
         try {
-            if (gameId && joinCode && await tryJoinTakeTwo(gameId, joinCode)) return;
-
-            let knownIsMirage = options.isMirage === true;
-            let requiredFormat = null;
-            if (gameId && isValidGuid(gameId)) {
-                try {
-                    const room = await getMatch(gameId);
-                    if (isMirageRoomPayload(room)) {
-                        knownIsMirage = true;
-                    } else {
-                        const environment = normalizeEnvironment(
-                            room?.requiredEnvironment ?? room?.hostDeckEnvironment ?? room?.environment,
-                            ''
-                        );
-                        const rule = normalizeDeckRule(
-                            room?.requiredRule ?? room?.hostDeckRule ?? room?.rule,
-                            ''
-                        );
-                        if (environment && rule) {
-                            requiredFormat = { environment, rule };
-                        }
-                    }
-                } catch {
-                    // Ignore here and let join flow surface authoritative errors.
+            let targetRoomId = gameId;
+            let targetKind = options.isMirage8P === true ? 'Mirage8P' : null;
+            if (joinCode) {
+                const resolved = await apiGetJson(`/api/mirage/rooms/resolve-code/${encodeURIComponent(joinCode)}`);
+                if (!resolved.found) throw new Error('未找到该邀请码对应的房间。');
+                if (gameId && resolved.roomId.replaceAll('-', '').toLowerCase() !== gameId.replaceAll('-', '').toLowerCase()) {
+                    throw new Error('输入的 GameId 与邀请码不匹配。');
                 }
+                targetRoomId = resolved.roomId;
+                targetKind = resolved.kind;
+            }
+
+            if (targetKind === 'Mirage8P' || (!targetKind && isValidGuid(targetRoomId))) {
+                const mirageList = await apiGetJson('/api/mirage/rooms');
+                const mirageItems = mirageList.items ?? mirageList.Items;
+                const matchedMirage = mirageItems.find(
+                    item => String(item.roomId ?? item.RoomId).replaceAll('-', '').toLowerCase() === targetRoomId.replaceAll('-', '').toLowerCase()
+                );
+                if (targetKind === 'Mirage8P' && !matchedMirage) throw new Error('幻境房间不存在或已关闭。');
+                if (matchedMirage) {
+                    if (!joinCode && !(matchedMirage.canJoin ?? matchedMirage.CanJoin)) throw new Error('该幻境房间当前无法加入。');
+                    setOutput(outJoin, '加入幻境房间中...');
+                    const lobbyMod = await loadConfiguredMirageLobbyModule();
+                    await prepareRoomEntry(targetRoomId, joinCode);
+                    if (joinCode) {
+                        await lobbyMod.joinMirage8PByCodeFromExternal(joinCode);
+                    } else {
+                        await lobbyMod.joinMirage8PByRoomIdFromExternal(targetRoomId);
+                    }
+                    setOutput(outJoin, '');
+                    return;
+                }
+            }
+
+            if (targetKind === 'TakeTwo') {
+                if (!await tryJoinTakeTwo(targetRoomId, joinCode, () => prepareRoomEntry(targetRoomId, joinCode))) {
+                    throw new Error('双选房间不存在或已关闭。');
+                }
+                return;
+            }
+
+            const room = await getMatch(targetRoomId);
+            if (room.status === 'Closed') throw new Error(room.closedReason || '房间已关闭。');
+            const knownIsMirage = isMirageRoomPayload(room);
+            let requiredFormat = null;
+            if (!knownIsMirage) {
+                const environment = normalizeEnvironment(
+                    room.requiredEnvironment ?? room.hostDeckEnvironment ?? room.environment, ''
+                );
+                const rule = normalizeDeckRule(room.requiredRule ?? room.hostDeckRule ?? room.rule, '');
+                if (environment && rule) requiredFormat = { environment, rule };
             }
 
             let selectedDeckId = null;
             if (!knownIsMirage) {
                 await ensureDecksLoaded();
                 selectedDeckId = await getSelectedMultiplayerDeckId();
-                const mustValidateBeforeJoin = Boolean(gameId);
-                if (!selectedDeckId && mustValidateBeforeJoin) {
+                if (!selectedDeckId) {
                     setDeckOutput('请先在多人对战中选择卡组。', true);
                     return;
                 }
-                if (selectedDeckId) {
-                    const selectedDeck = getDeckById(selectedDeckId, deckSelectionState.decks);
-                    if (!selectedDeck && mustValidateBeforeJoin) {
-                        setDeckOutput('当前已选卡组不存在，请重新选择后再加入。', true);
-                        return;
-                    }
-                    if (selectedDeck) {
-                        const selectedDeckValid = await validateDeckForSelection(selectedDeck);
-                        if (!selectedDeckValid) {
-                            if (mustValidateBeforeJoin) {
-                                setDeckOutput('当前选择卡组未通过校验，无法加入房间。', true);
-                                return;
-                            }
-                            selectedDeckId = null;
-                        } else if (requiredFormat && !matchesDeckFormat(selectedDeck, requiredFormat)) {
-                            setDeckOutput(`当前选择卡组与房主卡组不匹配（需要 ${getDeckEnvironmentLabel(requiredFormat.environment)} | ${getDeckRuleLabel(requiredFormat.rule)}），无法加入。`, true);
-                            return;
-                        }
-                    }
+                const selectedDeck = getDeckById(selectedDeckId, deckSelectionState.decks);
+                if (!selectedDeck) {
+                    setDeckOutput('当前已选卡组不存在，请重新选择后再加入。', true);
+                    return;
                 }
-
-                if (requiredFormat) {
-                    setMultiplayerDeckFormat(requiredFormat, 'multiplayer');
+                if (!await validateDeckForSelection(selectedDeck)) {
+                    setDeckOutput('当前选择卡组未通过校验，无法加入房间。', true);
+                    return;
+                }
+                if (requiredFormat && !matchesDeckFormat(selectedDeck, requiredFormat)) {
+                    setDeckOutput(`当前选择卡组与房主卡组不匹配（需要 ${getDeckEnvironmentLabel(requiredFormat.environment)} | ${getDeckRuleLabel(requiredFormat.rule)}），无法加入。`, true);
+                    return;
                 }
                 await refreshSelectableDecks();
-                updateMultiplayerDeckSwitcher();
                 setDeckOutput('');
             }
 
             setOutput(outJoin, '加入房间中...');
-            let handshake;
-            try {
-                handshake = await joinMatch(gameId, joinCode);
-            } catch (joinErr) {
-                const msg = String(joinErr?.message || joinErr || '');
-                if (!gameId && /^[0-9]{6}$/.test(joinCode) && (msg.includes('未找到') || msg.includes('不存在') || msg.includes('404'))) {
-                    if (await tryJoinTakeTwo('', joinCode)) return;
-                }
-                throw joinErr;
-            }
-
-            if (!handshake.isMirage && !selectedDeckId) {
-                await leaveMatch(handshake.gameId, handshake.playerId, handshake.token).catch(() => {});
-                setDeckOutput('该房间为构筑对战，请先在多人对战中选择可用卡组后再加入。', true);
-                setOutput(outJoin, '加入已取消：请先选择可用构筑卡组。', true);
-                return;
-            }
+            const existingHandshake = await prepareRoomEntry(targetRoomId, joinCode);
+            if (requiredFormat) setMultiplayerDeckFormat(requiredFormat, 'multiplayer');
+            updateMultiplayerDeckSwitcher();
+            const handshake = existingHandshake || await joinMatch(targetRoomId, joinCode);
+            handshake.isMirage = knownIsMirage;
 
             // Save handshake immediately so user keeps seat ownership even if deck sync fails
             setPendingHandshake(handshake);
@@ -2810,7 +3077,7 @@ function setupMultiplayerUI() {
         } catch (err) {
             setOutput(outJoin, `加入失败：${err.message}`, true);
         }
-    };
+    });
 
     bindButton(btnJoin, async () => {
         const gameId = inputJoinGame?.value?.trim() || '';
@@ -2818,7 +3085,7 @@ function setupMultiplayerUI() {
         await executeJoinFlow(gameId, joinCode);
     });
 
-    bindButton(btnGoGame, () => {
+    bindButton(btnGoGame, () => runRoomEntry(async () => {
         const handshake = pendingHandshake || loadCachedHandshake();
         if (!handshake) {
             showAlert('请先创建或加入房间。');
@@ -2830,49 +3097,54 @@ function setupMultiplayerUI() {
         }
 
         // For PVP rooms, only enter game when Started (avoids hanging init while waiting)
-        (async () => {
-            try {
-                if (!handshake.isMirage) {
-                    const deckId = await getSelectedMultiplayerDeckId();
-                    if (!deckId) {
-                        showAlert('请先选择卡组。');
-                        return;
-                    }
-                    const selection = await submitDeckSelection(handshake, { deckId });
-                    if (!selection.ok) {
-                        showAlert(selection.message || "无法选择卡组。");
-                        return;
-                    }
-                    markRoomDeckSynced(handshake, deckId);
-                }
-                const room = await getMatch(handshake.gameId);
-                updateMultiplayerFormatFromRoom(room);
-                if (room.status === "Ready") {
-                    try {
-                        await startMatch(handshake.gameId, handshake.playerId, handshake.token);
-                    } catch (err) {
-                        // ignore
-                    }
-                }
-                const room2 = await getMatch(handshake.gameId);
-                updateMultiplayerFormatFromRoom(room2);
-                if (room2.status === "Closed") {
-                    const reason = room2.closedReason || "房间已关闭。";
-                    clearCachedHandshake();
-                    showAlert(`无法进入对战：${reason}`);
-                    return;
-                }
-                if (room2.status !== "Started") {
-                    showAlert('房间未开始，请等待对手加入并准备。');
-                    return;
-                }
-                suppressMultiplayerLeaveOnce = true;
-                router.navigateTo('game');
-            } catch (err) {
-                showAlert(`无法进入对战：${err.message}`);
+        try {
+            const room = await getMatch(handshake.gameId);
+            if (router.getCurrentRoute() !== 'multiplayer' || getReconnectHandshake() !== handshake) return;
+            updateMultiplayerFormatFromRoom(room);
+            if (room.status === 'Started') {
+                syncHandshakeRematchCapabilityFromRoom(handshake, room);
+                await enterStartedRoom(handshake, room, handshake.role === 'guest' ? outJoin : outCreate);
+                return;
             }
-        })();
-    });
+            if (!handshake.isMirage) {
+                const deckId = await getSelectedMultiplayerDeckId();
+                if (!deckId) {
+                    showAlert('请先选择卡组。');
+                    return;
+                }
+                const selection = await submitDeckSelection(handshake, { deckId });
+                if (!selection.ok) {
+                    showAlert(selection.message || "无法选择卡组。");
+                    return;
+                }
+                markRoomDeckSynced(handshake, deckId);
+            }
+            if (room.status === "Ready") {
+                try {
+                    await startMatch(handshake.gameId, handshake.playerId, handshake.token);
+                } catch (err) {
+                    // Another side may already have started the room.
+                }
+            }
+            const room2 = await getMatch(handshake.gameId);
+            if (router.getCurrentRoute() !== 'multiplayer' || getReconnectHandshake() !== handshake) return;
+            updateMultiplayerFormatFromRoom(room2);
+            syncHandshakeRematchCapabilityFromRoom(handshake, room2);
+            if (room2.status === "Closed") {
+                const reason = room2.closedReason || "房间已关闭。";
+                clearCachedHandshake();
+                showAlert(`无法进入对战：${reason}`);
+                return;
+            }
+            if (room2.status !== "Started") {
+                showAlert('房间未开始，请等待对手加入并准备。');
+                return;
+            }
+            await enterStartedRoom(handshake, room2, handshake.role === 'guest' ? outJoin : outCreate);
+        } catch (err) {
+            showAlert(`无法进入对战：${err.message}`);
+        }
+    }));
 
     bindButton(btnSpectateRooms, async () => {
         if (!outSpectate) return;
@@ -2916,6 +3188,29 @@ function setupMultiplayerUI() {
 
         try {
             setOutput(outSpectate, '检测房间状态中...');
+
+            try {
+                const mirageList = await apiGetJson('/api/mirage/rooms');
+                const mirageItems = Array.isArray(mirageList?.items ?? mirageList?.Items)
+                    ? (mirageList.items ?? mirageList.Items)
+                    : [];
+                const matchedMirage = mirageItems.find(
+                    item => String(item?.roomId ?? item?.RoomId ?? '').toLowerCase() === gameId.toLowerCase()
+                );
+                if (matchedMirage) {
+                    if (!Boolean(matchedMirage.canSpectate ?? matchedMirage.CanSpectate)) {
+                        setOutput(outSpectate, '幻境房间尚未开始，暂不可观战。', true);
+                        return;
+                    }
+                    stopMultiplayerPolling();
+                    const lobbyMod = await loadConfiguredMirageLobbyModule();
+                    setOutput(outSpectate, '开始观战中...');
+                    await lobbyMod.enterSpectateMirageRoom(matchedMirage.roomId ?? matchedMirage.RoomId);
+                    return;
+                }
+            } catch {
+                // Fallback to TakeTwo / classic spectator lookup
+            }
 
             const draft = await findTakeTwoSpectatorRoom(gameId);
             if (draft && !draft.matchRoomId) {
@@ -3230,12 +3525,19 @@ function setupMenuRouteOverlays() {
     const overlayByRoute = new Map(
         overlays.map(overlay => [overlay.dataset.route || '', overlay])
     );
+    const routeBundledBgUrls = {
+        'singleplayer': menuBg1Url,
+        'card-editor': menuBg2Url,
+        'deck-builder': menuBg3Url,
+        'multiplayer': menuBg4Url,
+        'dev-tools': menuBg5Url
+    };
     const pinnedRoutes = new Set(['singleplayer', 'multiplayer']);
 
     const ensureOverlayImageLoaded = route => {
         const overlay = overlayByRoute.get(route);
         const image = overlay?.querySelector('.menu-route-image');
-        const targetSrc = image?.dataset?.src;
+        const targetSrc = routeBundledBgUrls[route] || image?.dataset?.src;
         if (!image || !targetSrc || image.dataset.loaded === 'true') {
             return;
         }
@@ -3669,6 +3971,8 @@ async function cleanupGamePage() {
         clearGameSession();
         initialStateReceived = false;
         forceFullStateOnNextReceive = false;
+        reconnectEpochResetPending = false;
+        reconnectDesiredSpectateTarget = null;
         confirmedBattleExitSurrender = false;
         gameInitialized = false;
         clearTransientMatchQueryParams();
@@ -3678,11 +3982,11 @@ async function cleanupGamePage() {
 async function cleanupMultiplayerPage() {
     document.body.classList.remove('show-multiplayer');
     stopMultiplayerPolling();
-    stopTakeTwoWaitingLobby();
     if (suppressMultiplayerLeaveOnce) {
         suppressMultiplayerLeaveOnce = false;
         return;
     }
+    await leaveTakeTwoRoom();
     const handshake = getActiveNonAiRoomHandshake();
     if (shouldDeferRoomLeaveForDecision(
         pendingRouteTransition?.fromRoute, pendingRouteTransition?.toRoute, handshake, { gameOver: false }
@@ -3703,6 +4007,47 @@ registerBeforeUnloadGuard();
 
 document.addEventListener('requestReconnect', () => {
     performManualReconnect().catch(error => console.error('MAIN: 重连处理失败。', error));
+});
+
+window.__svMirageLobbyHost = {
+    navigateTo: (route) => {
+        if (router.getCurrentRoute() === 'multiplayer' && (route === 'mirage-lobby' || route === 'game')) {
+            suppressMultiplayerLeaveOnce = true;
+        }
+        return router.navigateTo(route);
+    },
+    setMirage8PHandshake: (hs) => cacheHandshake(hs),
+    getMirage8PHandshake: () => {
+        const hs = getReconnectHandshake();
+        return hs?.kind === 'mirage-8p' ? hs : null;
+    },
+    clearHandshake: () => clearCachedHandshake(),
+    tryJoinClassicOrTakeTwoByCode: async (code) => {
+        await router.navigateTo('multiplayer');
+        const joinInput = document.getElementById('mp-join-code');
+        if (joinInput) joinInput.value = code;
+        document.getElementById('mp-join-btn')?.click();
+    }
+};
+
+document.addEventListener('svb:mirage-stay-spectate', (event) => {
+    const hs = getReconnectHandshake();
+    const targetId = event?.detail?.targetPlayerId || null;
+    if (hs?.kind === 'mirage-8p') {
+        cacheHandshake({
+            ...hs,
+            role: 'eliminated-spectator',
+            viewingPlayerId: targetId || hs.viewingPlayerId
+        });
+    }
+    if (targetId) {
+        void switchMirageSpectateTargetRequest(targetId);
+    }
+});
+
+document.addEventListener('svb:mirage-return-lobby', () => {
+    clearCachedHandshake();
+    void router.navigateTo('multiplayer');
 });
 
 // 初始化开发者控制台（如果需要）
@@ -3730,6 +4075,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const rematchBtn = document.getElementById('rematch-room-button');
     rematchBtn?.addEventListener('click', () => {
+        rematchExitedActiveGameId = gameState.gameId || null;
         returningToLobbyForRematch = true;
         void router.navigateTo('multiplayer');
     });
@@ -3776,6 +4122,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         setupAboutUI();
     } catch (error) {
         console.error('MAIN: Failed to initialize about UI:', error);
+    }
+
+    try {
+        setupMobileViewport();
+    } catch (error) {
+        console.error('MAIN: Failed to initialize mobile viewport:', error);
     }
 
     try {
@@ -3846,5 +4198,5 @@ if (document.readyState === 'loading') {
     startRouter();
 }
 
- document.addEventListener("svb:take-two-start",async event=>{stopMultiplayerPolling();setPendingHandshake(event.detail);suppressMultiplayerLeaveOnce=true;await router.navigateTo("game");});
+ document.addEventListener("svb:take-two-start",async event=>{stopMultiplayerPolling();rematchExitedActiveGameId=null;setPendingHandshake({...event.detail,isTakeTwo:true,canRematch:false});suppressMultiplayerLeaveOnce=true;await router.navigateTo("game");});
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",initializeTakeTwo,{once:true});else initializeTakeTwo();

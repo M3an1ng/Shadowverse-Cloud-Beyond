@@ -35,6 +35,9 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public DateTime? TurnEndsAtUtc { get; set; }
         public bool IsGameOver { get; set; } // Flag indicating game end
         public string? WinnerId { get; set; } // ID of the winner if game is over
+        public Guid? ViewingPlayerId { get; set; }
+        public int? ViewEpoch { get; set; }
+        public long? RoomVersion { get; set; }
 
         // Consider adding other global state if needed, e.g., pending actions, history log snippet
 

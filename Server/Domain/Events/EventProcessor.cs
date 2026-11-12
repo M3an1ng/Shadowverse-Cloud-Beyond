@@ -141,6 +141,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.CardSold => ConvertMirageStateSyncEvent(gameEvent, context),
                     EventType.FieldReordered => ConvertMirageStateSyncEvent(gameEvent, context),
                     EventType.MirageCombatResultCommitted => ConvertMirageCombatResultCommittedEvent(gameEvent, context),
+                    EventType.MirageTournamentRoundSettled => ConvertMirageStateSyncEvent(gameEvent, context),
                     EventType.TurnEnd => ConvertTurnEndEvent(gameEvent, context),
                     EventType.AbilityTriggered => ConvertAbilityTriggeredEvent(gameEvent),
                     EventType.BuffApplied => ConvertBuffAppliedEvent(gameEvent, context),
@@ -215,12 +216,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         private GameEventDto? ConvertPlayCardEvent(IGameEvent gameEvent, GameContext context)
         {
-            if (gameEvent is not PlayCardEvent e || e.Source?.Player == null || e.Target.FirstOrDefault()?.Card == null) return null;
-            var cardDto = CardInstanceProjection.Create(e.Target.FirstOrDefault().Card, context);
-
-            // The CardPlayedEventDto constructor only accepts the player and the card.
-            // The target information is not part of this DTO.
-            return new CardPlayedEventDto(e.Source.Player.PlayerId, cardDto);
+            if (gameEvent is not PlayCardEvent e || e.PlayingPlayer is not { } player || e.PlayedCard is not { } card) return null;
+            var cardDto = CardInstanceProjection.Create(card, context);
+            return new CardPlayedEventDto(player.PlayerId, cardDto, e.PaidCost, e.PlayMode);
         }
 
         private GameEventDto? ConvertSummonEvent(IGameEvent gameEvent, GameContext context)

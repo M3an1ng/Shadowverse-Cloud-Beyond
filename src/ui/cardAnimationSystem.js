@@ -4,6 +4,253 @@ const PHASE_PRIORITY = Object.freeze({
     enter: 30
 });
 
+const LIVE_TRANSIENT_ROOT_CLASSES = Object.freeze([
+    'card-fade-enter',
+    'hand-card-fade-enter-down',
+    'card-enter-hidden',
+    'hand-card-enter-hidden',
+    'attack-drag-hover',
+    'attack-drag-invalid',
+    'hand-drag-origin',
+    'hand-play-committed-source'
+]);
+
+const CARD_ACTION_CHILD_SELECTOR = '.super-evolve-button, .evolve-button, .use-button, .fusion-button, .act-button, .mirage-field-controls';
+const SYNCED_CARD_CSS_VARS = Object.freeze([
+    '--fan-offset',
+    '--fan-abs',
+    '--hand-count',
+    '--play-mode-label'
+]);
+
+function syncElementAttributes(liveEl, nextEl) {
+    const prevAttrs = Array.from(liveEl.attributes || []);
+    prevAttrs.forEach(attr => {
+        const name = attr.name;
+        if (name === 'class' || name === 'style' || name === 'data-render-key') return;
+        if (!nextEl.hasAttribute(name)) {
+            liveEl.removeAttribute(name);
+        }
+    });
+
+    const nextAttrs = Array.from(nextEl.attributes || []);
+    nextAttrs.forEach(attr => {
+        const name = attr.name;
+        if (name === 'class' || name === 'style' || name === 'data-render-key') return;
+        if (liveEl.getAttribute(name) !== attr.value) {
+            liveEl.setAttribute(name, attr.value);
+        }
+    });
+}
+
+function syncCardInlineVariables(liveEl, nextEl) {
+    SYNCED_CARD_CSS_VARS.forEach(varName => {
+        const nextVal = nextEl.style.getPropertyValue(varName);
+        const prevVal = liveEl.style.getPropertyValue(varName);
+        if (nextVal !== prevVal) {
+            if (nextVal) {
+                liveEl.style.setProperty(varName, nextVal);
+            } else {
+                liveEl.style.removeProperty(varName);
+            }
+        }
+    });
+}
+
+function syncSingletonDecoration(liveEl, nextEl, selector, anchorAfterEl) {
+    const liveNode = liveEl.querySelector(`:scope > ${selector}`);
+    const nextNode = nextEl.querySelector(`:scope > ${selector}`);
+    if (liveNode && nextNode) {
+        if (liveNode.outerHTML !== nextNode.outerHTML) {
+            liveNode.replaceWith(nextNode);
+            return nextNode;
+        }
+        return liveNode;
+    }
+    if (liveNode && !nextNode) {
+        liveNode.remove();
+        return null;
+    }
+    if (!liveNode && nextNode) {
+        if (anchorAfterEl && anchorAfterEl.parentElement === liveEl) {
+            anchorAfterEl.insertAdjacentElement('afterend', nextNode);
+        } else {
+            liveEl.prepend(nextNode);
+        }
+        return nextNode;
+    }
+    return null;
+}
+
+function syncCardStatsBlock(liveEl, nextEl, anchorAfterEl) {
+    const liveStats = liveEl.querySelector(':scope > .stats');
+    const nextStats = nextEl.querySelector(':scope > .stats');
+    if (liveStats && nextStats) {
+        const liveSpans = Array.from(liveStats.children);
+        const nextSpans = Array.from(nextStats.children);
+        const sameShape = liveSpans.length === nextSpans.length
+            && liveSpans.every((span, idx) => span.tagName === nextSpans[idx].tagName && span.classList[0] === nextSpans[idx].classList[0]);
+        if (sameShape) {
+            if (liveStats.className !== nextStats.className) {
+                liveStats.className = nextStats.className;
+            }
+            liveSpans.forEach((liveSpan, idx) => {
+                const nextSpan = nextSpans[idx];
+                if (liveSpan.className !== nextSpan.className) {
+                    liveSpan.className = nextSpan.className;
+                }
+                const nextTitle = nextSpan.getAttribute('title');
+                if (nextTitle !== liveSpan.getAttribute('title')) {
+                    if (nextTitle === null) {
+                        liveSpan.removeAttribute('title');
+                    } else {
+                        liveSpan.setAttribute('title', nextTitle);
+                    }
+                }
+                if (liveSpan.textContent !== nextSpan.textContent) {
+                    liveSpan.textContent = nextSpan.textContent;
+                }
+            });
+            return liveStats;
+        }
+        liveStats.replaceWith(nextStats);
+        return nextStats;
+    }
+    if (liveStats && !nextStats) {
+        liveStats.remove();
+        return null;
+    }
+    if (!liveStats && nextStats) {
+        if (anchorAfterEl && anchorAfterEl.parentElement === liveEl) {
+            anchorAfterEl.insertAdjacentElement('afterend', nextStats);
+        } else {
+            liveEl.appendChild(nextStats);
+        }
+        return nextStats;
+    }
+    return null;
+}
+
+function syncCardActionChildren(liveEl, nextEl) {
+    const liveActions = Array.from(liveEl.querySelectorAll(`:scope > ${CARD_ACTION_CHILD_SELECTOR}`));
+    const nextActions = Array.from(nextEl.querySelectorAll(`:scope > ${CARD_ACTION_CHILD_SELECTOR}`));
+    const unchanged = liveActions.length === nextActions.length
+        && liveActions.every((node, idx) => node.outerHTML === nextActions[idx].outerHTML);
+    if (unchanged) {
+        return;
+    }
+    liveActions.forEach(node => node.remove());
+    nextActions.forEach(node => liveEl.appendChild(node));
+}
+
+function canReconcileCardInPlace(liveEl, nextEl) {
+    if (!liveEl || !nextEl) return false;
+    if (liveEl.tagName !== nextEl.tagName) return false;
+    const liveIsCard = liveEl.classList?.contains('card') === true;
+    const nextIsCard = nextEl.classList?.contains('card') === true;
+    if (liveIsCard && nextIsCard) return true;
+    const liveIsBack = liveEl.classList?.contains('card-back') === true;
+    const nextIsBack = nextEl.classList?.contains('card-back') === true;
+    return liveIsBack && nextIsBack;
+}
+
+export function reconcileCardElementInPlace(liveEl, nextEl, preserveStateClasses = () => { }) {
+    preserveStateClasses(liveEl, nextEl);
+    LIVE_TRANSIENT_ROOT_CLASSES.forEach(cls => {
+        if (liveEl.classList.contains(cls)) {
+            nextEl.classList.add(cls);
+        }
+    });
+
+    if (liveEl.className !== nextEl.className) {
+        liveEl.className = nextEl.className;
+    }
+    syncElementAttributes(liveEl, nextEl);
+    syncCardInlineVariables(liveEl, nextEl);
+
+    if (liveEl.classList.contains('card-back')) {
+        return liveEl;
+    }
+
+    let cursorAnchor = liveEl.querySelector(':scope > .card-art');
+    const nextArt = nextEl.querySelector(':scope > .card-art');
+    if (cursorAnchor && nextArt) {
+        const prevArtUrl = cursorAnchor.dataset.artUrl || '';
+        const nextArtUrl = nextArt.dataset.artUrl || '';
+        if (prevArtUrl !== nextArtUrl) {
+            cursorAnchor.replaceWith(nextArt);
+            cursorAnchor = nextArt;
+        } else if (!cursorAnchor.style.backgroundImage && nextArt.style.backgroundImage) {
+            cursorAnchor.style.backgroundImage = nextArt.style.backgroundImage;
+            cursorAnchor.classList.toggle('has-art', nextArt.classList.contains('has-art'));
+        }
+    } else if (!cursorAnchor && nextArt) {
+        liveEl.prepend(nextArt);
+        cursorAnchor = nextArt;
+    }
+
+    const gemAnchor = syncSingletonDecoration(liveEl, nextEl, '.bui-amulet-gem-dot', cursorAnchor);
+    if (gemAnchor) cursorAnchor = gemAnchor;
+    const spellAnchor = syncSingletonDecoration(liveEl, nextEl, '.bui-spell-crest', cursorAnchor);
+    if (spellAnchor) cursorAnchor = spellAnchor;
+    const sevoAnchor = syncSingletonDecoration(liveEl, nextEl, '.bui-sevo-ring', cursorAnchor);
+    if (sevoAnchor) cursorAnchor = sevoAnchor;
+    const targetRingAnchor = syncSingletonDecoration(liveEl, nextEl, '.target-hover-ring', cursorAnchor);
+    if (targetRingAnchor) cursorAnchor = targetRingAnchor;
+
+    const liveCost = liveEl.querySelector(':scope > .cost');
+    const nextCost = nextEl.querySelector(':scope > .cost');
+    if (liveCost && nextCost) {
+        if (liveCost.className !== nextCost.className) {
+            liveCost.className = nextCost.className;
+        }
+        const liveCostSpan = liveCost.querySelector('span');
+        const nextCostSpan = nextCost.querySelector('span');
+        if (liveCostSpan && nextCostSpan && liveCostSpan.textContent !== nextCostSpan.textContent) {
+            liveCostSpan.textContent = nextCostSpan.textContent;
+        }
+        cursorAnchor = liveCost;
+    } else if (!liveCost && nextCost) {
+        if (cursorAnchor && cursorAnchor.parentElement === liveEl) {
+            cursorAnchor.insertAdjacentElement('afterend', nextCost);
+        } else {
+            liveEl.appendChild(nextCost);
+        }
+        cursorAnchor = nextCost;
+    } else if (liveCost && !nextCost) {
+        liveCost.remove();
+    }
+
+    const liveName = liveEl.querySelector(':scope > .name');
+    const nextName = nextEl.querySelector(':scope > .name');
+    if (liveName && nextName) {
+        if (liveName.className !== nextName.className) {
+            liveName.className = nextName.className;
+        }
+        if (liveName.textContent !== nextName.textContent) {
+            liveName.textContent = nextName.textContent;
+        }
+        cursorAnchor = liveName;
+    } else if (!liveName && nextName) {
+        if (cursorAnchor && cursorAnchor.parentElement === liveEl) {
+            cursorAnchor.insertAdjacentElement('afterend', nextName);
+        } else {
+            liveEl.appendChild(nextName);
+        }
+        cursorAnchor = nextName;
+    } else if (liveName && !nextName) {
+        liveName.remove();
+    }
+
+    const statsAnchor = syncCardStatsBlock(liveEl, nextEl, cursorAnchor);
+    if (statsAnchor) cursorAnchor = statsAnchor;
+
+    syncSingletonDecoration(liveEl, nextEl, '.keyword-badges', cursorAnchor);
+    syncCardActionChildren(liveEl, nextEl);
+
+    return liveEl;
+}
+
 function isValidRect(rect) {
     return Boolean(rect)
         && Number.isFinite(rect.left)
@@ -367,14 +614,17 @@ export function createCardAnimationSystem(config = {}) {
             const key = String(entry.key ?? `next-${index}`);
             clearTransientClasses(entry.element);
             const oldElement = oldByKey.get(key);
-            if (oldElement) {
+            let resolvedElement = entry.element;
+            if (oldElement && canReconcileCardInPlace(oldElement, entry.element)) {
+                resolvedElement = reconcileCardElementInPlace(oldElement, entry.element, preserveStateClasses);
+            } else if (oldElement) {
                 preserveStateClasses(oldElement, entry.element);
             } else {
                 pendingEnterKeys.add(key);
             }
-            entry.element.dataset.renderKey = key;
-            onElementMounted(key, entry.element);
-            nextItems.push({ key, element: entry.element });
+            resolvedElement.dataset.renderKey = key;
+            onElementMounted(key, resolvedElement);
+            nextItems.push({ key, element: resolvedElement });
             nextKeySet.add(key);
         });
 
@@ -409,7 +659,29 @@ export function createCardAnimationSystem(config = {}) {
         const hasStructuralChange = removedCount > 0 || addedCount > 0;
         const shouldAnimateMove = !(suppressMoveOnStructuralChange && hasStructuralChange);
 
-        container.replaceChildren(...nextItems.map(item => item.element));
+        const nextElementSet = new Set(nextItems.map(item => item.element));
+        oldElements.forEach(oldElement => {
+            if (!nextElementSet.has(oldElement) && oldElement.parentElement === container) {
+                oldElement.remove();
+            }
+        });
+
+        let cursor = container.firstElementChild;
+        nextItems.forEach(({ element }) => {
+            while (
+                cursor
+                && cursor !== element
+                && !cursor.classList?.contains('card')
+                && !cursor.classList?.contains('card-back')
+            ) {
+                cursor = cursor.nextElementSibling;
+            }
+            if (cursor === element) {
+                cursor = cursor.nextElementSibling;
+            } else {
+                container.insertBefore(element, cursor);
+            }
+        });
         renderedContainers.add(container);
 
         nextItems.forEach(item => {

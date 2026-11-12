@@ -231,6 +231,7 @@ async function apiDelete(url) {
 let container = null;
 let deckValidationRulesListenerBound = false;
 let cardCatalogInvalidationListenerBound = false;
+let libraryResizeListenerBound = false;
 
 // --- Initialization ---
 
@@ -253,6 +254,20 @@ export async function initializeDeckBuilder(routeCapabilities) {
             void handleCardCatalogInvalidated(event?.detail || {});
         });
         cardCatalogInvalidationListenerBound = true;
+    }
+
+    if (!libraryResizeListenerBound && typeof window !== 'undefined') {
+        let resizeTimer = 0;
+        window.addEventListener('resize', () => {
+            window.clearTimeout(resizeTimer);
+            resizeTimer = window.setTimeout(() => {
+                const grid = document.getElementById('library-grid');
+                if (state.currentDeck && grid && grid.offsetParent !== null) {
+                    renderLibrary();
+                }
+            }, 120);
+        }, { passive: true });
+        libraryResizeListenerBound = true;
     }
 
     try {

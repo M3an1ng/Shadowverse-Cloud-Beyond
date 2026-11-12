@@ -108,6 +108,7 @@ namespace ShadowverseBeyond.Server.Mappings
                 ShopOffers = source.Mirage.ShopOffers.Select(offer =>
                 {
                     var def = ShadowverseBeyond.Server.Services.GameDataProvider.Instance?.GetCardDefinition(offer.CardDefinitionId);
+                    var remaining = game?.Mirage?.GetSharedPoolRemaining(offer.CardDefinitionId) ?? 0;
                     return new MirageShopOfferDto
                     {
                         OfferId = offer.OfferId,
@@ -117,8 +118,9 @@ namespace ShadowverseBeyond.Server.Mappings
                         ArtPreview = def?.ArtPreview,
                         Attack = def?.Attack ?? 0,
                         Health = def?.Health ?? 0,
-                        TavernTier = offer.TavernTier,
+                        TavernTier = def != null ? Math.Max(1, def.Cost) : offer.TavernTier,
                         BuyCost = offer.BuyCost,
+                        RemainingPoolCopies = remaining,
                         TripleGroupId = offer.CardDefinitionId.ToString()
                     };
                 }).ToList(),
@@ -130,6 +132,7 @@ namespace ShadowverseBeyond.Server.Mappings
                     Candidates = t.CandidateCardDefinitionIds.Select(cardDefId =>
                     {
                         var def = ShadowverseBeyond.Server.Services.GameDataProvider.Instance?.GetCardDefinition(cardDefId);
+                        var remaining = game?.Mirage?.GetSharedPoolRemaining(cardDefId) ?? 0;
                         return new MirageShopOfferDto
                         {
                             OfferId = t.TicketId,
@@ -139,8 +142,9 @@ namespace ShadowverseBeyond.Server.Mappings
                             ArtPreview = def?.ArtPreview,
                             Attack = def?.Attack ?? 0,
                             Health = def?.Health ?? 0,
-                            TavernTier = t.TargetTier,
+                            TavernTier = def != null ? Math.Max(1, def.Cost) : t.TargetTier,
                             BuyCost = 0,
+                            RemainingPoolCopies = remaining,
                             TripleGroupId = cardDefId.ToString()
                         };
                     }).ToList()

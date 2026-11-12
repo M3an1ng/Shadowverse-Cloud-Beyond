@@ -57,6 +57,7 @@ namespace ShadowverseBeyond.Server.Services
 {
     public partial class GameService : IGameService
     {
+        private static readonly TimeSpan RoomLeaveCompletionTimeout = TimeSpan.FromSeconds(15);
         private sealed record PlayerIdentitySnapshot(string DisplayName, string AvatarUrl);
         private sealed record ResolvedDeckSelection(
             List<int> ExpandedCardIds,
@@ -150,6 +151,63 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             return Task.FromResult(true);
+        }
+
+        public async Task EndGameForRoomLeaveAsync(string gameId, Guid playerId, CancellationToken cancellationToken)
+        {
+            if (!_gameStates.TryGetValue(gameId, out var current) || _retiringGameIds.ContainsKey(gameId))
+            {
+                if (current == null || current.IsGameOver) _pendingActionService.ClearGameChoiceCancellation(gameId);
+                return;
+            }
+            if (!current.IsGameOver) _pendingActionService.CancelChoicesForGame(gameId);
+
+            PlayerActionWrapper? action = null;
+            Task<bool>? admission = null;
+            lock (_gameLoopLock)
+            {
+                if (!_gameStates.TryGetValue(gameId, out current) || _retiringGameIds.ContainsKey(gameId))
+                {
+                    if (current == null || current.IsGameOver) _pendingActionService.ClearGameChoiceCancellation(gameId);
+                    return;
+                }
+                if (!current.IsGameOver)
+                {
+                    action = new PlayerActionWrapper("Disconnect", playerId, null) { Origin = "room_leave" };
+                }
+                else if (_gameProcessingLoops.TryGetValue(gameId, out var loop) && !loop.IsCompleted)
+                {
+                    // Queue a read atomically with the live-loop check; never restart an idle finished game.
+                    action = new MatchStateRead((state, _) => Task.FromResult(JsonSerializer.SerializeToElement(state.IsGameOver)));
+                }
+                if (action != null) admission = EnqueuePlayerActionAsync(gameId, action);
+            }
+
+            PlayerActionCompletion? completion = null;
+            if (admission != null)
+            {
+                if (!await admission)
+                {
+                    if (_retiringGameIds.ContainsKey(gameId) || !_gameStates.ContainsKey(gameId)) return;
+                    throw new GameLogicException("The room exit action could not be queued.");
+                }
+                completion = await action!.Completion.WaitAsync(RoomLeaveCompletionTimeout, cancellationToken);
+            }
+            if (!_gameStates.TryGetValue(gameId, out var state))
+            {
+                _pendingActionService.ClearGameChoiceCancellation(gameId);
+                return;
+            }
+            if (state.IsGameOver) _pendingActionService.ClearGameChoiceCancellation(gameId);
+            if (_retiringGameIds.ContainsKey(gameId)) return;
+            if (completion?.Status is PlayerActionCompletionStatus.Failed or PlayerActionCompletionStatus.Rejected)
+                throw new GameLogicException(completion.Reason ?? "The room exit action failed.");
+            if (!state.IsGameOver)
+                throw new GameLogicException(completion?.Reason ?? "The room exit action did not finish the game.");
+
+            var completed = _matchService.CompleteGame(gameId, state.WinnerId);
+            if (!completed.Success && completed.Error is not (MatchOperationError.NotFound or MatchOperationError.AlreadyClosed))
+                throw new GameLogicException(completed.Message);
         }
 
         public void TriggerMirageAiRecruitIfNeeded(string gameId, int expectedRoundNumber,
@@ -283,6 +341,14 @@ namespace ShadowverseBeyond.Server.Services
                                 continue;
                             }
 
+                            // A room exit queued behind final settlement is a barrier, not a rejected gameplay action.
+                            if (actionWrapper.ActionType == "Disconnect" && actionWrapper.Origin == "room_leave"
+                                && _gameStates.TryGetValue(gameId, out var endedGame) && endedGame.IsGameOver)
+                            {
+                                actionWrapper.MarkCompleted();
+                                continue;
+                            }
+
                             await using var scope = _serviceScopeFactory.CreateAsyncScope();
                             var sp = scope.ServiceProvider;
                             var gameContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
@@ -327,7 +393,10 @@ namespace ShadowverseBeyond.Server.Services
                                             .OfType<MirageSetReadyRequestedEvent>()
                                             .FirstOrDefault(e => e.TriggeredRoundAdvance && e.ActivatedCombatId.HasValue);
 
-                                        if (readyAdvanceEvent != null && gameState.Mode == GameMode.Mirage && !gameState.IsGameOver)
+                                        if (readyAdvanceEvent != null
+                                            && gameState.Mode == GameMode.Mirage
+                                            && !gameState.IsMirageTournamentSeat
+                                            && !gameState.IsGameOver)
                                         {
                                             StopTurnTimer(gameId);
                                             var combatId = readyAdvanceEvent.ActivatedCombatId!.Value;
@@ -367,8 +436,13 @@ namespace ShadowverseBeyond.Server.Services
                                         }
                                     }
 
+                                    MirageSetReadyRequestedEvent? tournamentLockedEvent = null;
                                     if (transactionResult.IsSuccess)
                                     {
+                                        tournamentLockedEvent = transactionResult.ProcessedEvents
+                                            .OfType<MirageSetReadyRequestedEvent>()
+                                            .LastOrDefault(e => e.SeatLockedInTournament);
+
                                         // 【功能补全】检查事务处理结果，如果包含回合开始事件，则触发AI
                                         var turnStartEvent = transactionResult.ProcessedEvents.OfType<TurnStartEvent>().FirstOrDefault();
                                         if (turnStartEvent?.Source?.Player != null)
@@ -416,7 +490,10 @@ namespace ShadowverseBeyond.Server.Services
                                             ?? transactionResult.ProcessedEvents
                                                 .OfType<MirageRoundStartedEvent>()
                                                 .LastOrDefault()?.RoundNumber;
-                                        if (mirageAdvancedRound.HasValue && gameState.Mode == GameMode.Mirage && !gameState.IsGameOver)
+                                        if (mirageAdvancedRound.HasValue
+                                            && gameState.Mode == GameMode.Mirage
+                                            && !gameState.IsMirageTournamentSeat
+                                            && !gameState.IsGameOver)
                                         {
                                             var endsAt = gameState.TurnEndsAtUtc ?? DateTime.UtcNow.AddSeconds(
                                                 gameState.TurnTimeoutSeconds > 0
@@ -440,19 +517,38 @@ namespace ShadowverseBeyond.Server.Services
                                         await NotifyActionRejectedAsync(gameId, actionWrapper.PlayerId, warningMessage, "ACTION_BLOCKED");
                                     }
 
+                                    if (gameState.IsGameOver && !gameState.IsMirageTournamentSeat)
+                                    {
+                                        _matchService.CompleteGame(gameId, gameState.WinnerId);
+                                    }
+
                                     // 先发布本次状态，再允许 AI 读取下一次决策所需的可用性。
                                     await UpdateAndBroadcastHandPlayabilityAsync(gameId, actionWrapper.PlayerId, cancellationToken);
                                     await UpdateAndBroadcastActPlayabilityAsync(gameId, actionWrapper.PlayerId, cancellationToken);
-                                    var opponentId = gameState.GetOpponentPlayerState(actionWrapper.PlayerId)?.PlayerId;
-                                    if (opponentId.HasValue)
+                                    var opponentPlayer = gameState.GetOpponentPlayerState(actionWrapper.PlayerId);
+                                    if (opponentPlayer != null && !opponentPlayer.IsMirageOpponentProxy)
                                     {
-                                        await UpdateAndBroadcastHandPlayabilityAsync(gameId, opponentId.Value, cancellationToken);
-                                        await UpdateAndBroadcastActPlayabilityAsync(gameId, opponentId.Value, cancellationToken);
+                                        await UpdateAndBroadcastHandPlayabilityAsync(gameId, opponentPlayer.PlayerId, cancellationToken);
+                                        await UpdateAndBroadcastActPlayabilityAsync(gameId, opponentPlayer.PlayerId, cancellationToken);
                                     }
 
                                     if (transactionResult.IsSuccess && !transactionResult.IsCancelled)
                                     {
                                         actionWrapper.MarkCompleted();
+                                        if (tournamentLockedEvent != null && gameState.Mirage?.TournamentRoomId is { } tRoomId)
+                                        {
+                                            var lockedPlayerId = tournamentLockedEvent.PlayerId;
+                                            var lockedRound = tournamentLockedEvent.LockedRoundNumber;
+                                            using (ExecutionContext.SuppressFlow())
+                                            {
+                                                _ = Task.Run(() =>
+                                                {
+                                                    using var notifyScope = _serviceScopeFactory.CreateScope();
+                                                    notifyScope.ServiceProvider.GetService<IMirageLobbyService>()
+                                                        ?.NotifySeatLocked(tRoomId, lockedPlayerId, lockedRound);
+                                                });
+                                            }
+                                        }
                                     }
 
                                 }
@@ -460,6 +556,10 @@ namespace ShadowverseBeyond.Server.Services
                                 {
                                     actionWrapper.MarkCancelled("The game was released before action processing.");
                                 }
+                            }
+                            else if (actionWrapper.Origin == "mirage_tournament_delegated")
+                            {
+                                actionWrapper.MarkCompleted();
                             }
                             else
                             {
@@ -487,14 +587,18 @@ namespace ShadowverseBeyond.Server.Services
                         finally
                         {
                             _gameStates.TryGetValue(gameId, out var observedState);
-                            if (observedState?.IsGameOver == true) StopTurnTimer(gameId, true);
+                            if (observedState?.IsGameOver == true)
+                            {
+                                StopTurnTimer(gameId, true);
+                                GameHub.ReleaseDisconnectTrackingForGame(gameId);
+                                if (!observedState.IsMirageTournamentSeat)
+                                {
+                                    _matchService.CompleteGame(gameId, observedState.WinnerId);
+                                }
+                            }
                             if (observedState != null && _replayRecorder != null)
                                 await _replayRecorder.FinishAsync(observedState, replayAction);
                             await MatchCommandObservation.FinishAsync(observedAction, observedState, _serviceScopeFactory, _mapper, _hubContext);
-                            if (observedState?.IsGameOver == true)
-                            {
-                                _matchService.CompleteGame(gameId, observedState.WinnerId);
-                            }
                             // --- BUG-FIX: Clear the currently processing player ID here ---
                             // This ensures that even if the transaction fails or is paused, we are ready for the next action.
                             _currentlyProcessingPlayerActionId.TryUpdate(gameId, null, actionWrapper.PlayerId.ToString());
@@ -599,6 +703,7 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             StopTurnTimer(gameId);
+            GameHub.ReleaseDisconnectTrackingForGame(gameId);
             _statsRuntimeTracker.Clear(gameId);
             try
             {
@@ -611,6 +716,7 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogDebug(ex, "[GameService:{GameId}] Failed to clear event history during detached game release.", gameId);
             }
             _gameStates.TryRemove(gameId, out _);
+            _pendingActionService.ClearGameChoiceCancellation(gameId);
             _replayRecorder?.Release(gameId);
             MatchCommandObservation.Release(gameId);
             _playerActionQueues.TryRemove(gameId, out _);
@@ -727,9 +833,16 @@ namespace ShadowverseBeyond.Server.Services
                             throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Recruit timeout only valid during Recruit phase (Current: {gameState.Phase}).");
                         }
                     }
-                    else if (actionWrapper.ActionType == "MirageCommitCombatResult")
+                    else if (actionWrapper.ActionType is "MirageCommitCombatResult"
+                             or "MirageTournamentFreeze"
+                             or "MirageTournamentSettle"
+                             or "MirageTournamentForfeitTerminate")
                     {
-                        // Phase A of MirageCombatResultCommittedEvent validates idempotency, ActiveCombatId, Phase, and RoundNumber.
+                        if (actionWrapper.ActionType == "MirageCommitCombatResult" && gameState.IsMirageTournamentSeat)
+                        {
+                            throw new GameLogicException("[InitialStep:MirageCommitCombatResult] Forbidden on 8-player Mirage tournament seats.");
+                        }
+                        // Validated inside the dedicated tournament / commit event handlers.
                     }
                     else
                     {
@@ -739,7 +852,8 @@ namespace ShadowverseBeyond.Server.Services
                         }
 
                         if (gameState.Mirage != null
-                            && (gameState.Mirage.ReadyPlayerIds.Contains(actionWrapper.PlayerId)
+                            && (gameState.Mirage.IsNextRoundGateClosed
+                                || gameState.Mirage.ReadyPlayerIds.Contains(actionWrapper.PlayerId)
                                 || gameState.Mirage.ClosingRecruitRoundNumber == gameState.Mirage.RoundNumber))
                         {
                             throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Player {actionWrapper.PlayerId} has already locked lineup or recruit time has expired for this round.");
@@ -896,6 +1010,25 @@ namespace ShadowverseBeyond.Server.Services
 
                 case "Surrender":
                     {
+                        if (gameState.IsMirageTournamentSeat && gameState.Mirage?.TournamentRoomId is { } surrenderRoomId)
+                        {
+                            actionWrapper.Origin = "mirage_tournament_delegated";
+                            var surrenderPlayerId = actionWrapper.PlayerId;
+                            using (ExecutionContext.SuppressFlow())
+                            {
+                                _ = Task.Run(async () =>
+                                {
+                                    await using var fScope = _serviceScopeFactory.CreateAsyncScope();
+                                    var lobby = fScope.ServiceProvider.GetService<IMirageLobbyService>();
+                                    if (lobby != null)
+                                    {
+                                        await lobby.ForfeitSeatAsync(surrenderRoomId, surrenderPlayerId, "主动投降");
+                                    }
+                                });
+                            }
+                            break;
+                        }
+
                         var opponent = gameState.GetOpponentPlayerState(actionWrapper.PlayerId);
                         if (opponent == null || opponent.PlayerId == Guid.Empty)
                         {
@@ -908,6 +1041,42 @@ namespace ShadowverseBeyond.Server.Services
 
                 case "Disconnect":
                     {
+                        var disconnectPayload = actionWrapper.ActionData as GameHub.DisconnectTimeoutActionPayload;
+                        if (disconnectPayload != null
+                            && Guid.TryParse(gameId, out var parsedDisconnectGameGuid)
+                            && !GameHub.IsCurrentDisconnectEpoch(parsedDisconnectGameGuid, actionWrapper.PlayerId, disconnectPayload.ExpectedEpoch))
+                        {
+                            _logger.LogInformation("[InitialStep:Disconnect] Ignoring stale disconnect action for reconnected Player {PlayerId} in Game {GameId}.",
+                                actionWrapper.PlayerId, gameId);
+                            actionWrapper.Origin = "mirage_tournament_delegated";
+                            break;
+                        }
+
+                        if (gameState.IsMirageTournamentSeat && gameState.Mirage?.TournamentRoomId is { } disconnectRoomId)
+                        {
+                            actionWrapper.Origin = "mirage_tournament_delegated";
+                            var disconnectPlayerId = actionWrapper.PlayerId;
+                            var expectedEpoch = disconnectPayload?.ExpectedEpoch;
+                            using (ExecutionContext.SuppressFlow())
+                            {
+                                _ = Task.Run(async () =>
+                                {
+                                    await using var fScope = _serviceScopeFactory.CreateAsyncScope();
+                                    var lobby = fScope.ServiceProvider.GetService<IMirageLobbyService>();
+                                    if (lobby != null)
+                                    {
+                                        await lobby.ForfeitSeatAsync(
+                                            disconnectRoomId,
+                                            disconnectPlayerId,
+                                            "网络连接超时断开",
+                                            default,
+                                            expectedEpoch);
+                                    }
+                                });
+                            }
+                            break;
+                        }
+
                         var opponent = gameState.GetOpponentPlayerState(actionWrapper.PlayerId);
                         if (opponent == null || opponent.PlayerId == Guid.Empty)
                         {
@@ -1059,6 +1228,10 @@ namespace ShadowverseBeyond.Server.Services
                     }
 
                 case "MirageCommitCombatResult":
+                    if (gameState.IsMirageTournamentSeat)
+                    {
+                        throw new GameLogicException("[InitialStep:MirageCommitCombatResult] Forbidden on 8-player Mirage tournament seats.");
+                    }
                     if (actionWrapper.ActionData is MirageCommitCombatActionDto commitDto)
                     {
                         initialEvents.Add(new MirageCombatResultCommittedEvent(
@@ -1068,6 +1241,14 @@ namespace ShadowverseBeyond.Server.Services
                             commitDto.StepCount));
                     }
                     else throw new ArgumentException($"Invalid ActionData for {actionWrapper.ActionType}. Expected MirageCommitCombatActionDto.");
+                    break;
+
+                case "MirageTournamentSettle":
+                    if (actionWrapper.ActionData is MirageTournamentRoundSettledEvent settleEvt)
+                    {
+                        initialEvents.Add(settleEvt);
+                    }
+                    else throw new ArgumentException($"Invalid ActionData for {actionWrapper.ActionType}. Expected MirageTournamentRoundSettledEvent.");
                     break;
 
                 case "DebugCommand":
@@ -1729,8 +1910,9 @@ namespace ShadowverseBeyond.Server.Services
                         return null;
                     }
 
-                    shopService.RefreshShopForNewRound(player1State, mirageState.Rules);
-                    shopService.RefreshShopForNewRound(player2State, mirageState.Rules);
+                    shopService.InitializeSharedCardPool(mirageState);
+                    shopService.RefreshShopForNewRound(player1State, mirageState);
+                    shopService.RefreshShopForNewRound(player2State, mirageState);
 
                     var recruitTimeout = devConfig?.TurnTimeoutSeconds is > 0
                         ? devConfig.TurnTimeoutSeconds.Value
@@ -1905,7 +2087,8 @@ namespace ShadowverseBeyond.Server.Services
                     }
 
                     if (gameContext.CurrentGameState.Mirage != null
-                        && (gameContext.CurrentGameState.Mirage.ReadyPlayerIds.Contains(playerId)
+                        && (gameContext.CurrentGameState.Mirage.IsNextRoundGateClosed
+                            || gameContext.CurrentGameState.Mirage.ReadyPlayerIds.Contains(playerId)
                             || gameContext.CurrentGameState.Mirage.ClosingRecruitRoundNumber == gameContext.CurrentGameState.Mirage.RoundNumber))
                     {
                         result.IsPlayable = false;
@@ -2389,7 +2572,13 @@ namespace ShadowverseBeyond.Server.Services
                 return result;
             }
 
-            if (gameContext.CurrentGameState.Mode == GameMode.Mirage && !gameContext.CurrentGameState.IsCombatSandbox)
+            if (gameContext.CurrentGameState.IsCombatSandbox)
+            {
+                result.FailureReason = "Act cannot be used during auto-combat.";
+                return result;
+            }
+
+            if (gameContext.CurrentGameState.Mode == GameMode.Mirage)
             {
                 if (gameContext.CurrentGameState.Phase != GamePhase.Recruit)
                 {
@@ -2398,6 +2587,7 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 if (gameContext.CurrentGameState.Mirage == null
+                    || gameContext.CurrentGameState.Mirage.IsNextRoundGateClosed
                     || gameContext.CurrentGameState.Mirage.ReadyPlayerIds.Contains(playerState.PlayerId)
                     || gameContext.CurrentGameState.Mirage.ClosingRecruitRoundNumber == gameContext.CurrentGameState.Mirage.RoundNumber)
                 {
@@ -2405,9 +2595,11 @@ namespace ShadowverseBeyond.Server.Services
                     return result;
                 }
 
-                if (!cardOnField.IsLeader || playerState.Leader?.InstanceId != cardOnField.InstanceId)
+                var isActiveLeader = cardOnField.IsLeader && playerState.Leader?.InstanceId == cardOnField.InstanceId;
+                var isFieldUnit = !cardOnField.IsLeader && playerState.Field.Any(c => c.InstanceId == cardOnField.InstanceId);
+                if (!isActiveLeader && !isFieldUnit)
                 {
-                    result.FailureReason = "Only the active Mirage Leader can use Act during Recruit phase.";
+                    result.FailureReason = "Only your active Mirage Leader or field cards can use Act during Recruit phase.";
                     return result;
                 }
             }
@@ -3437,4 +3629,3 @@ namespace ShadowverseBeyond.Server.Services
 
     } // Closing brace for GameService class
 } // Closing brace for ShadowverseBeyond.Server.Services namespace
-

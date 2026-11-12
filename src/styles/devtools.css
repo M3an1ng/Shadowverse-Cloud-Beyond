@@ -1021,6 +1021,9 @@
     flex-direction: column;
     gap: var(--space-4);
     padding: 0 var(--space-4) var(--space-4);
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .match-lab-grid {
@@ -1179,4 +1182,130 @@
     .frontend-console :is(button, select, input[type="search"]) { min-height: 44px; }
     .frontend-console__entry { grid-template-columns: 70px 32px minmax(0, 1fr); gap: 6px; padding: 9px 12px; }
     .frontend-console__footer span:last-child { display: none; }
+}
+
+/* Mobile Landscape Adaptation for System Settings, Dashboards, Match Lab & Console */
+@media (max-height: 540px) and (orientation: landscape) {
+    .dev-tools-grid {
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 10px;
+        padding-bottom: 12px;
+    }
+
+    .tool-card {
+        padding: 10px 12px;
+        gap: 6px;
+    }
+
+    .tool-card h3 {
+        font-size: 0.95rem;
+    }
+
+    .tool-card p {
+        font-size: 0.76rem;
+        line-height: 1.35;
+    }
+
+    .log-viewer-modal {
+        padding:
+            calc(6px + var(--safe-top, 0px))
+            calc(10px + var(--safe-right, 0px))
+            calc(6px + var(--safe-bottom, 0px))
+            calc(10px + var(--safe-left, 0px));
+    }
+
+    .log-viewer-panel,
+    .devtools-winrate-panel,
+    .devtools-copy-limit-card-picker-modal {
+        width: calc(100vw - 20px - var(--safe-left, 0px) - var(--safe-right, 0px));
+        height: calc(var(--app-height, 100dvh) - 12px - var(--safe-top, 0px) - var(--safe-bottom, 0px));
+        max-height: none;
+        padding: 8px 12px;
+        gap: 6px;
+    }
+
+    .log-viewer-panel-header {
+        padding-bottom: 2px;
+    }
+
+    .log-viewer-panel-title {
+        font-size: 0.95rem;
+    }
+
+    .devtools-winrate-controls,
+    .devtools-copy-limit-controls {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        gap: 8px;
+        padding-bottom: 2px;
+    }
+
+    .devtools-winrate-field,
+    .devtools-copy-limit-field {
+        flex: 0 0 auto;
+        width: auto;
+        min-width: 110px;
+    }
+
+    .devtools-winrate-table-wrap,
+    .admin-user-table-wrap,
+    .devtools-copy-limit-table-wrap {
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .devtools-winrate-table th:first-child,
+    .devtools-winrate-table td:first-child,
+    .admin-user-table th:nth-child(2),
+    .admin-user-table td:nth-child(2),
+    .devtools-copy-limit-table th:nth-child(2),
+    .devtools-copy-limit-table td:nth-child(2) {
+        position: sticky;
+        left: 0;
+        background: var(--color-surface);
+        z-index: 1;
+    }
+
+    .match-lab-container {
+        padding: 0 8px 12px;
+        gap: 10px;
+    }
+
+    .match-lab-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+    }
+
+    .match-lab-card {
+        padding: 10px 12px;
+        gap: 8px;
+    }
+
+    #dev-console.frontend-console {
+        inset:
+            calc(6px + var(--safe-top, 0px))
+            calc(10px + var(--safe-right, 0px))
+            calc(6px + var(--safe-bottom, 0px))
+            calc(10px + var(--safe-left, 0px));
+        height: auto;
+        font-size: 12.5px;
+    }
+
+    .frontend-console__header,
+    .frontend-console__toolbar,
+    .frontend-console__footer {
+        padding: 6px 12px;
+        gap: 8px;
+    }
+
+    .frontend-console__header p {
+        display: none;
+    }
+
+    .frontend-console button,
+    .frontend-console input,
+    .frontend-console select {
+        min-height: 30px;
+        padding: 4px 8px;
+    }
 }

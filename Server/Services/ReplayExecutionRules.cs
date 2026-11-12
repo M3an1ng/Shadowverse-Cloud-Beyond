@@ -122,6 +122,11 @@ public static class ReplayExecutionRules
             {
                 currentCard.Remove("mirageTavernTier");
             }
+
+            if (!recordedCard.ContainsKey("mirageBuyCost"))
+            {
+                currentCard.Remove("mirageBuyCost");
+            }
         }
     }
 }

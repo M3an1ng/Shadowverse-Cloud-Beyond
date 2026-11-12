@@ -169,3 +169,10 @@ coverage/
 # AI artifacts are uploaded independently of code and player data.
 /data/ai-model/
 /data/ai-strategy/
+
+# Mobile Capacitor shell local SDK config and build outputs.
+/mobile-shell/android/local.properties
+/mobile-shell/android/build/
+/mobile-shell/android/app/build/
+/mobile-shell/android/capacitor-cordova-android-plugins/build/
+/mobile-shell/*.apk

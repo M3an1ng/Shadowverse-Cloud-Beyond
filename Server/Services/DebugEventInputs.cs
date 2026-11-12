@@ -92,6 +92,8 @@ public static class DebugEventInputs
                 (g,p)=>new DebugMirageAddRecruitedCardIntent(Player(g,S(p,"player")),N(p,"cardDefinitionId"))),
             ["MirageSetShopOffer"] = new([R("player","player"),R("cardDefinitionId","cardDefinition",0)],
                 (g,p)=>new DebugMirageSetShopOfferIntent(Player(g,S(p,"player")),N(p,"cardDefinitionId"))),
+            ["MirageGrantSpecialDiscoverTicket"] = new([R("player","player"),R("targetTier","integer",1)],
+                (g,p)=>new DebugMirageGrantSpecialDiscoverTicketIntent(Player(g,S(p,"player")),N(p,"targetTier"))),
             ["CounterSet"] = new([R("target","entity"),R("key","string"),R("value","integer",0)], (g,p)=>new DebugCounterIntent(g,S(p,"target"),S(p,"key"),N(p,"value"))),
             ["TurnStart"] = new([R("player","player")], (g,p)=>new TurnStartEvent(Player(g,S(p,"player")))),
             ["TurnEnd"] = new([R("player","player")], (g,p)=>new TurnEndEvent(Player(g,S(p,"player")))),
@@ -255,9 +257,29 @@ public static class DebugEventInputs
                 };
             }
 
+            var shopService = context.ServiceProvider.GetService<IMirageShopService>();
+            var mirage = context.CurrentGameState.Mirage;
+            var reservedFromPool = false;
+            if (shopService != null && mirage != null && shopService.IsManagedPoolCard(mirage, cardDefinitionId))
+            {
+                if (!shopService.TryReserveFromPool(mirage, cardDefinitionId, 1))
+                {
+                    return new DomainOperationResult
+                    {
+                        Success = false,
+                        ErrorMessage = $"Shared pool copies for card {cardDefinitionId} are exhausted."
+                    };
+                }
+                reservedFromPool = true;
+            }
+
             var cardFactory = context.ServiceProvider.GetRequiredService<ShadowverseBeyond.Server.Domain.Factories.ICardFactory>();
             var card = cardFactory.CreateAndRegisterNewCard(context.CurrentGameState, cardDefinitionId, player.PlayerId, CardZone.Hand);
             card.IsMirageRecruited = true;
+            if (reservedFromPool)
+            {
+                card.AddMiragePoolHolding(cardDefinitionId, 1);
+            }
             card.CostOverride = 0;
             var outcome = new DomainOperationResult { Success = true };
             outcome.GeneratedEvents.Add(new HandUpdatedEvent(player, player.Hand.ToList()));
@@ -277,14 +299,14 @@ public static class DebugEventInputs
         [GameEventParameter("卡牌定义ID", "商店报价卡牌定义ID")] public int CardDefinitionId => cardDefinitionId;
         public DomainOperationResult Commit(GameContext context)
         {
-            if (context.CurrentGameState.Mode != GameMode.Mirage || player.Mirage == null)
+            if (context.CurrentGameState.Mode != GameMode.Mirage || player.Mirage == null || context.CurrentGameState.Mirage == null)
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "Target player does not have Mirage state." };
             }
 
             var shopService = context.ServiceProvider.GetService<IMirageShopService>();
             var entry = shopService?.GetCatalogEntry(cardDefinitionId);
-            if (entry == null)
+            if (entry == null || shopService == null)
             {
                 return new DomainOperationResult
                 {
@@ -293,15 +315,63 @@ public static class DebugEventInputs
                 };
             }
 
-            var rules = context.CurrentGameState.Mirage?.Rules ?? new MirageRuleConfig();
+            var mirage = context.CurrentGameState.Mirage;
+            if (!shopService.TryReserveFromPool(mirage, cardDefinitionId, 1))
+            {
+                return new DomainOperationResult
+                {
+                    Success = false,
+                    ErrorMessage = $"Shared pool copies for card {cardDefinitionId} are exhausted."
+                };
+            }
+
+            var rules = mirage.Rules;
+            var def = GameDataProvider.Instance?.GetCardDefinition(cardDefinitionId);
+            var resolvedBuyCost = def != null
+                ? MirageShopService.ResolveBuyCost(def, rules)
+                : (rules.BuyCost > 0 ? rules.BuyCost : MirageRuleConfig.DefaultBuyCost);
             player.Mirage.ShopOffers.Insert(0, new MirageShopOffer
             {
                 OfferId = Guid.NewGuid(),
                 CardDefinitionId = cardDefinitionId,
                 TavernTier = entry.TavernTier,
-                BuyCost = rules.BuyCost > 0 ? rules.BuyCost : MirageRuleConfig.DefaultBuyCost
+                BuyCost = resolvedBuyCost
             });
 
+            return new DomainOperationResult { Success = true };
+        }
+    }
+
+    private sealed class DebugMirageGrantSpecialDiscoverTicketIntent(PlayerState player, int targetTier)
+        : GameEventBase(EventType.DebugIntent), ICommittableEvent
+    {
+        [GameEventParameter("玩家", "目标玩家")] public PlayerState TargetPlayer => player;
+        [GameEventParameter("目标星级", "特殊奖励发现凭据的目标星级")] public int TargetTier => targetTier;
+        public DomainOperationResult Commit(GameContext context)
+        {
+            if (context.CurrentGameState.Mode != GameMode.Mirage || player.Mirage == null || context.CurrentGameState.Mirage == null)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "Target player does not have Mirage state." };
+            }
+
+            var tripleService = context.ServiceProvider.GetService<IMirageTripleService>();
+            if (tripleService == null)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "IMirageTripleService is not available." };
+            }
+
+            var mirage = context.CurrentGameState.Mirage;
+            var ticket = tripleService.CreateDiscoverTicket(mirage, Math.Max(1, targetTier), mirage.Rules, allowAboveMaxTier: true);
+            if (ticket == null)
+            {
+                return new DomainOperationResult
+                {
+                    Success = false,
+                    ErrorMessage = $"No available Mirage pool candidates for special tier {targetTier}."
+                };
+            }
+
+            player.Mirage.PendingTickets.Add(ticket);
             return new DomainOperationResult { Success = true };
         }
     }

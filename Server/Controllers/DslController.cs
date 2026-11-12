@@ -259,6 +259,7 @@ namespace ShadowverseBeyond.Server.Controllers
 
             var drafts = new List<GeneratedAbilityDraftDto>();
             var detectedKeywords = new List<string>();
+            var unrecognizedClauses = new List<string>();
             int seq = 1;
 
             foreach (var section in sections)
@@ -279,6 +280,7 @@ namespace ShadowverseBeyond.Server.Controllers
                     _ => "PlayCard"
                 };
                 var activeSectionTrigger = defaultTrigger;
+                string? pendingTriggerOnlyLine = null;
                 var rawLines = (section.Text ?? string.Empty)
                     .Replace("\r\n", "\n")
                     .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -308,22 +310,51 @@ namespace ShadowverseBeyond.Server.Controllers
                         }
                         return string.Empty;
                     }).Trim();
-                    if (string.IsNullOrWhiteSpace(clause)) continue;
+                    if (string.IsNullOrWhiteSpace(clause)
+                        || Regex.IsMatch(clause, @"^(?:[-—─]{2,}|==)$")
+                        || Regex.IsMatch(clause, @"^\{[^{}]+\}$")) continue;
 
                     var (detectedTrigger, remainder) = DetectTriggerAndRemainder(clause);
-                    if (detectedTrigger != null) activeSectionTrigger = detectedTrigger;
-                    if (string.IsNullOrWhiteSpace(remainder)) continue;
+                    if (detectedTrigger != null)
+                    {
+                        if (pendingTriggerOnlyLine != null)
+                        {
+                            unrecognizedClauses.Add(pendingTriggerOnlyLine);
+                        }
+                        activeSectionTrigger = detectedTrigger;
+                    }
+                    if (string.IsNullOrWhiteSpace(remainder))
+                    {
+                        pendingTriggerOnlyLine = clause;
+                        continue;
+                    }
+                    pendingTriggerOnlyLine = null;
 
-                    var draft = CompileClauseToAbilityDraft(cardName, cardType, style, activeSectionTrigger, clause, seq++);
-                    drafts.Add(draft);
+                    var draft = CompileClauseToAbilityDraft(cardName, cardType, style, activeSectionTrigger, clause, seq, unrecognizedClauses);
+                    if (draft.HasEffects)
+                    {
+                        drafts.Add(draft);
+                        seq++;
+                    }
+                }
+
+                if (pendingTriggerOnlyLine != null)
+                {
+                    unrecognizedClauses.Add(pendingTriggerOnlyLine);
                 }
             }
+
+            bool fullyCompiled = unrecognizedClauses.Count == 0
+                                 && drafts.All(d => d.DslValid && d.HasEffects)
+                                 && (drafts.Count > 0 || detectedKeywords.Count > 0);
 
             return Ok(new DslGenerateFromCardResponse
             {
                 CardName = cardName,
                 Abilities = drafts,
-                DetectedKeywords = detectedKeywords
+                DetectedKeywords = detectedKeywords,
+                UnrecognizedClauses = unrecognizedClauses,
+                FullyCompiled = fullyCompiled
             });
         }
 
@@ -355,7 +386,8 @@ namespace ShadowverseBeyond.Server.Controllers
             string sectionStyle,
             string trigger,
             string clauseText,
-            int sequence)
+            int sequence,
+            List<string> unrecognizedClauses)
         {
             var (_, remainder) = DetectTriggerAndRemainder(clauseText.Trim());
             var text = NormalizeChineseNumbers(remainder)
@@ -373,7 +405,7 @@ namespace ShadowverseBeyond.Server.Controllers
             var relationType = "Self";
             var abilityKeywords = new List<object>();
             var conditions = new List<object>();
-            var targets = new Dictionary<string, object>();
+            var targets = new List<object>();
             var effects = new List<object>();
             var notes = new List<string>();
             int? activateCost = null;
@@ -452,7 +484,7 @@ namespace ShadowverseBeyond.Server.Controllers
             if (comboMatch.Success)
             {
                 var val = comboMatch.Groups[1].Success ? comboMatch.Groups[1].Value : comboMatch.Groups[2].Value;
-                conditions.Add(new { expression = $"SourcePlayer.Combo >= {val}", isEnabled = true });
+                conditions.Add(new { expression = $"context.owner.combo >= {val}", isEnabled = true });
             }
 
             var rallyMatch = Regex.Match(text, @"【?协作】?\s*(\d+)");
@@ -460,247 +492,459 @@ namespace ShadowverseBeyond.Server.Controllers
             {
                 var val = rallyMatch.Groups[1].Value;
                 abilityKeywords.Add(new { keyword = "Rally", value = int.Parse(val) });
-                conditions.Add(new { expression = $"SourcePlayer.Rally >= {val}", isEnabled = true });
+                conditions.Add(new { expression = $"context.owner.rally >= {val}", isEnabled = true });
             }
 
             if (Regex.IsMatch(text, @"【?觉醒】?"))
             {
                 abilityKeywords.Add(new { keyword = "Awake", value = (int?)null });
-                conditions.Add(new { expression = "SourcePlayer.MaxPlayPoints >= 7", isEnabled = true });
+                conditions.Add(new { expression = "context.owner.maxPlayPoints >= 7", isEnabled = true });
             }
 
-            // 3. Effects & Targets resolution
+            // 3. Effects & Targets resolution (左起顺序词法扫描，支持句内逗号串联、同类效果多次出现与未知片段精确拦截)
             int order = 0;
+            int realActionCount = 0;
+            var clauseUnrecognized = new List<string>();
+            var sentences = text
+                .Split(new[] { '。', '；', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-            // 3a. Necromancy cost
-            var necroMatch = Regex.Match(text, @"【?死灵术】?\s*(\d+)");
-            if (necroMatch.Success && int.TryParse(necroMatch.Groups[1].Value, out var necroCost))
+            foreach (var rawSentence in sentences)
             {
-                abilityKeywords.Add(new { keyword = "Necromance", value = necroCost });
-                effects.Add(new
+                var s = rawSentence.Trim();
+                if (string.IsNullOrWhiteSpace(s)
+                    || Regex.IsMatch(s, @"^(?:[-—─]{2,}|==)$")
+                    || Regex.IsMatch(s, @"^\{[^{}]+\}$")) continue;
+
+                // 剥离句首条件/费用标签（已在第 1、2 步提取）
+                var afterCond = Regex.Replace(
+                    s,
+                    @"^(?:\s*(?:【?(?:爆能强化|连击|协作)】?\s*\d+|【?觉醒】?|消费\s*\d+)\s*[：:，,]?\s*)+",
+                    string.Empty
+                ).Trim();
+
+                if (string.IsNullOrWhiteSpace(afterCond))
                 {
-                    type = "Necromancy",
-                    executionOrder = order++,
-                    isEnabled = true,
-                    parameters = new Dictionary<string, object>
+                    continue;
+                }
+
+                // 提取可选的句首【死灵术】N 前缀（仅当后续解析出有效实际动作时才落入消耗效果）
+                int? pendingNecroCost = null;
+                var actionBody = afterCond;
+                var necroMatch = Regex.Match(afterCond, @"^【?死灵术】?\s*(\d+)\s*[：:，,]?\s*");
+                if (necroMatch.Success && int.TryParse(necroMatch.Groups[1].Value, out var necroCost))
+                {
+                    pendingNecroCost = necroCost;
+                    actionBody = afterCond[necroMatch.Length..].Trim();
+                }
+
+                if (string.IsNullOrWhiteSpace(actionBody))
+                {
+                    clauseUnrecognized.Add(s);
+                    unrecognizedClauses.Add(s);
+                    continue;
+                }
+
+                var sentenceActionBuilders = new List<Action>();
+                int pos = 0;
+                while (pos < actionBody.Length)
+                {
+                    // 跳过分隔标点与连接词（如“，”、“，并”、“随后”、“然后”）
+                    var sepMatch = Regex.Match(actionBody[pos..], @"^[，,、：:\s]*");
+                    pos += sepMatch.Length;
+                    if (pos >= actionBody.Length) break;
+
+                    var conjMatch = Regex.Match(actionBody[pos..], @"^(?:并(?:且)?|随后|然后|同时|再)(?=[，,、：:\s]|随机|对|给予|选择|自己|抽|回复|使|令|让|破坏|获得|最大|增加|进行|魔力|\d)[，,、：:\s]*");
+                    if (conjMatch.Success)
                     {
-                        ["Amount"] = StaticVal(necroCost)
-                    },
-                    targetSelector = Array.Empty<string>()
-                });
-            }
+                        pos += conjMatch.Length;
+                    }
+                    if (pos >= actionBody.Length) break;
 
-            // 3b. Draw cards
-            var drawMatch = Regex.Match(text, @"抽取?\s*(\d+)\s*(?:张(?:卡牌|牌)?|卡牌|牌)");
-            if (drawMatch.Success && int.TryParse(drawMatch.Groups[1].Value, out var drawCount))
-            {
-                effects.Add(new
-                {
-                    type = "Draw",
-                    executionOrder = order++,
-                    isEnabled = true,
-                    parameters = new Dictionary<string, object>
+                    var slice = actionBody[pos..];
+                    if (TryConsumeLeadingAction(slice, out var consumedLen, out var appendAction))
                     {
-                        ["PlayerScope"] = StaticVal("Self"),
-                        ["UseSearchMode"] = StaticVal(false),
-                        ["DrawAmount"] = StaticVal(drawCount)
-                    },
-                    targetSelector = Array.Empty<string>()
-                });
-            }
+                        sentenceActionBuilders.Add(appendAction);
+                        pos += consumedLen;
+                    }
+                    else
+                    {
+                        int nextDelim = slice.IndexOfAny(new[] { '，', ',', '、' });
+                        var unknownSeg = (nextDelim >= 0 ? slice[..nextDelim] : slice).Trim();
+                        if (!string.IsNullOrWhiteSpace(unknownSeg))
+                        {
+                            clauseUnrecognized.Add(unknownSeg);
+                            unrecognizedClauses.Add(unknownSeg);
+                        }
+                        pos += nextDelim >= 0 ? nextDelim + 1 : slice.Length;
+                    }
+                }
 
-            // 3c. Heal leader
-            var healLeaderMatch = Regex.Match(text, @"回复(?:自己的)?主战者\s*(\d+)\s*点|(?:使)?(?:自己的)?主战者回复\s*(\d+)\s*点");
-            if (healLeaderMatch.Success)
-            {
-                var amtStr = healLeaderMatch.Groups[1].Success ? healLeaderMatch.Groups[1].Value : healLeaderMatch.Groups[2].Value;
-                if (int.TryParse(amtStr, out var healAmt))
+                if (sentenceActionBuilders.Count == 0)
                 {
-                    const string targetKey = "selfLeader";
-                    targets[targetKey] = BuildTarget("[SourcePlayer.Leader]", requireChoice: false);
+                    if (clauseUnrecognized.Count == 0)
+                    {
+                        clauseUnrecognized.Add(s);
+                        unrecognizedClauses.Add(s);
+                    }
+                    continue;
+                }
+
+                if (pendingNecroCost.HasValue)
+                {
+                    var costVal = pendingNecroCost.Value;
+                    var necroKw = new { keyword = "Necromance", value = costVal };
+                    if (!abilityKeywords.Any(k => JsonSerializer.Serialize(k) == JsonSerializer.Serialize(necroKw)))
+                    {
+                        abilityKeywords.Add(necroKw);
+                    }
                     effects.Add(new
                     {
-                        type = "Heal",
+                        type = "Necromancy",
                         executionOrder = order++,
                         isEnabled = true,
                         parameters = new Dictionary<string, object>
                         {
-                            ["HealAmount"] = StaticVal(healAmt)
+                            ["Amount"] = StaticVal(costVal)
                         },
-                        targetSelector = new[] { targetKey }
+                        targetSelector = Array.Empty<string>()
                     });
+                }
+
+                foreach (var buildAction in sentenceActionBuilders)
+                {
+                    buildAction();
+                    realActionCount++;
                 }
             }
 
-            // 3d. Damage to enemy leader
-            var dmgLeaderMatch = Regex.Match(text, @"(?:对|给予)(?:敌方|对手的?)主战者(?:造成)?\s*(\d+)\s*点伤害");
-            if (dmgLeaderMatch.Success && int.TryParse(dmgLeaderMatch.Groups[1].Value, out var dmgLeaderAmt))
+            bool TryConsumeLeadingAction(string slice, out int consumedLength, out Action appendEffect)
             {
-                const string targetKey = "enemyLeader";
-                targets[targetKey] = BuildTarget("[OpponentPlayer.Leader]", requireChoice: false);
-                effects.Add(new
-                {
-                    type = "Damage",
-                    executionOrder = order++,
-                    isEnabled = true,
-                    parameters = new Dictionary<string, object>
-                    {
-                        ["DamageAmount"] = StaticVal(dmgLeaderAmt),
-                        ["DistributionMode"] = StaticVal("PerTarget")
-                    },
-                    targetSelector = new[] { targetKey }
-                });
-            }
+                consumedLength = 0;
+                appendEffect = static () => { };
 
-            // 3e. AoE damage to enemy followers
-            var dmgAoeMatch = Regex.Match(text, @"(?:对|给予)(?:所有|全体)敌方随从(?:造成)?\s*(\d+)\s*点伤害|(?:对|给予)敌方(?:所有|全体)随从(?:造成)?\s*(\d+)\s*点伤害");
-            if (dmgAoeMatch.Success)
-            {
-                var amtStr = dmgAoeMatch.Groups[1].Success ? dmgAoeMatch.Groups[1].Value : dmgAoeMatch.Groups[2].Value;
-                if (int.TryParse(amtStr, out var dmgAoeAmt))
+                // 3a. Draw cards
+                var drawMatch = Regex.Match(slice, @"^(?:自己)?抽取?\s*(\d+)\s*(?:张(?:卡牌|牌)?|卡牌|牌)");
+                if (drawMatch.Success && int.TryParse(drawMatch.Groups[1].Value, out var drawCount))
                 {
-                    const string targetKey = "enemyFollowersAoe";
-                    targets[targetKey] = BuildTarget("OpponentPlayer.Field", requireChoice: false);
-                    effects.Add(new
+                    consumedLength = drawMatch.Length;
+                    appendEffect = () => effects.Add(new
                     {
-                        type = "Damage",
-                        executionOrder = order++,
-                        isEnabled = true,
-                        parameters = new Dictionary<string, object>
-                        {
-                            ["DamageAmount"] = StaticVal(dmgAoeAmt),
-                            ["DistributionMode"] = StaticVal("PerTarget")
-                        },
-                        targetSelector = new[] { targetKey }
-                    });
-                }
-            }
-            else
-            {
-                // Single target enemy follower damage
-                var dmgSingleMatch = Regex.Match(text, @"(?:对|给予|选择)\s*1\s*个敌方随从(?:造成|，对其造成)?\s*(\d+)\s*点伤害");
-                if (dmgSingleMatch.Success && int.TryParse(dmgSingleMatch.Groups[1].Value, out var dmgSingleAmt))
-                {
-                    bool isRandom = text.Contains("随机");
-                    const string targetKey = "enemyFollowerTarget";
-                    targets[targetKey] = BuildTarget("OpponentPlayer.Field", requireChoice: !isRandom, randomCount: isRandom ? 1 : null);
-                    effects.Add(new
-                    {
-                        type = "Damage",
-                        executionOrder = order++,
-                        isEnabled = true,
-                        parameters = new Dictionary<string, object>
-                        {
-                            ["DamageAmount"] = StaticVal(dmgSingleAmt),
-                            ["DistributionMode"] = StaticVal("PerTarget")
-                        },
-                        targetSelector = new[] { targetKey }
-                    });
-                }
-            }
-
-            // 3f. Destroy enemy follower(s)
-            if (Regex.IsMatch(text, @"破坏(?:所有|全体)敌方随从|破坏敌方(?:所有|全体)随从"))
-            {
-                const string targetKey = "destroyAllEnemies";
-                targets[targetKey] = BuildTarget("OpponentPlayer.Field", requireChoice: false);
-                effects.Add(new
-                {
-                    type = "Destroy",
-                    executionOrder = order++,
-                    isEnabled = true,
-                    parameters = new Dictionary<string, object>(),
-                    targetSelector = new[] { targetKey }
-                });
-            }
-            else if (Regex.IsMatch(text, @"破坏\s*1\s*个敌方随从|选择\s*1\s*个敌方随从.*破坏"))
-            {
-                bool isRandom = text.Contains("随机");
-                const string targetKey = "destroyEnemyTarget";
-                targets[targetKey] = BuildTarget("OpponentPlayer.Field", requireChoice: !isRandom, randomCount: isRandom ? 1 : null);
-                effects.Add(new
-                {
-                    type = "Destroy",
-                    executionOrder = order++,
-                    isEnabled = true,
-                    parameters = new Dictionary<string, object>(),
-                    targetSelector = new[] { targetKey }
-                });
-            }
-
-            // 3g. Stat Buff (+X/+Y)
-            var buffMatch = Regex.Match(text, @"获得\s*([+-]?\d+)\s*/\s*([+-]?\d+)");
-            if (buffMatch.Success
-                && int.TryParse(buffMatch.Groups[1].Value, out var atkMod)
-                && int.TryParse(buffMatch.Groups[2].Value, out var hpMod))
-            {
-                bool allFriendly = Regex.IsMatch(text, @"自己的(?:所有|全体)随从");
-                bool chooseFriendly = !allFriendly && Regex.IsMatch(text, @"1\s*个自己的(?:其他)?随从");
-                string targetKey = allFriendly ? "friendlyFollowers" : (chooseFriendly ? "chosenFriendlyFollower" : "selfCard");
-                string poolExpr = (allFriendly || chooseFriendly) ? "SourcePlayer.Field" : "[SourceCard]";
-                targets[targetKey] = BuildTarget(poolExpr, requireChoice: chooseFriendly);
-                effects.Add(new
-                {
-                    type = "ModifyStatus",
-                    executionOrder = order++,
-                    isEnabled = true,
-                    parameters = new Dictionary<string, object>
-                    {
-                        ["DurationType"] = StaticVal("Permanent"),
-                        ["DurationParameter"] = StaticVal(0),
-                        ["AttackModifier"] = StaticVal(atkMod),
-                        ["HealthModifier"] = StaticVal(hpMod),
-                        ["ModifierLayer"] = StaticVal("Additive")
-                    },
-                    targetSelector = new[] { targetKey }
-                });
-            }
-
-            // 3h. Ramp (MaxPP + X)
-            var rampMatch = Regex.Match(text, @"最大\s*PP\s*\+\s*(\d+)|增加\s*(\d+)\s*点最大\s*PP|获得\s*(\d+)\s*个空的\s*PP");
-            if (rampMatch.Success)
-            {
-                var rampStr = rampMatch.Groups[1].Success ? rampMatch.Groups[1].Value
-                    : (rampMatch.Groups[2].Success ? rampMatch.Groups[2].Value : rampMatch.Groups[3].Value);
-                if (int.TryParse(rampStr, out var rampAmt))
-                {
-                    effects.Add(new
-                    {
-                        type = "Ramp",
+                        type = "Draw",
                         executionOrder = order++,
                         isEnabled = true,
                         parameters = new Dictionary<string, object>
                         {
                             ["PlayerScope"] = StaticVal("Self"),
-                            ["Amount"] = StaticVal(rampAmt)
+                            ["UseSearchMode"] = StaticVal(false),
+                            ["DrawAmount"] = StaticVal(drawCount)
                         },
                         targetSelector = Array.Empty<string>()
                     });
+                    return true;
                 }
-            }
 
-            // 3i. Spellboost hand
-            var sbMatch = Regex.Match(text, @"魔力增幅\s*(\d+)\s*次");
-            if (sbMatch.Success && int.TryParse(sbMatch.Groups[1].Value, out var sbAmt))
-            {
-                const string targetKey = "selfHand";
-                targets[targetKey] = BuildTarget("SourcePlayer.Hand", requireChoice: false);
-                effects.Add(new
+                // 3b. Heal leader
+                var healLeaderMatch = Regex.Match(slice, @"^(?:回复(?:自己的)?主战者\s*(\d+)\s*点(?:生命(?:值)?)?|(?:使|令)?(?:自己的)?主战者回复\s*(\d+)\s*点(?:生命(?:值)?)?)");
+                if (healLeaderMatch.Success)
                 {
-                    type = "SpellBoost",
-                    executionOrder = order++,
-                    isEnabled = true,
-                    parameters = new Dictionary<string, object>
+                    var amtStr = healLeaderMatch.Groups[1].Success ? healLeaderMatch.Groups[1].Value : healLeaderMatch.Groups[2].Value;
+                    if (int.TryParse(amtStr, out var healAmt))
                     {
-                        ["Amount"] = StaticVal(sbAmt)
-                    },
-                    targetSelector = new[] { targetKey }
-                });
+                        consumedLength = healLeaderMatch.Length;
+                        appendEffect = () =>
+                        {
+                            var targetKey = AddTarget(targets, BuildTarget("context.owner.leader", requireChoice: false));
+                            effects.Add(new
+                            {
+                                type = "Heal",
+                                executionOrder = order++,
+                                isEnabled = true,
+                                parameters = new Dictionary<string, object>
+                                {
+                                    ["HealAmount"] = StaticVal(healAmt)
+                                },
+                                targetSelector = new[] { targetKey }
+                            });
+                        };
+                        return true;
+                    }
+                }
+
+                // 3c. Damage to enemy leader
+                var dmgLeaderMatch = Regex.Match(slice, @"^(?:对|给予)(?:敌方|对手的?)主战者(?:造成)?\s*(\d+)\s*点伤害");
+                if (dmgLeaderMatch.Success && int.TryParse(dmgLeaderMatch.Groups[1].Value, out var dmgLeaderAmt))
+                {
+                    consumedLength = dmgLeaderMatch.Length;
+                    appendEffect = () =>
+                    {
+                        var targetKey = AddTarget(targets, BuildTarget("context.opponent.leader", requireChoice: false));
+                        effects.Add(new
+                        {
+                            type = "Damage",
+                            executionOrder = order++,
+                            isEnabled = true,
+                            parameters = new Dictionary<string, object>
+                            {
+                                ["DamageAmount"] = StaticVal(dmgLeaderAmt),
+                                ["DistributionMode"] = StaticVal("PerTarget")
+                            },
+                            targetSelector = new[] { targetKey }
+                        });
+                    };
+                    return true;
+                }
+
+                // 3d. AoE damage to enemy followers
+                var dmgAoeMatch = Regex.Match(slice, @"^(?:(?:对|给予)(?:所有|全体)敌方随从(?:造成)?\s*(\d+)\s*点伤害|(?:对|给予)敌方(?:所有|全体)随从(?:造成)?\s*(\d+)\s*点伤害)");
+                if (dmgAoeMatch.Success)
+                {
+                    var amtStr = dmgAoeMatch.Groups[1].Success ? dmgAoeMatch.Groups[1].Value : dmgAoeMatch.Groups[2].Value;
+                    if (int.TryParse(amtStr, out var dmgAoeAmt))
+                    {
+                        consumedLength = dmgAoeMatch.Length;
+                        appendEffect = () =>
+                        {
+                            var targetKey = AddTarget(targets, BuildTarget("context.opponent.field.query(self.type == \"Follower\")", requireChoice: false));
+                            effects.Add(new
+                            {
+                                type = "Damage",
+                                executionOrder = order++,
+                                isEnabled = true,
+                                parameters = new Dictionary<string, object>
+                                {
+                                    ["DamageAmount"] = StaticVal(dmgAoeAmt),
+                                    ["DistributionMode"] = StaticVal("PerTarget")
+                                },
+                                targetSelector = new[] { targetKey }
+                            });
+                        };
+                        return true;
+                    }
+                }
+
+                // 3e. Single-target damage to enemy follower (choice or random)
+                var dmgSingleMatch = Regex.Match(slice, @"^(?<rnd>随机)?(?:(?:对|给予)\s*1\s*个(?<rnd2>随机)?敌方随从(?:造成)?|选择\s*1\s*个敌方随从(?:[，,]\s*(?:对其)?)?造成)\s*(\d+)\s*点伤害");
+                if (dmgSingleMatch.Success && int.TryParse(dmgSingleMatch.Groups[1].Value, out var dmgSingleAmt))
+                {
+                    bool isRandom = dmgSingleMatch.Groups["rnd"].Success || dmgSingleMatch.Groups["rnd2"].Success;
+                    consumedLength = dmgSingleMatch.Length;
+                    appendEffect = () =>
+                    {
+                        var targetKey = AddTarget(targets, BuildTarget("context.opponent.field.query(self.type == \"Follower\")", requireChoice: !isRandom, randomCount: isRandom ? 1 : null));
+                        effects.Add(new
+                        {
+                            type = "Damage",
+                            executionOrder = order++,
+                            isEnabled = true,
+                            parameters = new Dictionary<string, object>
+                            {
+                                ["DamageAmount"] = StaticVal(dmgSingleAmt),
+                                ["DistributionMode"] = StaticVal("PerTarget")
+                            },
+                            targetSelector = new[] { targetKey }
+                        });
+                    };
+                    return true;
+                }
+
+                // 3f. Destroy enemy follower(s)
+                var destroyAoeMatch = Regex.Match(slice, @"^(?:破坏(?:所有|全体)敌方随从|破坏敌方(?:所有|全体)随从)");
+                if (destroyAoeMatch.Success)
+                {
+                    consumedLength = destroyAoeMatch.Length;
+                    appendEffect = () =>
+                    {
+                        var targetKey = AddTarget(targets, BuildTarget("context.opponent.field.query(self.type == \"Follower\")", requireChoice: false));
+                        effects.Add(new
+                        {
+                            type = "Destroy",
+                            executionOrder = order++,
+                            isEnabled = true,
+                            parameters = new Dictionary<string, object>(),
+                            targetSelector = new[] { targetKey }
+                        });
+                    };
+                    return true;
+                }
+
+                var destroySingleMatch = Regex.Match(slice, @"^(?:(?<rnd>随机)?破坏\s*1\s*个(?<rnd2>随机)?敌方随从|选择\s*1\s*个敌方随从(?:[，,]\s*(?:将其|把其|使其|使它)?)?破坏(?:该随从|它)?)");
+                if (destroySingleMatch.Success)
+                {
+                    bool isRandom = destroySingleMatch.Groups["rnd"].Success || destroySingleMatch.Groups["rnd2"].Success;
+                    consumedLength = destroySingleMatch.Length;
+                    appendEffect = () =>
+                    {
+                        var targetKey = AddTarget(targets, BuildTarget("context.opponent.field.query(self.type == \"Follower\")", requireChoice: !isRandom, randomCount: isRandom ? 1 : null));
+                        effects.Add(new
+                        {
+                            type = "Destroy",
+                            executionOrder = order++,
+                            isEnabled = true,
+                            parameters = new Dictionary<string, object>(),
+                            targetSelector = new[] { targetKey }
+                        });
+                    };
+                    return true;
+                }
+
+                // 3g. Stat Buff (+X/+Y)
+                var buffAllMatch = Regex.Match(slice, @"^(?:使|令|让)?(?:自己的(?:所有|全体)随从|随从全体)获得\s*([+-]?\d+)\s*/\s*([+-]?\d+)(?:效果)?");
+                if (buffAllMatch.Success
+                    && int.TryParse(buffAllMatch.Groups[1].Value, out var allAtk)
+                    && int.TryParse(buffAllMatch.Groups[2].Value, out var allHp))
+                {
+                    consumedLength = buffAllMatch.Length;
+                    appendEffect = () =>
+                    {
+                        var targetKey = AddTarget(targets, BuildTarget("context.owner.field.query(self.type == \"Follower\")", requireChoice: false));
+                        effects.Add(new
+                        {
+                            type = "ModifyStatus",
+                            executionOrder = order++,
+                            isEnabled = true,
+                            parameters = new Dictionary<string, object>
+                            {
+                                ["DurationType"] = StaticVal("Permanent"),
+                                ["DurationParameter"] = StaticVal(0),
+                                ["AttackModifier"] = StaticVal(allAtk),
+                                ["HealthModifier"] = StaticVal(allHp),
+                                ["ModifierLayer"] = StaticVal("Additive")
+                            },
+                            targetSelector = new[] { targetKey }
+                        });
+                    };
+                    return true;
+                }
+
+                var buffSingleMatch = Regex.Match(slice, @"^(?<rnd>随机)?(?:(?:使|令|让)\s*|选择\s*)?1\s*个(?<rnd2>随机)?自己的(?<other>其他)?随从(?:[，,]\s*(?:使其|使它)?)?获得\s*([+-]?\d+)\s*/\s*([+-]?\d+)(?:效果)?");
+                if (buffSingleMatch.Success
+                    && int.TryParse(buffSingleMatch.Groups[1].Value, out var singleAtk)
+                    && int.TryParse(buffSingleMatch.Groups[2].Value, out var singleHp))
+                {
+                    bool isOther = buffSingleMatch.Groups["other"].Success;
+                    bool isRandom = buffSingleMatch.Groups["rnd"].Success || buffSingleMatch.Groups["rnd2"].Success;
+                    string poolExpr = isOther
+                        ? "context.owner.field.query(self.type == \"Follower\" && self != context.sourceCard)"
+                        : "context.owner.field.query(self.type == \"Follower\")";
+                    consumedLength = buffSingleMatch.Length;
+                    appendEffect = () =>
+                    {
+                        var targetKey = AddTarget(targets, BuildTarget(poolExpr, requireChoice: !isRandom, randomCount: isRandom ? 1 : null));
+                        effects.Add(new
+                        {
+                            type = "ModifyStatus",
+                            executionOrder = order++,
+                            isEnabled = true,
+                            parameters = new Dictionary<string, object>
+                            {
+                                ["DurationType"] = StaticVal("Permanent"),
+                                ["DurationParameter"] = StaticVal(0),
+                                ["AttackModifier"] = StaticVal(singleAtk),
+                                ["HealthModifier"] = StaticVal(singleHp),
+                                ["ModifierLayer"] = StaticVal("Additive")
+                            },
+                            targetSelector = new[] { targetKey }
+                        });
+                    };
+                    return true;
+                }
+
+                var buffSelfMatch = Regex.Match(slice, @"^(?:(?:使|令|让)?(?:这个随从|该随从|本随从|自身))?获得\s*([+-]?\d+)\s*/\s*([+-]?\d+)(?:效果)?");
+                if (buffSelfMatch.Success
+                    && int.TryParse(buffSelfMatch.Groups[1].Value, out var selfAtk)
+                    && int.TryParse(buffSelfMatch.Groups[2].Value, out var selfHp))
+                {
+                    consumedLength = buffSelfMatch.Length;
+                    appendEffect = () =>
+                    {
+                        var targetKey = AddTarget(targets, BuildTarget("context.sourceCard", requireChoice: false));
+                        effects.Add(new
+                        {
+                            type = "ModifyStatus",
+                            executionOrder = order++,
+                            isEnabled = true,
+                            parameters = new Dictionary<string, object>
+                            {
+                                ["DurationType"] = StaticVal("Permanent"),
+                                ["DurationParameter"] = StaticVal(0),
+                                ["AttackModifier"] = StaticVal(selfAtk),
+                                ["HealthModifier"] = StaticVal(selfHp),
+                                ["ModifierLayer"] = StaticVal("Additive")
+                            },
+                            targetSelector = new[] { targetKey }
+                        });
+                    };
+                    return true;
+                }
+
+                // 3h. Ramp (ModifyPPMax -> ModifyAmount)
+                var rampMatch = Regex.Match(slice, @"^(?:(?:使自己的)?最大\s*PP\s*\+\s*(\d+)|增加\s*(\d+)\s*点最大\s*PP|获得\s*(\d+)\s*个空的\s*PP)");
+                if (rampMatch.Success)
+                {
+                    var rampStr = rampMatch.Groups[1].Success ? rampMatch.Groups[1].Value
+                        : (rampMatch.Groups[2].Success ? rampMatch.Groups[2].Value : rampMatch.Groups[3].Value);
+                    if (int.TryParse(rampStr, out var rampAmt))
+                    {
+                        consumedLength = rampMatch.Length;
+                        appendEffect = () => effects.Add(new
+                        {
+                            type = "Ramp",
+                            executionOrder = order++,
+                            isEnabled = true,
+                            parameters = new Dictionary<string, object>
+                            {
+                                ["PlayerScope"] = StaticVal("Self"),
+                                ["ModifyAmount"] = StaticVal(rampAmt)
+                            },
+                            targetSelector = Array.Empty<string>()
+                        });
+                        return true;
+                    }
+                }
+
+                // 3i. Spellboost hand
+                var sbMatch = Regex.Match(slice, @"^(?:(?:使自己的手牌)?(?:进行\s*)?魔力增幅\s*(\d+)\s*次|(?:对自己的手牌进行\s*)?(\d+)\s*次魔力增幅)");
+                if (sbMatch.Success)
+                {
+                    var sbStr = sbMatch.Groups[1].Success ? sbMatch.Groups[1].Value : sbMatch.Groups[2].Value;
+                    if (int.TryParse(sbStr, out var sbAmt) && sbAmt > 0)
+                    {
+                        consumedLength = sbMatch.Length;
+                        appendEffect = () =>
+                        {
+                            var targetKey = AddTarget(targets, BuildTarget("context.owner.hand", requireChoice: false));
+                            effects.Add(new
+                            {
+                                type = "SpellBoost",
+                                executionOrder = order++,
+                                repeatCount = Math.Max(0, sbAmt - 1),
+                                isEnabled = true,
+                                parameters = new Dictionary<string, object>(),
+                                targetSelector = new[] { targetKey }
+                            });
+                        };
+                        return true;
+                    }
+                }
+
+                return false;
             }
 
-            if (effects.Count == 0)
+            if (realActionCount == 0 && clauseUnrecognized.Count == 0)
             {
-                notes.Add("已生成触发时机骨架，具体复合效果可在向导第 5 步微调。");
+                clauseUnrecognized.Add(clauseText.Trim());
+                unrecognizedClauses.Add(clauseText.Trim());
+            }
+
+            bool hasEffects = realActionCount > 0;
+            bool clauseComplete = hasEffects && clauseUnrecognized.Count == 0;
+            if (!hasEffects)
+            {
+                notes.Add("存在暂未支持自动编译的复杂规则描述，需在能力编辑器中手动配置。");
+            }
+            else if (!clauseComplete)
+            {
+                notes.Add($"已部分识别 {effects.Count} 个效果节点，存在未识别片段（已保存为未启用草稿，请前往能力编辑器补全）。");
             }
             else
             {
@@ -709,7 +953,7 @@ namespace ShadowverseBeyond.Server.Controllers
 
             // Validate all generated DSL expressions via Lexer + Parser
             bool dslValid = true;
-            foreach (var expr in targets.Values.Select(ExtractSourcePoolExpression).Where(s => !string.IsNullOrWhiteSpace(s)))
+            foreach (var expr in targets.Select(ExtractSourcePoolExpression).Where(s => !string.IsNullOrWhiteSpace(s)))
             {
                 if (!ValidateSingleDslExpression(expr!))
                 {
@@ -742,6 +986,7 @@ namespace ShadowverseBeyond.Server.Controllers
             {
                 name = abilityName,
                 description = clauseText.Trim(),
+                generatedBy = "mse-compiler",
                 abilityKeywords,
                 activateCost,
                 type = "Triggered",
@@ -762,7 +1007,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 playerCounterRegistrations = Array.Empty<object>(),
                 broadcastOnTrigger = true,
                 buffDisplay = true,
-                isActive = true,
+                isActive = clauseComplete,
                 version = "1.0"
             };
 
@@ -772,7 +1017,8 @@ namespace ShadowverseBeyond.Server.Controllers
                 Description = clauseText.Trim(),
                 AbilityType = 1,
                 Priority = 0,
-                IsActive = true,
+                IsActive = clauseComplete,
+                HasEffects = hasEffects,
                 DslValid = dslValid,
                 Notes = string.Join(" ", notes),
                 JsonConfig = JsonSerializer.Serialize(jsonConfigObj)
@@ -798,40 +1044,38 @@ namespace ShadowverseBeyond.Server.Controllers
 
         private static object StaticVal(object val) => new
         {
-            source = "Static",
             value = val
         };
 
+        private static string AddTarget(List<object> targets, object targetObj)
+        {
+            targets.Add(targetObj);
+            return $"target{targets.Count}";
+        }
+
         private static object BuildTarget(string sourcePoolExpression, bool requireChoice, int? randomCount = null)
         {
-            var operations = new List<object>();
-            if (randomCount.HasValue && randomCount.Value > 0)
-            {
-                operations.Add(new
-                {
-                    type = "Take",
-                    strategy = "Random",
-                    count = StaticVal(randomCount.Value)
-                });
-            }
+            var finalExpr = (randomCount.HasValue && randomCount.Value > 0)
+                ? $"{sourcePoolExpression}.take(random {randomCount.Value})"
+                : sourcePoolExpression;
 
             return new
             {
                 isEnabled = true,
                 requireValidTarget = false,
-                targetHandlingStrategy = "DoNotIntercept",
+                targetHandlingStrategy = 0,
                 query = new
                 {
-                    sourcePoolExpression,
-                    operations
+                    sourcePoolExpression = finalExpr,
+                    operations = Array.Empty<object>()
                 },
                 playerChoiceOptions = requireChoice
                     ? new
                     {
                         isRequired = true,
-                        minSelections = 1,
-                        maxSelections = 1,
-                        selectionTimeoutSeconds = 30
+                        canCancel = true,
+                        minCount = 1,
+                        maxCount = 1
                     }
                     : null
             };
@@ -885,6 +1129,8 @@ namespace ShadowverseBeyond.Server.Controllers
             public string CardName { get; set; } = string.Empty;
             public List<GeneratedAbilityDraftDto> Abilities { get; set; } = new();
             public List<string> DetectedKeywords { get; set; } = new();
+            public List<string> UnrecognizedClauses { get; set; } = new();
+            public bool FullyCompiled { get; set; }
         }
 
         public class GeneratedAbilityDraftDto
@@ -894,6 +1140,7 @@ namespace ShadowverseBeyond.Server.Controllers
             public int AbilityType { get; set; } = 1;
             public int Priority { get; set; } = 0;
             public bool IsActive { get; set; } = true;
+            public bool HasEffects { get; set; } = true;
             public bool DslValid { get; set; } = true;
             public string Notes { get; set; } = string.Empty;
             public string JsonConfig { get; set; } = string.Empty;

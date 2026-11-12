@@ -372,7 +372,10 @@ export function showCardDetailModal(card, options = {}) {
     const rawClass = resolveField(card, ['class', 'Class', 'cardClass', 'CardClass'], '-');
     const cardClass = getCardClassLabel(rawClass);
     const rawType = resolveField(card, ['type', 'Type', 'cardType', 'CardType'], '');
-    const isFollower = normalizeEnumValue(rawType) === 'follower';
+    const normTypeLower = normalizeEnumValue(rawType);
+    const isFollower = normTypeLower === 'follower';
+    const isLeader = normTypeLower === 'leader';
+    const isMirage = Boolean(card?.isMirageCard ?? card?.IsMirageCard);
     const rawTribe = card?.tribe ?? card?.Tribe ?? card?.cardTribe ?? card?.CardTribe ?? [];
     const tribeList = Array.isArray(rawTribe) ? rawTribe : [rawTribe];
     const tribeText = tribeList
@@ -383,6 +386,12 @@ export function showCardDetailModal(card, options = {}) {
     const costValue = resolveNumber(card, ['cost', 'Cost'], 0);
     const attackValue = resolveNumber(card, ['attack', 'Attack'], 0);
     const healthValue = resolveNumber(card, ['health', 'Health'], 0);
+    const rawMirageBuyCost = card?.mirageBuyCost ?? card?.MirageBuyCost ?? card?.buyCost ?? card?.BuyCost;
+    const mirageBuyCost = isMirage && !isLeader
+        ? (rawMirageBuyCost !== null && rawMirageBuyCost !== undefined && Number.isFinite(Number(rawMirageBuyCost))
+            ? Number(rawMirageBuyCost)
+            : 3)
+        : null;
     const rarityClass = resolveRarityClass(card);
     const descriptionFallback = Array.isArray(card?.effectDescriptions)
         ? card.effectDescriptions.filter(Boolean).join('\n')
@@ -394,7 +403,8 @@ export function showCardDetailModal(card, options = {}) {
     const resolvedDetailUrl = normalizedDetailUrl || resolveArtUrl(resolveField(card, ['artDetail', 'ArtDetail'], ''));
     const previewUrl = resolvedPreviewUrl || resolvedDetailUrl;
     const detailUrl = resolvedDetailUrl;
-    const inspectDisabled = !detailUrl;
+    const canDynamicMseInspect = !detailUrl && isMirage;
+    const inspectDisabled = !detailUrl && !canDynamicMseInspect;
     const abilityHtml = buildAbilityHtml(description, card.isIntromezzoActive ?? card.IsIntromezzoActive);
     const artHtml = previewUrl
         ? `<img class="card-preview-image" src="${previewUrl}" alt="${escapeHtml(name)}">`
@@ -458,10 +468,24 @@ export function showCardDetailModal(card, options = {}) {
                                     ${artHtml}
                                 </div>
 
+                                ${isMirage && isLeader ? '' : (isMirage ? `
+                                <div class="card-stat-indicator stat-cost is-mirage-tier" title="酒馆星级 ★${Math.max(1, costValue)}">
+                                    ${renderStatIcon(Icons.cost, 'card-stat-icon')}
+                                    ${costValue >= 1 && costValue <= 7
+                                        ? `<img class="card-stat-star-sprite" src="/mse-beyond/numbers/mirage-stars/${costValue}.png" alt="★${costValue}">`
+                                        : `<span class="card-stat-value">★${Math.max(1, costValue)}</span>`}
+                                </div>
+                                ` : `
                                 <div class="card-stat-indicator stat-cost">
                                     ${renderStatIcon(Icons.cost, 'card-stat-icon')}
                                     <span class="card-stat-value">${costValue}</span>
                                 </div>
+                                `)}
+                                ${mirageBuyCost !== null ? `
+                                <div class="card-stat-indicator stat-mirage-buy-cost" title="酒馆购买消耗金币">
+                                    <span class="card-stat-gold-value">${mirageBuyCost}G</span>
+                                </div>
+                                ` : ''}
                                 ${statIndicatorsHtml}
 
                                 <button class="inspect-btn" type="button" ${inspectDisabled ? 'disabled' : ''} aria-label="Inspect detail art">
@@ -621,9 +645,68 @@ export function showCardDetailModal(card, options = {}) {
     },!options.stylePreferenceApplied).catch(console.warn);
     const inspectBtn = overlay.querySelector('.inspect-btn');
     if (inspectBtn && !inspectDisabled) {
-        inspectBtn.addEventListener('click', (event) => {
+        inspectBtn.addEventListener('click', async (event) => {
             event.stopPropagation();
-            showCardDetailImageModal(detailUrl);
+            if (detailUrl) {
+                showCardDetailImageModal(detailUrl);
+                return;
+            }
+            if (!canDynamicMseInspect) return;
+            inspectBtn.disabled = true;
+            try {
+                const { renderCard, loadCardFonts } = await import('../mse-editor-test/renderer.js');
+                await loadCardFonts('zh-CN', { includeFooter: true }).catch(() => {});
+                const rawRarityStr = normalizeEnumName(resolveField(card, ['rarity', 'Rarity'], 'Bronze')) || 'Bronze';
+                const mseRarity = rawRarityStr === 'Legendary' ? 'Legend' : (['Bronze', 'Silver', 'Gold', 'Legend'].includes(rawRarityStr) ? rawRarityStr : 'Bronze');
+                const mseClass = normalizeEnumName(rawClass) || 'Neutral';
+                const mseType = normalizeEnumName(rawType) || 'Follower';
+                const savedPres = card?.presentation && typeof card.presentation === 'object' ? card.presentation : null;
+                const mseSnapshot = {
+                    name: name || '未命名卡牌',
+                    type: mseType,
+                    class: ['Neutral', 'Forestcraft', 'Swordcraft', 'Runecraft', 'Dragoncraft', 'Abysscraft', 'Havencraft', 'Portalcraft'].includes(mseClass) ? mseClass : 'Neutral',
+                    rarity: mseRarity,
+                    cardSet: resolveField(card, ['card_set', 'cardSet', 'CardSet'], '幻境战棋'),
+                    cost: isLeader ? 0 : Math.max(1, costValue || 1),
+                    attack: attackValue,
+                    health: isLeader ? Math.max(1, healthValue || 20) : healthValue,
+                    tribe: tribeList.map(item => (item ?? '').toString().trim()).filter(Boolean),
+                    isCollectible: Boolean(card?.isCollectible ?? card?.IsCollectible ?? true),
+                    isMirageCard: true,
+                    mirageBuyCost,
+                    presentation: {
+                        template: 'shadowverse-beyond',
+                        version: 1,
+                        language: savedPres?.language || 'zh-CN',
+                        fontSize: savedPres?.fontSize || 16.8,
+                        autoFitFontSize: savedPres?.autoFitFontSize ?? true,
+                        alternateArt: Boolean(savedPres?.alternateArt),
+                        artist: savedPres?.artist || '',
+                        showArtist: Boolean(savedPres?.artist),
+                        art: {
+                            src: previewUrl || '',
+                            crop: { zoom: 1, x: 0.5, y: 0.5, flipX: false, ...(savedPres?.art?.crop || {}) }
+                        },
+                        background: savedPres?.background || '',
+                        cardPackLogo: '',
+                        sections: Array.isArray(savedPres?.sections) && savedPres.sections.length > 0
+                            ? savedPres.sections
+                            : [
+                                { text: description || '', style: '普通', icon: '' },
+                                { text: '', style: '普通', icon: '' },
+                                { text: '', style: '普通', icon: '' },
+                                { text: '', style: '普通', icon: '' },
+                                { text: '', style: '普通', icon: '' }
+                            ]
+                    }
+                };
+                const rendered = await renderCard(mseSnapshot);
+                showCardDetailImageModal(rendered.canvas.toDataURL('image/webp', 0.92));
+            } catch (err) {
+                console.error('CardDetailMockup: Dynamic MSE inspect render failed:', err);
+            } finally {
+                inspectBtn.disabled = false;
+            }
         });
     }
 

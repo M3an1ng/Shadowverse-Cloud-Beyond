@@ -77,6 +77,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 };
             }
 
+            if (gameState.IsMirageTournamentSeat)
+            {
+                return new DomainOperationResult
+                {
+                    Success = false,
+                    ErrorMessage = "MirageCombatResultCommittedEvent is forbidden on 8-player Mirage tournament seats."
+                };
+            }
+
             if (CombatId == Guid.Empty)
             {
                 return new DomainOperationResult
@@ -418,12 +427,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     : 1;
 
                 // 3. Branch on lethal vs next round advance on staged state
+                var shopService = context.ServiceProvider.GetService<IMirageShopService>();
                 if (remainingHealth <= 0 && stagedWinner != null && stagedLoser != null)
                 {
                     stagedIsGameOver = true;
                     stagedWinnerId = stagedWinner.PlayerId;
                     stagedLoserId = stagedLoser.PlayerId;
                     stagedEndReason = $"幻境战斗结算：主战者受到 {Outcome.LeaderDamage} 点伤害，生命值归零";
+
+                    shopService?.ReturnEliminatedPlayerCardsToPool(stagedGameState, stagedLoser.PlayerId);
 
                     stagedGameState.Status = GameStatus.Finished;
                     stagedGameState.Phase = GamePhase.GameOver;
@@ -443,7 +455,6 @@ namespace ShadowverseBeyond.Server.Domain.Events
                         };
                     }
 
-                    var shopService = context.ServiceProvider.GetService<IMirageShopService>();
                     if (shopService == null)
                     {
                         return new DomainOperationResult
@@ -453,13 +464,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
                         };
                     }
 
-                    var nextRoundP1Offers = PreBuildNextRoundShopOffers(stagedGameState.Player1, stagedGameState.Mirage!.Rules, shopService);
-                    var nextRoundP2Offers = PreBuildNextRoundShopOffers(stagedGameState.Player2, stagedGameState.Mirage.Rules, shopService);
-
                     var nextRound = RoundNumber + 1;
                     stagedAdvancedToRound = nextRound;
 
-                    stagedGameState.Mirage.RoundNumber = nextRound;
+                    stagedGameState.Mirage!.RoundNumber = nextRound;
                     stagedGameState.Mirage.ClosingRecruitRoundNumber = null;
                     stagedGameState.Phase = GamePhase.Recruit;
                     stagedGameState.Mirage.ReadyPlayerIds.Clear();
@@ -472,10 +480,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     stagedGameState.TurnStartedAtUtc = now;
                     stagedGameState.TurnEndsAtUtc = now.AddSeconds(timeoutSeconds);
 
-                    stagedGameState.Player1.Mirage.ShopOffers = nextRoundP1Offers;
-                    stagedGameState.Player1.Mirage.IsShopFrozen = false;
-                    stagedGameState.Player2.Mirage.ShopOffers = nextRoundP2Offers;
-                    stagedGameState.Player2.Mirage.IsShopFrozen = false;
+                    shopService.RefreshShopForNewRound(stagedGameState.Player1, stagedGameState.Mirage);
+                    shopService.RefreshShopForNewRound(stagedGameState.Player2, stagedGameState.Mirage);
 
                     var roundGold = stagedGameState.Mirage.Rules.GetRoundBaseGold(nextRound);
                     var p1Reset = stagedGameState.Player1.ResetForMirageRoundStart(stagedContext, roundGold, decrementUpgradeCost: true);
@@ -617,6 +623,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     mirage.ReadyPlayerIds.Clear();
                 }
 
+                if (stagedGameState.Mirage != null)
+                {
+                    mirage.SharedCardPool = new Dictionary<int, int>(stagedGameState.Mirage.SharedCardPool);
+                    mirage.InitialCardPoolCaps = new Dictionary<int, int>(stagedGameState.Mirage.InitialCardPoolCaps);
+                    mirage.ReturnedEliminatedPlayerIds = new HashSet<Guid>(stagedGameState.Mirage.ReturnedEliminatedPlayerIds);
+                }
+
                 mirage.LastCombatId = CombatId;
                 mirage.LastCombatRoundNumber = RoundNumber;
                 mirage.LastCombatWinnerPlayerId = Outcome.WinnerPlayerId;
@@ -630,7 +643,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return new DomainOperationResult { Success = true };
         }
 
-        private static Dictionary<Guid, CardInstance> CollectAllCards(GameState gameState)
+        internal static Dictionary<Guid, CardInstance> CollectAllCards(GameState gameState)
         {
             var cards = new Dictionary<Guid, CardInstance>();
             void Visit(CardInstance? card)
@@ -657,7 +670,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return cards;
         }
 
-        private static GameState BuildStagedGameState(
+        internal static GameState BuildStagedGameState(
             GameState liveGame,
             IReadOnlyDictionary<Guid, CardInstance> liveCardsById,
             IServiceProvider stagedServices,
@@ -747,7 +760,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return stagedGame;
         }
 
-        private static PlayerState CloneStagedPlayerState(
+        internal static PlayerState CloneStagedPlayerState(
             PlayerState livePlayer,
             IReadOnlyDictionary<Guid, CardInstance> stagedCardsById)
         {
@@ -760,6 +773,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 Environment = livePlayer.Environment,
                 Rule = livePlayer.Rule,
                 IsTakeTwo = livePlayer.IsTakeTwo,
+                IsMirageOpponentProxy = livePlayer.IsMirageOpponentProxy,
                 UserDeckId = livePlayer.UserDeckId,
                 IsAI = livePlayer.IsAI,
                 IsFirst = livePlayer.IsFirst,
@@ -828,10 +842,23 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return staged;
         }
 
-        private static MirageMatchState CloneStagedMirageMatchState(MirageMatchState liveMirage)
+        internal static MirageMatchState CloneStagedMirageMatchState(MirageMatchState liveMirage)
         {
+            Dictionary<int, int> poolCopy;
+            Dictionary<int, int> capsCopy;
+            HashSet<Guid> returnedCopy;
+            lock (liveMirage.SharedPoolSyncRoot)
+            {
+                poolCopy = new Dictionary<int, int>(liveMirage.SharedCardPool);
+                capsCopy = new Dictionary<int, int>(liveMirage.InitialCardPoolCaps);
+                returnedCopy = new HashSet<Guid>(liveMirage.ReturnedEliminatedPlayerIds);
+            }
+
             return new MirageMatchState
             {
+                TournamentRoomId = liveMirage.TournamentRoomId,
+                TournamentSeatIndex = liveMirage.TournamentSeatIndex,
+                IsNextRoundGateClosed = liveMirage.IsNextRoundGateClosed,
                 RoundNumber = liveMirage.RoundNumber,
                 ClosingRecruitRoundNumber = liveMirage.ClosingRecruitRoundNumber,
                 ActiveCombatId = liveMirage.ActiveCombatId,
@@ -843,6 +870,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 LastCombatStepCount = liveMirage.LastCombatStepCount,
                 ReadyPlayerIds = new HashSet<Guid>(liveMirage.ReadyPlayerIds),
                 CommittedCombatIds = new HashSet<Guid>(liveMirage.CommittedCombatIds),
+                SharedCardPool = poolCopy,
+                InitialCardPoolCaps = capsCopy,
+                ReturnedEliminatedPlayerIds = returnedCopy,
                 Rules = new MirageRuleConfig
                 {
                     HardGoldCap = liveMirage.Rules.HardGoldCap,
@@ -852,12 +882,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     SellRefund = liveMirage.Rules.SellRefund,
                     MaxTavernTier = liveMirage.Rules.MaxTavernTier,
                     MaxCombatSteps = liveMirage.Rules.MaxCombatSteps,
-                    BaseUpgradeCostByTargetTier = new Dictionary<int, int>(liveMirage.Rules.BaseUpgradeCostByTargetTier)
+                    BaseUpgradeCostByTargetTier = new Dictionary<int, int>(liveMirage.Rules.BaseUpgradeCostByTargetTier),
+                    InitialCopiesByTier = new Dictionary<int, int>(liveMirage.Rules.InitialCopiesByTier)
                 }
             };
         }
 
-        private static void ApplyStagedPlayerStateInMemory(
+        internal static void ApplyStagedPlayerStateInMemory(
             PlayerState livePlayer,
             PlayerState stagedPlayer,
             IReadOnlyDictionary<Guid, CardInstance> liveCardsById)
@@ -909,40 +940,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
         }
 
-        private static List<MirageShopOffer> PreBuildNextRoundShopOffers(
-            PlayerState player,
-            MirageRuleConfig rules,
-            IMirageShopService shopService)
-        {
-            var miragePlayer = player.Mirage!;
-            var targetSlots = rules.GetShopSlotCount(miragePlayer.TavernTier);
-            if (miragePlayer.IsShopFrozen)
-            {
-                var preserved = miragePlayer.ShopOffers
-                    .Where(o => o != null)
-                    .Select(o => new MirageShopOffer
-                    {
-                        OfferId = o.OfferId,
-                        CardDefinitionId = o.CardDefinitionId,
-                        TavernTier = o.TavernTier,
-                        BuyCost = o.BuyCost
-                    })
-                    .ToList();
-
-                var missingSlots = Math.Max(0, targetSlots - preserved.Count);
-                if (missingSlots > 0)
-                {
-                    var refill = shopService.RollShopOffers(miragePlayer.TavernTier, rules, missingSlots);
-                    preserved.AddRange(refill);
-                }
-
-                return preserved;
-            }
-
-            return shopService.RollShopOffers(miragePlayer.TavernTier, rules, targetSlots);
-        }
-
-        private static bool TryDrainStagedBuffEvents(
+        internal static bool TryDrainStagedBuffEvents(
             IEnumerable<IGameEvent>? initialEvents,
             GameContext stagedContext,
             out string? errorMessage)
@@ -1011,7 +1009,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
             return $"第 {RoundNumber} 轮幻境战斗结束：{winnerToken}获胜，对{loserToken}主战者造成 {Outcome.LeaderDamage} 点伤害。进入第 {AdvancedToRoundNumber ?? (RoundNumber + 1)} 轮招募阶段。";
         }
 
-        private sealed class ReadOnlyStagedEventHistoryService : IEventHistoryService
+        internal sealed class ReadOnlyStagedEventHistoryService : IEventHistoryService
         {
             private readonly IEventHistoryService? _inner;
 

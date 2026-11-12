@@ -321,24 +321,30 @@ namespace ShadowverseBeyond.Server.Controllers
             var isHost = request.PlayerId == room.HostPlayerId;
             var hostLeaveReason = "房主已退出，房间已解散。";
 
-            // Best-effort: explicitly end the running game now instead of waiting for disconnect timeout.
+            // 结算广播和房间收尾完成前必须保留 game -> room 映射。
             var activeGameId = room.ActiveGameId;
             var gameState = string.IsNullOrWhiteSpace(activeGameId) ? null : _gameService.GetGameState(activeGameId);
-            if (!string.IsNullOrWhiteSpace(activeGameId) && gameState != null && !gameState.IsGameOver)
+            if (!string.IsNullOrWhiteSpace(activeGameId) && gameState != null)
             {
-                var disconnectAction = new PlayerActionWrapper
+                try
                 {
-                    ActionType = "Disconnect",
-                    PlayerId = request.PlayerId,
-                    ActionData = new { Reason = "LeaveRoom" }
-                };
-
-                await _gameService.EnqueuePlayerActionAsync(activeGameId, disconnectAction);
+                    await _gameService.EndGameForRoomLeaveAsync(activeGameId, request.PlayerId, HttpContext.RequestAborted);
+                }
+                catch (TimeoutException)
+                {
+                    return StatusCode(StatusCodes.Status504GatewayTimeout, "退出结算超时，房间席位尚未释放，请稍后重试。");
+                }
+                catch (ShadowverseBeyond.Server.Exceptions.GameLogicException error)
+                {
+                    return Conflict(error.Message);
+                }
             }
 
             var leaveResult = _matchService.Leave(id, request.PlayerId, hostLeaveReason, request.Token);
             if (!leaveResult.Success)
             {
+                if (leaveResult.Error is MatchOperationError.AlreadyClosed or MatchOperationError.NotFound or MatchOperationError.NotParticipant)
+                    return Ok(ToResponse(leaveResult.Room ?? room, ResponseTokenScope.None));
                 return MapResult(leaveResult, ResponseTokenScope.None);
             }
 
@@ -699,5 +705,3 @@ namespace ShadowverseBeyond.Server.Controllers
         }
     }
 }
-
-

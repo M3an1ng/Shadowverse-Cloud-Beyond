@@ -1,4 +1,5 @@
 const cardArtLoadPromises = new Map();
+const loadedCardArtUrls = new Set();
 const queuedCardArtTasks = new Map();
 const pendingCardArtTasks = [];
 const CARD_ART_RETRY_COUNT = 2;
@@ -157,6 +158,7 @@ async function loadCardArtUrl(url) {
         const targetUrl = attempt === 0 ? url : withRetryQuery(url, attempt);
         try {
             await probeImage(targetUrl);
+            loadedCardArtUrls.add(url);
             return url;
         } catch (error) {
             if (attempt >= CARD_ART_RETRY_COUNT) {
@@ -231,6 +233,7 @@ export function preloadCardArt(rawPath, options = {}) {
 
 export function applyCardArtBackground(artEl, rawPath, options = {}) {
     if (!artEl) return;
+    const previousUrl = artEl.dataset.artUrl || '';
     const resolvedUrl = resolveArtUrl(rawPath);
     artEl.dataset.artUrl = resolvedUrl;
 
@@ -240,8 +243,17 @@ export function applyCardArtBackground(artEl, rawPath, options = {}) {
         return;
     }
 
+    if (loadedCardArtUrls.has(resolvedUrl)) {
+        if (previousUrl !== resolvedUrl || !artEl.classList.contains('has-art') || !artEl.style.backgroundImage) {
+            artEl.style.backgroundImage = `url('${resolvedUrl}')`;
+            artEl.classList.add('has-art');
+        }
+        return;
+    }
+
     void preloadCardArt(rawPath, options)
         .then(loadedUrl => {
+            loadedCardArtUrls.add(loadedUrl);
             if (artEl.dataset.artUrl !== loadedUrl) return;
             artEl.style.backgroundImage = `url('${loadedUrl}')`;
             artEl.classList.add('has-art');

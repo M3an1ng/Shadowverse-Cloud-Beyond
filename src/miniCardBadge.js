@@ -1,6 +1,6 @@
 import "./styles/mini-card-badge.css";
 let badgeSequence = 0;
-export function miniCardBadge(kind, value) {
+export function miniCardBadge(kind, value, { isMirage = false } = {}) {
   const regions = {
     cost: { x: 15, y: 58, width: 167, height: 167 },
     attack: { x: 27, y: 771, width: 157, height: 182 },
@@ -55,6 +55,16 @@ export function miniCardBadge(kind, value) {
   img.setAttribute("width", "736");
   img.setAttribute("height", "967");
   svg.append(defs, img);
+  if (isMirage && kind === "cost") {
+    const tier = Math.max(1, Math.trunc(Number(value) || 1));
+    root.setAttribute("aria-label", `星级 ★${tier}`);
+    const number = document.createElement("span");
+    number.className = "card-badge-number";
+    number.style.fontSize = "0.78em";
+    number.textContent = `★${tier}`;
+    root.append(svg, number);
+    return root;
+  }
   const number = document.createElement("span");
   number.className = "card-badge-number";
   number.textContent = value;

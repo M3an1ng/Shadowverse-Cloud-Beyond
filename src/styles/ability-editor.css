@@ -2419,3 +2419,63 @@ input:checked + .toggle-slider:before {
     background: transparent;
     border: none;
 }
+
+/* Compact Mobile Landscape Wizard Mode (<= 540px height) */
+@media (max-height: 540px) and (orientation: landscape) {
+    .wizard-header {
+        padding: 6px 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+    }
+
+    .wizard-title h3 {
+        font-size: 0.96rem;
+    }
+
+    .wizard-subtitle {
+        display: none;
+    }
+
+    .wizard-progress {
+        margin-top: 0;
+        flex: 1;
+        max-width: 460px;
+    }
+
+    .wizard-progress::before {
+        top: 11px;
+        left: 36px;
+        right: 36px;
+    }
+
+    .progress-step {
+        width: auto;
+        min-width: 64px;
+    }
+
+    .progress-step .step-indicator {
+        width: 22px;
+        height: 22px;
+        font-size: 0.72rem;
+    }
+
+    .progress-step .step-label {
+        font-size: 0.68rem;
+        margin-top: 2px;
+    }
+
+    .wizard-content {
+        padding: 10px 14px;
+    }
+
+    .wizard-footer {
+        padding: 6px 14px;
+    }
+
+    .wizard-footer button {
+        padding: 5px 12px;
+        font-size: 0.78rem;
+    }
+}

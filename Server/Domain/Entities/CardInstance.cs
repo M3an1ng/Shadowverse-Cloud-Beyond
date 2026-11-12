@@ -113,6 +113,21 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public bool IsMirageTriple { get; set; }
 
         /// <summary>
+        /// Tracks exact shared-pool copy ownership held by this runtime instance (CardDefinitionId -> copy count).
+        /// </summary>
+        public Dictionary<int, int> MiragePoolHoldings { get; set; } = new();
+
+        public void AddMiragePoolHolding(int cardDefinitionId, int count = 1)
+        {
+            if (cardDefinitionId <= 0 || count <= 0)
+            {
+                return;
+            }
+
+            MiragePoolHoldings[cardDefinitionId] = MiragePoolHoldings.GetValueOrDefault(cardDefinitionId) + count;
+        }
+
+        /// <summary>
         /// In a combat sandbox, stores the original recruit-state CardInstance.InstanceId for permanent growth commit.
         /// </summary>
         public Guid? OriginInstanceId { get; set; }
@@ -1041,6 +1056,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             public int ZoneStayTurn { get; init; }
             public bool IsMirageRecruited { get; init; }
             public bool IsMirageTriple { get; init; }
+            public Dictionary<int, int> MiragePoolHoldings { get; init; } = new();
             public Guid? OriginInstanceId { get; init; }
             public int? BaseAttackOverride { get; init; }
             public int? BaseHealthOverride { get; init; }
@@ -1068,6 +1084,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 ZoneStayTurn = ZoneStayTurn,
                 IsMirageRecruited = IsMirageRecruited,
                 IsMirageTriple = IsMirageTriple,
+                MiragePoolHoldings = new Dictionary<int, int>(MiragePoolHoldings),
                 OriginInstanceId = OriginInstanceId,
                 BaseAttackOverride = BaseAttackOverride,
                 BaseHealthOverride = BaseHealthOverride,
@@ -1150,6 +1167,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             ZoneStayTurn = source.ZoneStayTurn;
             IsMirageRecruited = source.IsMirageRecruited;
             IsMirageTriple = source.IsMirageTriple;
+            MiragePoolHoldings = source.MiragePoolHoldings != null
+                ? new Dictionary<int, int>(source.MiragePoolHoldings)
+                : new Dictionary<int, int>();
             OriginInstanceId = source.OriginInstanceId;
             BaseAttackOverride = source.BaseAttackOverride;
             BaseHealthOverride = source.BaseHealthOverride;
@@ -1633,6 +1653,13 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             transformedCard = factory.CreateAndRegisterNewCard(context.CurrentGameState, newDefinition.Id, OwnerPlayerId, CardZone.Staging);
             transformedCard.CurrentZone = zone;
             transformedCard.ZoneIndex = ZoneIndex;
+            transformedCard.IsMirageRecruited = IsMirageRecruited;
+            transformedCard.IsMirageTriple = IsMirageTriple;
+            if (MiragePoolHoldings.Count > 0)
+            {
+                transformedCard.MiragePoolHoldings = new Dictionary<int, int>(MiragePoolHoldings);
+                MiragePoolHoldings.Clear();
+            }
             if (zoneList != null) zoneList[index] = transformedCard;
             if (owner.Leader == this) owner.Leader = transformedCard;
             CurrentZone = CardZone.Removed;

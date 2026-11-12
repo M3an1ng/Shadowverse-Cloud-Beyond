@@ -55,20 +55,239 @@
     z-index: 9680;
 }
 
+.bui-alternate-cast-effect {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 9681;
+    pointer-events: none;
+}
+
+.bui-alternate-cast-label {
+    --cast-accent: #9eeaff;
+    position: absolute;
+    top: calc(100% + 9px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 3px 13px 3px 15px;
+    border-block: 1px solid var(--cast-accent);
+    clip-path: polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%);
+    background: #101823;
+    color: var(--cast-accent);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-shadow: 0 0 8px var(--cast-accent);
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.bui-alternate-cast-label.is-crystalize {
+    --cast-accent: #f5d896;
+}
+
+#game-container .bui-motion-carrier.is-self-cast > .card:not(.amulet) {
+    box-shadow:
+        0 0 22px rgba(56, 189, 248, 0.72),
+        0 18px 38px rgba(0, 0, 0, 0.92);
+    border-color: #bae6fd;
+}
+
+#game-container .bui-motion-carrier.is-opp-cast > .card:not(.amulet) {
+    box-shadow:
+        0 0 24px rgba(244, 63, 94, 0.72),
+        0 18px 38px rgba(0, 0, 0, 0.92);
+    border-color: #fda4af;
+}
+
+/* 落地边框扩散脉冲 (.bui-landing-pulse) */
+#game-container .bui-landing-pulse {
+    position: absolute;
+    inset: -3px;
+    border-radius: 8px;
+    border: 2px solid rgba(125, 211, 252, 0.88);
+    box-shadow: 0 0 16px rgba(56, 189, 248, 0.65);
+    pointer-events: none;
+    z-index: 25;
+}
+
+#game-container .bui-landing-pulse.is-crimson {
+    border-color: rgba(251, 113, 133, 0.9);
+    box-shadow: 0 0 16px rgba(244, 63, 94, 0.68);
+}
+
+#game-container .bui-landing-pulse.is-gold {
+    border-color: rgba(253, 224, 71, 0.92);
+    box-shadow: 0 0 18px rgba(234, 179, 8, 0.72);
+}
+
 #game-container .bui-exit-clip-shell {
     z-index: 9630;
     will-change: clip-path, translate, scale, opacity;
 }
 
+#game-container .bui-vanish-laser {
+    position: absolute;
+    left: -8px;
+    right: -8px;
+    bottom: 0%;
+    height: 4px;
+    background: linear-gradient(90deg, transparent 0%, #38bdf8 18%, #f0f9ff 50%, #38bdf8 82%, transparent 100%);
+    box-shadow:
+        0 0 12px #38bdf8,
+        0 0 24px rgba(56, 189, 248, 0.85);
+    border-radius: 999px;
+    pointer-events: none;
+    z-index: 32;
+}
+
+/* 撞击十字斜切星芒 (.bui-impact-burst) */
 #game-container .bui-impact-burst {
+    position: absolute;
+    width: 92px;
+    height: 92px;
+    margin-left: -46px;
+    margin-top: -46px;
+    pointer-events: none;
     z-index: 9690;
+    background:
+        radial-gradient(circle, rgba(255, 241, 242, 0.92) 0%, rgba(251, 113, 133, 0.55) 28%, transparent 66%),
+        linear-gradient(135deg, transparent 45%, #fff1f2 49%, #fb7185 51%, transparent 55%),
+        linear-gradient(45deg, transparent 46%, #ffe4e6 49.5%, #f43f5e 50.5%, transparent 54%);
+    filter: drop-shadow(0 0 12px rgba(244, 63, 94, 0.88));
 }
 
+#game-container .bui-impact-burst.is-shield-break {
+    background:
+        radial-gradient(circle, rgba(254, 249, 195, 0.95) 0%, rgba(250, 204, 21, 0.58) 32%, transparent 68%),
+        linear-gradient(135deg, transparent 45%, #fef9c3 49%, #facc15 51%, transparent 55%),
+        linear-gradient(45deg, transparent 45%, #fef08a 49%, #eab308 51%, transparent 55%);
+    border: 1.5px solid rgba(253, 224, 71, 0.85);
+    border-radius: 50%;
+    filter: drop-shadow(0 0 14px rgba(250, 204, 21, 0.92));
+}
+
+/* 中心爆裂伤害 / 治疗 / 破盾浮字 (.bui-float-num) */
 #game-container .bui-float-num {
+    position: absolute;
+    pointer-events: none;
     z-index: 9720;
+    font-family: 'Orbitron', var(--font-mono), monospace;
+    font-size: 28px;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    transform-origin: center center;
+    -webkit-text-stroke: 1.2px rgba(5, 6, 10, 0.95);
 }
 
-#game-container .bui-evo-burst,
-#game-container .bui-spell-arcane-burst {
+#game-container .bui-float-num.is-damage {
+    color: #ffe4e6;
+    text-shadow:
+        0 2px 0 #090a0f,
+        0 0 10px rgba(244, 63, 94, 0.95),
+        0 0 22px rgba(225, 29, 72, 0.82);
+}
+
+#game-container .bui-float-num.is-heal {
+    color: #d1fae5;
+    text-shadow:
+        0 2px 0 #090a0f,
+        0 0 10px rgba(52, 211, 153, 0.95),
+        0 0 22px rgba(16, 185, 129, 0.82);
+}
+
+#game-container .bui-float-num.is-shield {
+    font-size: 15px;
+    letter-spacing: 0.12em;
+    color: #fef08a;
+    text-shadow:
+        0 2px 0 #090a0f,
+        0 0 12px rgba(250, 204, 21, 0.95);
+}
+
+/* 进化 / 超进化双环能量冲击波 (.bui-evo-burst) */
+#game-container .bui-evo-burst {
+    position: absolute;
+    width: 148px;
+    height: 148px;
+    margin-left: -74px;
+    margin-top: -74px;
+    pointer-events: none;
     z-index: 9670;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#game-container .bui-evo-ring {
+    position: absolute;
+    inset: 0;
+    border: 2px solid rgba(251, 191, 36, 0.88);
+    border-radius: 16px;
+    transform: rotate(45deg);
+    box-shadow:
+        0 0 18px rgba(245, 158, 11, 0.75),
+        inset 0 0 14px rgba(253, 224, 71, 0.45);
+}
+
+#game-container .bui-evo-ring.is-inner {
+    inset: 18px;
+    border-radius: 50%;
+    border-color: #fef08a;
+}
+
+#game-container .bui-evo-burst.is-super .bui-evo-ring {
+    border-color: rgba(216, 180, 254, 0.95);
+    box-shadow:
+        0 0 24px rgba(168, 85, 247, 0.88),
+        inset 0 0 18px rgba(233, 213, 255, 0.58);
+}
+
+#game-container .bui-evo-burst.is-super .bui-evo-ring.is-inner {
+    border-color: #faf5ff;
+}
+
+#game-container .bui-evo-flare {
+    position: absolute;
+    inset: -12px;
+    background: radial-gradient(circle, rgba(254, 243, 199, 0.65) 0%, transparent 65%);
+}
+
+#game-container .bui-evo-burst.is-super .bui-evo-flare {
+    background: radial-gradient(circle, rgba(243, 232, 255, 0.78) 0%, rgba(168, 85, 247, 0.32) 42%, transparent 70%);
+}
+
+/* 法术中轴悬停释放奥术环 (.bui-spell-arcane-burst) */
+#game-container .bui-spell-arcane-burst {
+    position: absolute;
+    width: 140px;
+    height: 140px;
+    margin-left: -70px;
+    margin-top: -70px;
+    border-radius: 50%;
+    border: 2px solid rgba(186, 230, 253, 0.92);
+    box-shadow:
+        0 0 24px rgba(56, 189, 248, 0.85),
+        inset 0 0 18px rgba(125, 211, 252, 0.55);
+    pointer-events: none;
+    z-index: 9670;
+}
+
+/* 出牌无遮罩中轴悬停能量光环 (.bui-cast-hover-halo) */
+#game-container .bui-cast-hover-halo {
+    position: absolute;
+    inset: -14px;
+    border-radius: 14px;
+    pointer-events: none;
+    z-index: -1;
+    background: radial-gradient(ellipse at center, rgba(56, 189, 248, 0.34) 0%, rgba(14, 165, 233, 0.12) 52%, transparent 74%);
+    box-shadow: 0 0 28px rgba(56, 189, 248, 0.32);
+}
+
+#game-container .bui-cast-hover-halo.is-opp {
+    background: radial-gradient(ellipse at center, rgba(244, 63, 94, 0.36) 0%, rgba(225, 29, 72, 0.14) 52%, transparent 74%);
+    box-shadow: 0 0 28px rgba(244, 63, 94, 0.34);
 }

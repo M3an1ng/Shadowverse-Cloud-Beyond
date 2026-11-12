@@ -32,7 +32,8 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.UpdatedAt, opt => opt.MapFrom(src => src.UpdatedAt))
                 .ForMember(dest => dest.UpdatedBy, opt => opt.MapFrom(src => src.UpdatedBy))
                 .ForMember(dest => dest.IsMirageCard, opt => opt.MapFrom(src => src.IsMirageCard))
-                .ForMember(dest => dest.MirageTavernTier, opt => opt.MapFrom(src => src.MirageTavernTier));
+                .ForMember(dest => dest.MirageTavernTier, opt => opt.MapFrom(src => src.MirageTavernTier))
+                .ForMember(dest => dest.MirageBuyCost, opt => opt.MapFrom(src => src.MirageBuyCost));
 
             // Properties with matching names and types are mapped automatically by convention:
             // Name, Type, Rarity, CardSet, Cost, Attack, Health, Description
@@ -53,7 +54,8 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.AbilityIds, opt => opt.MapFrom(src => src.AbilityIds ?? new List<long>()))
                 .ForMember(dest => dest.IsCollectible, opt => opt.MapFrom(src => src.IsCollectible ?? true))
                 .ForMember(dest => dest.IsMirageCard, opt => opt.MapFrom(src => src.IsMirageCard ?? false))
-                .ForMember(dest => dest.MirageTavernTier, opt => opt.MapFrom(src => src.MirageTavernTier));
+                .ForMember(dest => dest.MirageTavernTier, opt => opt.MapFrom(src => src.MirageTavernTier))
+                .ForMember(dest => dest.MirageBuyCost, opt => opt.MapFrom(src => src.MirageBuyCost));
         }
 
         private static TEnum ParseEnum<TEnum>(string value, TEnum fallback) where TEnum : struct

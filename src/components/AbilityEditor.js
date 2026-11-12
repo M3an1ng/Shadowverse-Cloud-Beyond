@@ -1,5 +1,6 @@
 import { isActiveDiscoverParameter } from '../discoverParameters.js';
 import { alternatePlayFromEffects, alternatePlayPatch } from '../alternatePlayConfig.js';
+import { normalizeAbilityTargetsAndRefs } from '../abilityTargetNormalization.js';
 import { confirmDialog } from '../siteDialog.js';
 import { showAlert } from '../siteDialog.js';
 // src/components/AbilityEditor.js - 主要的能力编辑器组件 (Wizard Mode)
@@ -106,7 +107,8 @@ export class AbilityEditor extends MetadataDrivenComponent {
         const normalizedType = ability.type || ability.Type
             || (String(legacyExecutionKind).toLowerCase() === 'aura' ? 'Continuous' : '');
         const alternatePlay = ability.alternatePlay || ability.AlternatePlay || null;
-        const effects = (ability.effects?.length ? ability.effects : [{type:'',parameters:{}}]).map(effect => ({...effect}));
+        const normalizedRefs = normalizeAbilityTargetsAndRefs(ability);
+        const effects = (normalizedRefs.effects?.length ? normalizedRefs.effects : [{type:'',parameters:{}}]).map(effect => ({...effect}));
         const mode = this.normalizeAbilityKeywords(ability).find(entry => ['Accelerate','Crystalize'].includes(entry.keyword))?.keyword;
         const boundId = alternatePlay?.playAsCardDefinitionId ?? alternatePlay?.PlayAsCardDefinitionId;
         if (boundId && mode && !effects.some(effect => ['Accelerate','Crystalize',11,12].includes(effect.type ?? effect.Type))) {
@@ -128,8 +130,8 @@ export class AbilityEditor extends MetadataDrivenComponent {
             type: normalizedType,
             executionKind: legacyExecutionKind,
             trigger,
-            conditions: ability.conditions || [],
-            targets: ability.targets || [],
+            conditions: normalizedRefs.conditions,
+            targets: normalizedRefs.targets,
             effects,
             auraConfig,
             alternatePlay: ability.alternatePlay || ability.AlternatePlay || null,

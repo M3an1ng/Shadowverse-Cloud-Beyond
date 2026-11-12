@@ -39,7 +39,7 @@ public sealed class WinrateStatsService : IWinrateStatsService
     {
         var gameState = gameContext.CurrentGameState;
         if (gameState.ReplayBranch != null) return;
-        if (gameState == null || string.IsNullOrWhiteSpace(gameState.GameId))
+        if (gameState == null || string.IsNullOrWhiteSpace(gameState.GameId) || gameState.IsMirageTournamentSeat)
         {
             return;
         }

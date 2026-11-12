@@ -56,8 +56,18 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: card owner mismatch." };
             }
 
+            if (context.CurrentGameState.IsCombatSandbox)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: Act cannot be used during auto-combat." };
+            }
+
             DomainOperationResult ExecuteCoreActCommit()
             {
+                if (card.CurrentZone != Dtos.Enums.CardZone.Field)
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: card is no longer on the field." };
+                }
+
                 if (card.HasUsedActThisTurn())
                 {
                     return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: card has already used Act this turn." };
@@ -93,7 +103,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return result;
             }
 
-            if (context.CurrentGameState.Mode == Dtos.Enums.GameMode.Mirage && !context.CurrentGameState.IsCombatSandbox)
+            if (context.CurrentGameState.Mode == Dtos.Enums.GameMode.Mirage)
             {
                 var mirage = context.CurrentGameState.Mirage;
                 if (mirage == null)
@@ -110,9 +120,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
                         return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: Mirage Recruit phase is already locked or closing." };
                     }
 
-                    if (!card.IsLeader || player.Leader?.InstanceId != card.InstanceId)
+                    var isActiveLeader = card.IsLeader && player.Leader?.InstanceId == card.InstanceId;
+                    var isFieldUnit = !card.IsLeader && player.Field.Any(c => c.InstanceId == card.InstanceId);
+                    if (!isActiveLeader && !isFieldUnit)
                     {
-                        return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: Only the active Mirage Leader can use Act during Recruit phase." };
+                        return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: Only your active Mirage Leader or field cards can use Act during Recruit phase." };
                     }
 
                     return ExecuteCoreActCommit();

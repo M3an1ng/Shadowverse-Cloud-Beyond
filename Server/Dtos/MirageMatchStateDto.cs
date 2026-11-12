@@ -14,6 +14,7 @@ namespace ShadowverseBeyond.Server.Dtos
         public int Health { get; init; }
         public int TavernTier { get; init; }
         public int BuyCost { get; init; }
+        public int RemainingPoolCopies { get; init; }
         public string? TripleGroupId { get; init; }
         public string? Class { get; init; }
         public string? Type { get; init; }
@@ -47,6 +48,9 @@ namespace ShadowverseBeyond.Server.Dtos
 
     public record MirageMatchStateDto
     {
+        public string? TournamentRoomId { get; init; }
+        public int? TournamentSeatIndex { get; init; }
+        public bool IsNextRoundGateClosed { get; init; }
         public int RoundNumber { get; init; } = 1;
         public List<Guid> ReadyPlayerIds { get; init; } = new();
         public Guid? ActiveCombatId { get; init; }
@@ -59,5 +63,7 @@ namespace ShadowverseBeyond.Server.Dtos
         public int LastCombatStepCount { get; init; }
         public int HardGoldCap { get; init; } = 10;
         public int MaxTavernTier { get; init; } = 6;
+        public Dictionary<int, int> SharedCardPool { get; init; } = new();
+        public Dictionary<int, int> InitialCardPoolCaps { get; init; } = new();
     }
 }

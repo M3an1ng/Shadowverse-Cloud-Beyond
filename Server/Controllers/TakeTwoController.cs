@@ -60,7 +60,7 @@ public sealed class TakeTwoController(ApplicationDbContext db, TakeTwoService se
     }
     public sealed record JoinRequest(string Code, string? RoomId = null);
     [HttpPost("join")] public async Task<IActionResult> Join(JoinRequest request, CancellationToken ct) { var actor = await Actor(ct); if (actor == null) return StatusCode(403); try { if (string.IsNullOrWhiteSpace(request.Code)) return BadRequest(new { error = "请输入 JoinCode" }); var room = service.Join(request.Code.Trim(), actor.Id, request.RoomId); return Ok(service.View(room, room.Players.Single(p => p.PlayerId == actor.Id))); } catch (InvalidOperationException e) { return BadRequest(new { error = e.Message }); } }
-    [HttpGet("rooms/{id}/kind")] public IActionResult Kind(string id) { try { var room = service.Find(id.Replace("-", "")); return Ok(new { takeTwo = true, roomId = room.Id }); } catch (InvalidOperationException) { return NotFound(); } }
+    [HttpGet("rooms/{id}/kind")] public IActionResult Kind(string id) { try { var room = service.Find(id.Replace("-", "")); if (room.Closed) return NotFound(); return Ok(new { takeTwo = true, roomId = room.Id }); } catch (InvalidOperationException) { return NotFound(); } }
     [HttpPost("rooms/{id}/local-test")]
     public async Task<IActionResult> LocalTest(string id, CancellationToken ct)
     {
@@ -81,22 +81,24 @@ public sealed class TakeTwoController(ApplicationDbContext db, TakeTwoService se
     {
         var actor = await Actor(ct);
         if (actor == null) return StatusCode(403);
+        TakeTwoRoom room;
+        try { room = service.Find(id); }
+        catch (InvalidOperationException) { return Ok(new { ok = true }); } // An expired room is already left.
         try
         {
-            var room = service.Find(id);
             service.Authorize(room, actor.Id, Request.Headers["X-Take-Two-Token"].FirstOrDefault() ?? "");
             service.Leave(room);
             return Ok(new { ok = true });
         }
         catch (UnauthorizedAccessException) { return StatusCode(403); }
-        catch (InvalidOperationException) { return Ok(new { ok = true }); } // An expired room is already left.
+        catch (InvalidOperationException error) { return Conflict(new { error = error.Message }); }
     }
     [HttpPost("rooms/leave-current")]
     public async Task<IActionResult> LeaveCurrent(CancellationToken ct)
     {
         var actor = await Actor(ct); if (actor == null) return StatusCode(403);
-        service.LeaveCurrent(actor.Id);
-        return Ok(new { ok = true });
+        try { service.LeaveCurrent(actor.Id); return Ok(new { ok = true }); }
+        catch (InvalidOperationException error) { return Conflict(new { error = error.Message }); }
     }
     public sealed record ActionRequest(string Action, int Sequence, string? Class, int Side = 0);
     [HttpPost("rooms/{id}/action")] public async Task<IActionResult> Act(string id, ActionRequest request, CancellationToken ct) { var actor = await Actor(ct); if (actor == null) return StatusCode(403); try { var room = service.Find(id); var seat = service.Authorize(room, actor.Id, Request.Headers["X-Take-Two-Token"].FirstOrDefault() ?? ""); service.Act(room, seat, request.Action, request.Sequence, request.Class, request.Side); return Ok(service.View(room, seat)); } catch (UnauthorizedAccessException) { return StatusCode(403); } catch (InvalidOperationException e) { return Conflict(new { error = e.Message }); } }

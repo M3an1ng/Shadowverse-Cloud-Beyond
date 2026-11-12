@@ -46,6 +46,7 @@ public sealed class MetaProgressionService : IMetaProgressionService
         CancellationToken cancellationToken)
     {
         if (gameContext.CurrentGameState.ReplayBranch != null) return;
+        if (gameContext.CurrentGameState.IsMirageTournamentSeat) return;
         var gameEndEvent = ResolveTerminalGameEndEvent(processedEvents);
         if (gameEndEvent == null)
         {

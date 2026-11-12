@@ -7,6 +7,13 @@ export function getRouteNameFromHash(hashValue) {
 }
 
 export function shouldReuseCachedHandshake(cachedHandshake, context = {}) {
+    if (cachedHandshake?.kind === 'mirage-8p') {
+        const hasRoom = Boolean(cachedHandshake.roomId);
+        if (!hasRoom) return false;
+        const routeName = String(context.routeName || '').trim();
+        return routeName === 'game' || routeName === 'mirage-lobby' || cachedHandshake.role === 'spectator';
+    }
+
     if (!cachedHandshake?.gameId) {
         return false;
     }

@@ -290,6 +290,8 @@ public partial class ApplicationDbContext : DbContext
 
       entity.Property(e => e.MirageTavernTier);
 
+      entity.Property(e => e.MirageBuyCost);
+
     });
   }
 

@@ -14,7 +14,11 @@
     display: none;
     width: 100%;
     height: 100%;
-    padding: var(--space-4);
+    padding:
+        calc(var(--space-4) + var(--safe-top, 0px))
+        calc(var(--space-4) + var(--safe-right, 0px))
+        calc(var(--space-4) + var(--safe-bottom, 0px))
+        calc(var(--space-4) + var(--safe-left, 0px));
     overflow: hidden;
     flex-direction: column;
 }
@@ -136,14 +140,14 @@
 
 /* ==========================================================================
    1. Symmetrical Corner Pods (Bottom-Left Self & Top-Right Opponent)
-      W-Shaped 5-Ring Emblem Grid + Single-Line Variable Strip
+      5-Slot HD Star-Rail Crest Dock + Segmented Telemetry Variable Strip
    ========================================================================== */
 .battle-corner-pod {
     position: absolute;
     z-index: 40;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
     font-family: var(--font-mono);
     pointer-events: auto;
 }
@@ -160,59 +164,46 @@
     align-items: flex-end;
 }
 
-/* Original W-Shaped 5-Slot Staggered Emblem Grid (3 Top, 2 Bottom) */
 #game-container .emblem-zone {
-    --emblem-size: 30px;
-    display: grid;
-    grid-template-columns: repeat(6, 18px);
-    grid-template-rows: repeat(2, 27px);
-    column-gap: 2px;
-    row-gap: 3px;
-    justify-items: center;
+    --emblem-size: 38px;
+    display: inline-flex;
     align-items: center;
-    padding: 2px;
+    gap: 8px;
+    padding: 2px 2px;
     background: transparent;
     border: none;
+    box-shadow: none;
 }
 
-#game-container .emblem-zone.is-empty {
+#game-container[data-game-mode="Mirage"] .emblem-zone.is-empty {
     display: none !important;
 }
 
-#game-container .emblem-zone .emblem-slot:nth-child(1) {
-    grid-column: 1 / span 2;
-    grid-row: 1;
-}
-
-#game-container .emblem-zone .emblem-slot:nth-child(2) {
-    grid-column: 3 / span 2;
-    grid-row: 1;
-}
-
-#game-container .emblem-zone .emblem-slot:nth-child(3) {
-    grid-column: 5 / span 2;
-    grid-row: 1;
-}
-
-#game-container .emblem-zone .emblem-slot:nth-child(4) {
-    grid-column: 2 / span 2;
-    grid-row: 2;
-}
-
-#game-container .emblem-zone .emblem-slot:nth-child(5) {
-    grid-column: 4 / span 2;
-    grid-row: 2;
-}
-
 .battle-var-strip {
-    height: 30px;
-    padding: 0 4px;
-    background: rgba(10, 11, 15, 0.92);
-    border: 1px solid rgba(196, 210, 228, 0.14);
-    border-radius: 5px;
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    min-height: 34px;
+    height: 34px;
+    padding: 0 5px;
+    background: linear-gradient(180deg, rgba(14, 18, 28, 0.94) 0%, rgba(8, 11, 18, 0.98) 100%);
+    border: 1px solid rgba(196, 210, 228, 0.18);
+    border-radius: 6px;
+    box-shadow:
+        0 8px 20px rgba(0, 0, 0, 0.72),
+        inset 0 1px 0 rgba(255, 255, 255, 0.07);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     display: inline-flex;
     align-items: center;
+    gap: 2px;
+}
+
+.battle-var-strip.is-self,
+#player1-var-strip {
+    border-left: 2.5px solid rgba(56, 189, 248, 0.78);
+}
+
+.battle-var-strip.is-opp,
+#player2-var-strip {
+    border-right: 2.5px solid rgba(251, 113, 133, 0.78);
 }
 
 .battle-extra-counters {
@@ -928,12 +919,27 @@
    Reclaims 73px top header height & scales all 5 zones + pull-up hand cleanly
    ========================================================================== */
 @media (max-height: 540px) and (orientation: landscape) {
+    .page:not(#game-page):not(#navigation-page) {
+        padding:
+            calc(6px + var(--safe-top, 0px))
+            calc(12px + var(--safe-right, 0px))
+            calc(6px + var(--safe-bottom, 0px))
+            calc(12px + var(--safe-left, 0px));
+    }
+
+    .page:not(#game-page) > .page-header {
+        margin-bottom: 6px;
+        padding-bottom: 4px;
+        padding-right: 176px;
+        min-height: 32px;
+    }
+
     #game-container {
         --battle-horizon-y: calc(50% - 11px);
     }
 
     .opponent-hand {
-        top: 3px;
+        top: calc(3px + var(--safe-top, 0px));
     }
 
     .opponent-hand .card-back {
@@ -943,10 +949,10 @@
     }
 
     .battle-center-stack {
-        top: 26px;
-        bottom: 48px;
+        top: calc(26px + var(--safe-top, 0px));
+        bottom: calc(48px + var(--safe-bottom, 0px));
         left: calc(50% - 54px);
-        width: min(560px, calc(100% - 196px));
+        width: min(560px, calc(100% - 196px - var(--safe-left, 0px) - var(--safe-right, 0px)));
         gap: 3px;
     }
 
@@ -1012,7 +1018,7 @@
     }
 
     .battle-right-dock {
-        right: 10px;
+        right: calc(10px + var(--safe-right, 0px));
         top: 50%;
         width: 196px;
         transform: translateY(-50%) scale(0.76);
@@ -1020,15 +1026,15 @@
     }
 
     .battle-corner-pod.is-top-right {
-        top: 6px;
-        right: 10px;
+        top: calc(6px + var(--safe-top, 0px));
+        right: calc(10px + var(--safe-right, 0px));
         transform: scale(0.82);
         transform-origin: top right;
     }
 
     .battle-corner-pod.is-bottom-left {
-        bottom: 6px;
-        left: 10px;
+        bottom: calc(6px + var(--safe-bottom, 0px));
+        left: calc(10px + var(--safe-left, 0px));
         transform: scale(0.82);
         transform-origin: bottom left;
     }
@@ -1048,11 +1054,55 @@
     }
 
     #spectator-toggle-view {
-        top: 38px;
-        right: 10px;
+        top: calc(38px + var(--safe-top, 0px));
+        right: calc(10px + var(--safe-right, 0px));
         width: 88px;
         height: 32px;
         font-size: 11px;
+    }
+}
+
+/* Ultra-short mobile browser landscape (e.g. non-fullscreen browser with top bar <= 385px) */
+@media (max-height: 385px) and (orientation: landscape) {
+    .battle-center-stack {
+        top: calc(18px + var(--safe-top, 0px));
+        bottom: calc(36px + var(--safe-bottom, 0px));
+        gap: 2px;
+    }
+
+    .player-info.leader-rpg-hud {
+        height: 38px;
+    }
+
+    .player-info.leader-rpg-hud .leader-rpg-inner {
+        transform: scale(0.54);
+    }
+
+    .battle-field-zone {
+        height: 76px;
+    }
+
+    .battle-field-divider {
+        height: 16px;
+    }
+
+    #turn-info {
+        font-size: 1.25rem;
+    }
+
+    .player-hand {
+        bottom: -56px;
+        transform: translateX(-50%) scale(0.64);
+    }
+
+    #game-container.mulligan-active .player-hand,
+    .player-hand:has(.hand-card-floated) {
+        bottom: 2px;
+        transform: translateX(-50%) scale(0.74);
+    }
+
+    .battle-right-dock {
+        transform: translateY(-50%) scale(0.66);
     }
 }
 

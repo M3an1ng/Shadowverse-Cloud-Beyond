@@ -789,7 +789,10 @@ public class AiTurnExecutor
                 break;
             }
 
-            await Task.Delay(ActionObservationDelayMilliseconds, cancellationToken);
+            if (!game.IsMirageTournamentSeat)
+            {
+                await Task.Delay(ActionObservationDelayMilliseconds, cancellationToken);
+            }
         }
 
         cancellationToken.ThrowIfCancellationRequested();

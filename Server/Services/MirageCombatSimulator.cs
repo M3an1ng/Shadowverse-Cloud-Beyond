@@ -449,12 +449,16 @@ namespace ShadowverseBeyond.Server.Services
 
         private int ResolveFollowerStarTier(CardInstance card)
         {
-            var entry = _shopService.GetCatalogEntry(card.BaseDefinitionId);
-            if (entry != null)
+            var def = GameDataProvider.Instance?.GetCardDefinition(card.CurrentDefinitionId)
+                ?? GameDataProvider.Instance?.GetCardDefinition(card.BaseDefinitionId)
+                ?? card.CurrentDefinition;
+            if (def != null)
             {
-                return Math.Clamp(entry.TavernTier, 1, MirageRuleConfig.DefaultMaxTavernTier);
+                return Math.Max(1, def.Cost);
             }
-            return 1;
+
+            var entry = _shopService.GetCatalogEntry(card.BaseDefinitionId);
+            return entry != null ? Math.Max(1, entry.TavernTier) : 1;
         }
 
         private static bool HasAnyLivingFollowers(PlayerState player, GameContext context)

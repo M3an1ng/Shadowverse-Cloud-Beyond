@@ -73,7 +73,7 @@ public sealed class ReplayRecorder(IServiceScopeFactory scopes, IOptions<ReplayO
 
     public async Task StartAsync(GameState game)
     {
-        if (!options.Value.EnableJournalWrites || game.Player1.IsAI || game.Player2.IsAI) return;
+        if (!options.Value.EnableJournalWrites || game.IsMirageTournamentSeat || game.Player1.IsAI || game.Player2.IsAI) return;
         var recording = new Recording { SampleKind = game.ReplayBranch != null ? "resumed" : "standard",TurnNo = game.Player1.TurnNumber + game.Player2.TurnNumber };
         if (!recordings.TryAdd(game.GameId,recording)) throw new InvalidOperationException("duplicate_replay_start");
         try

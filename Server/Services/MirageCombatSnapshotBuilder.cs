@@ -435,6 +435,7 @@ namespace ShadowverseBeyond.Server.Services
                     : (cardSnap.RuntimeState.OriginInstanceId ?? cardSnap.OriginalInstanceId);
                 var remappedRuntimeState = RemapRuntimeStateSnapshot(cardSnap.RuntimeState, allIdMap, originId);
                 card.RestoreResumeState(remappedRuntimeState, cardSnap.HealthFloorFromBuffRemoval, cardSnap.CombatContinuityVersion);
+                card.MiragePoolHoldings.Clear();
                 card.SetLastMoveReason(cardSnap.LastMoveReason);
 
                 if (cardSnap.IsLeader)

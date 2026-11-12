@@ -737,3 +737,75 @@
 .gallery-advanced > section:first-child > .gallery-range:last-child {
   margin-bottom: 0;
 }
+
+@media (max-height: 540px) and (orientation: landscape) {
+  .card-gallery-active #deck-builder-page {
+    padding-top: calc(4px + var(--safe-top, 0px)) !important;
+  }
+  .card-gallery {
+    padding: 6px 2%;
+    gap: 6px;
+  }
+  .card-gallery h1 {
+    font-size: 18px;
+    margin: 0;
+  }
+  .card-gallery > header button {
+    padding: 5px 12px;
+    font-size: 12px;
+  }
+  .gallery-search-row {
+    flex-wrap: nowrap;
+    padding: 6px 8px;
+    gap: 8px;
+  }
+  .gallery-search-row > input {
+    flex: 1 1 140px;
+    padding: 6px 10px;
+  }
+  .gallery-search-row > button,
+  .gallery-search > button {
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+  .gallery-search-row .catalog-classes button {
+    width: 32px;
+    height: 32px;
+    padding: 4px;
+  }
+  .gallery-search-row .catalog-classes img {
+    width: 22px;
+    height: 22px;
+  }
+  .gallery-results-count {
+    font-size: 14px;
+  }
+  .gallery-grid {
+    row-gap: 6px;
+    column-gap: 1.5%;
+  }
+  .gallery-grid .catalog-face {
+    height: calc(100% - 1.8em);
+  }
+  .gallery-grid .catalog-card-name {
+    font-size: 11px;
+    min-height: 1.4em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .catalog-pagination {
+    padding: 2px;
+    gap: 12px;
+  }
+  .catalog-pagination button {
+    padding: 4px 12px;
+    font-size: 12px;
+  }
+  .feature-dialog:has(.gallery-advanced) {
+    max-height: calc(var(--app-height, 100dvh) - 12px);
+  }
+  .gallery-filter-row {
+    padding: 8px 0;
+  }
+}
