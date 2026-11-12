@@ -6,7 +6,8 @@ import {
     createListSortNode,
     createListTakeNode,
     createListDistinctNode,
-    createListSelectNode
+    createListSelectNode,
+    getSemanticNodeType
 } from "./core.js";
 import { resolvePropertyChain } from "./property-chain-resolver.js";
 
@@ -23,8 +24,20 @@ export function mapDslAstDtoToUiAst(editor, dto) {
     }
     if (nodeType === "MemberAccess") {
         const path = flattenMemberAccessPath(editor, dto);
-        if (!path || path.length === 0) return null;
-        return createPropertyChainNode(editor, path);
+        if (path?.length) return createPropertyChainNode(editor, path);
+        // Properties can follow a computed object (for example find(...)).
+        // Such access is not a flat context path, but is supported by the editor.
+        let target = mapDslAstDtoToUiAst(editor, dto.target || dto.Target);
+        const members = flattenMemberAccessPath(editor, dto.member || dto.Member);
+        if (!target || !members?.length) return null;
+        for (const member of members) {
+            const properties = editor.getObjectProperties(getSemanticNodeType(target));
+            const option = properties.find(property => String(property.value).toLowerCase() === String(member).toLowerCase());
+            if (!option) return null;
+            target = editor.createDynamicMemberAccessNode(target, option);
+            if (!target) return null;
+        }
+        return target;
     }
     if (nodeType === "ParenthesizedExpression") {
         const innerDto = dto.inner || dto.Inner;

@@ -13,6 +13,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
     [GameEventMetadata("添加卡牌到手牌", "当卡牌被添加到玩家手牌时触发的事件。", EventType.AddCardToHand)]
     public class AddCardToHandEvent : GameEventBase, ICommittableEvent, ILogAnnounceableEvent
     {
+        private readonly bool transferOwnership;
         [GameEventParameter("添加的卡牌", "被添加到手牌的卡牌列表。", DslDisplayTypeName = "事件目标")]
         public List<CardInstance> CardsToAdd => Target
             .Where(t => t.Card != null)
@@ -22,9 +23,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("目标玩家", "接收卡牌的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? TargetPlayer => Source?.Player;
 
-        public AddCardToHandEvent(PlayerState targetPlayer, List<CardInstance> cardsToAdd, Guid? eventId = null, DateTime? timestamp = null)
+        public AddCardToHandEvent(PlayerState targetPlayer, List<CardInstance> cardsToAdd, Guid? eventId = null, DateTime? timestamp = null, bool transferOwnership = false)
             : base(EventType.AddCardToHand, eventId, timestamp)
         {
+            this.transferOwnership = transferOwnership;
             Source = TargetInfo.ForPlayer(targetPlayer);
             foreach (var card in cardsToAdd ?? new List<CardInstance>())
             {
@@ -43,7 +45,11 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             // The Commit method now only performs the final state change.
             // The card instances are already created by the handler.
-            return player.AddCardsToHand(CardsToAdd);
+            var result = player.AddCardsToHand(CardsToAdd);
+            if (transferOwnership)
+                foreach (var move in result.GeneratedEvents.OfType<CardMovedEvent>())
+                    move.DestinationOwnerPlayerId = player.PlayerId;
+            return result;
         }
 
         public string GetAnnouncement(GameState gameState)

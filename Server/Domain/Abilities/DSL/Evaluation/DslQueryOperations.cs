@@ -98,14 +98,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             return list.Reverse().Take(effectiveCount);
         }
 
-        public static IEnumerable<T> TakeRandom<T>(IEnumerable<T>? source, int count)
+        public static IEnumerable<T> TakeRandom<T>(IEnumerable<T>? source, int count, GameContext? context = null)
         {
             if (!TryPrepareSelection(source, count, out var list, out var effectiveCount))
             {
                 return Enumerable.Empty<T>();
             }
 
-            var rng = RandomOverride ?? Random.Shared;
+            var rng = RandomOverride ?? context?.BenchmarkRandom ?? Random.Shared;
             return list.OrderBy(_ => rng.Next()).Take(effectiveCount);
         }
 

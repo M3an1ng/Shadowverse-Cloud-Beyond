@@ -180,7 +180,7 @@ const abilityKeywordGlossary = {
     },
     Intromezzo: {
         name: '间奏',
-        description: '双方分别共享间奏状态，初始为激活。间奏能力触发时，激活则发动并转为未激活；未激活则跳过并重新激活。'
+        description: '双方分别共享间奏状态，初始为休眠。间奏能力触发时，激活则发动并转为未激活；未激活则跳过并重新激活。'
     },
     Wrath: {
         name: '狂乱',

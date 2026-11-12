@@ -666,6 +666,9 @@ namespace ShadowverseBeyond.Server.Services
             ? null
             : new DevMatchConfig
             {
+                IsLocalAiTraining = source.IsLocalAiTraining,
+                BenchmarkHostGoesFirst = source.BenchmarkHostGoesFirst,
+                BenchmarkShuffleSeed = source.BenchmarkShuffleSeed,
                 IgnoreDeckFormatConsistency = source.IgnoreDeckFormatConsistency,
                 AllowIncompleteDecks = source.AllowIncompleteDecks,
                 StartingPlayPoints = source.StartingPlayPoints,

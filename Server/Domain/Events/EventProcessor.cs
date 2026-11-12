@@ -282,7 +282,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 cardUid: card.InstanceId,
                 returnedCard: cardDto,
                 reason: e.Reason.ToString()
-            );
+            ) { IsSelfReturn = e.ReturnSourceSnapshot?.InstanceId == card.InstanceId };
         }
 
         private GameEventDto? ConvertTuckEvent(IGameEvent gameEvent, GameContext context)
@@ -380,12 +380,23 @@ namespace ShadowverseBeyond.Server.Domain.Events
         private GameEventDto? ConvertAbilityTriggeredEvent(IGameEvent gameEvent)
         {
             if (gameEvent is not AbilityTriggeredEvent e) return null;
+            // Semantic keyword events still drive other abilities when visual broadcasts are off.
+            // Do not turn those silent events back into client announcements on this path.
+            if (e.TriggeredAbility is Ability ability && !ability.BroadcastOnTrigger) return null;
 
             var sourceCard = e.TriggeredAbility.SourceCard;
             var sourcePlayerId = sourceCard?.OwnerPlayerId ?? Guid.Empty;
             var concreteAbility = e.TriggeredAbility as Ability;
             var abilityName = concreteAbility?.Name ?? e.TriggeredAbility.Name;
             var abilityDescription = concreteAbility?.Description ?? string.Empty;
+            // Resolve with the source owner's preferences, even after the source leaves play.
+            var appearance = sourceCard == null ? null : ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.Resolve(sourceCard.OwnerPlayerId, sourceCard.CurrentDefinitionId);
+            if (appearance != null && abilityName == sourceCard?.Name) abilityName = appearance.Name;
+            var artAppearance = appearance ?? (sourceCard?.AlternateArtDefinitionId is int parentId
+                ? ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.Resolve(sourceCard.OwnerPlayerId, parentId) : null);
+            var artDefinition = sourceCard?.AlternateArtDefinitionId is int artId
+                ? ShadowverseBeyond.Server.Services.GameDataProvider.Instance.GetCardDefinition(artId) : sourceCard?.CurrentDefinition;
+
 
             // The DTO requires a parameters dictionary. We reconstruct the essential parts
             // from the strongly-typed event properties for client-side use.
@@ -395,8 +406,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 { "ability_runtime_id", e.TriggeredAbility.RuntimeId },
                 { "ability_name", abilityName },
                 { "ability_description", abilityDescription },
-                { "source_card_name", sourceCard?.Name ?? string.Empty },
-                { "source_card_art_preview", sourceCard?.CurrentDefinition?.ArtPreview ?? string.Empty }
+                { "source_card_name", appearance?.Name ?? sourceCard?.Name ?? string.Empty },
+                { "source_card_art_preview", artAppearance?.ArtPreview ?? artDefinition?.ArtPreview ?? string.Empty }
             };
 
             return new AbilityTriggeredEventDto(

@@ -117,6 +117,7 @@ coverage/
 !/tests/
 /tests/*
 !/tests/EngineMigration/
+!/tests/DiscoverInstances/
 
 # Small native Mini presentation assets, separate from the downloaded card library.
 !/assets/
@@ -151,3 +152,8 @@ coverage/
 *.p12
 # Native application is launched by the deployment scripts, not machine-specific profiles.
 /Server/Properties/launchSettings.local.json
+
+# AI artifacts are uploaded independently of code and player data.
+/data/ai-model/
+/data/ai-strategy/
+/exports/

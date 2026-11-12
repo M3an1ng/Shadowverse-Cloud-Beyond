@@ -4,7 +4,6 @@ using ShadowverseBeyond.Server.Domain.Abilities.Effects.Bases;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Metadata;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Services;
-using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -22,14 +21,11 @@ public class ModifyEvidenceEffectHandler(ILogger<ModifyEvidenceEffectHandler> lo
     {
         if (parameters.Amount < 0)
             return new() { Success = false, ErrorMessage = "证据数不能为负数。" };
-        var cards = effect.SelectedTargets.Where(t => t.Type == TargetType.Card).ToList();
-        IReadOnlyList<TargetInfo> selected = cards.Count > 0
-            ? cards
-            : PlayerScopeResolver.ResolvePlayerTargets(context, parameters.PlayerScope);
-        return targets.ProcessTargets(context, selected, (target, ctx) =>
+        var players = PlayerScopeResolver.ResolvePlayerTargets(context, parameters.PlayerScope);
+        return targets.ProcessTargets(context, players, (target, _) =>
         {
-            var card = target.Card ?? target.Player?.Field.FirstOrDefault(IsEvidence);
-            if (card == null || !IsEvidence(card))
+            var card = target.Player?.Field.FirstOrDefault(IsEvidence);
+            if (card == null)
                 return new() { Success = false, ErrorMessage = "没有可修改的证据护符。" };
             var old = card.Evidence;
             int value;

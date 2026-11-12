@@ -13,6 +13,8 @@ namespace ShadowverseBeyond.Server.Dtos
         /// </summary>
         public bool IsPlayable { get; set; }
 
+        public int? PlayedCardDefinitionId { get; set; }
+
         /// <summary>
         /// Indicates if playing this card requires the player to select a target for its effects.
         /// </summary>

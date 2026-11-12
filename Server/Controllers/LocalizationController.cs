@@ -101,6 +101,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 { "DeckInsertMode", typeof(DeckInsertMode) },
                 { "TriggerAbilityMode", typeof(TriggerAbilityMode) },
                 { "DiscoverMode", typeof(DiscoverMode) },
+                { "GrantAbilitySourceMode", typeof(GrantAbilitySourceMode) },
             };
 
             return enumTypes.TryGetValue(enumName, out var type) ? type : null;

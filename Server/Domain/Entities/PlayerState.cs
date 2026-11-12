@@ -22,8 +22,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     public class PlayerState
     {
         public bool IsTakeTwo { get; set; }
-        [DslExposable("间奏激活", Description = "该玩家共享的间奏状态，初始激活")]
-        public bool IsIntromezzoActive { get; set; } = true;
         public bool ConsumeIntromezzo()
         {
             var active = IsIntromezzoActive;
@@ -80,6 +78,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public string DisplayName { get; set; } = string.Empty;
         public string AvatarUrl { get; set; } = string.Empty;
         public bool HasCompletedMulligan { get; set; } = false;
+        internal int? BenchmarkMulliganSeed { get; set; }
 
         [DslExposable("回合数", Description = "当前回合数")]
         public int TurnNumber { get; set; } = 0;
@@ -175,6 +174,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         [DslExposable("变量", Description = "玩家上的系统与临时计数器")]
         public IReadOnlyDictionary<string, int> CounterMap => _counters;
+
+        [DslExposable("间奏激活", Description = "该玩家共享的间奏状态，初始休眠")]
+        public bool IsIntromezzoActive { get; set; } = false;
 
         public Counters Counters => _counters;
 
@@ -762,7 +764,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             }
 
             // 2. Shuffle the deck
-            ShuffleDeck();
+            var seed = gameState.IsLocalAiTraining ? BenchmarkMulliganSeed : null;
+            ShuffleDeck(seed is int value ? new Random(value) : null);
 
             // 3. Draw new cards from Deck to Hand
             int cardsToDrawCount = cardsToReplace.Count;
@@ -791,9 +794,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             return result;
         }
 
-        private void ShuffleDeck()
+        private void ShuffleDeck(Random? random = null)
         {
-            var random = new Random();
+            random ??= new Random();
             for (int i = Deck.Count - 1; i > 0; i--)
             {
                 int j = random.Next(i + 1);
@@ -993,7 +996,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             return result;
         }
 
-        public DomainOperationResult AddCardsToDeck(List<CardInstance> cardInstancesToAdd, DeckInsertMode insertMode = DeckInsertMode.Random)
+        public DomainOperationResult AddCardsToDeck(List<CardInstance> cardInstancesToAdd, DeckInsertMode insertMode = DeckInsertMode.Random, Random? random = null)
         {
             var result = new DomainOperationResult();
             if (cardInstancesToAdd == null)
@@ -1012,7 +1015,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                     continue;
                 }
 
-                var insertIndex = ResolveDeckInsertIndex(insertMode, projectedDeckCount);
+                var insertIndex = ResolveDeckInsertIndex(insertMode, projectedDeckCount, random);
                 var addResult = MoveCard(cardInstance, CardZone.Deck, insertIndex, CardMoveReason.AddedToDeck);
                 var movedToDeck = HasMoveToZone(addResult, CardZone.Deck);
                 generatedExpectedMoveEvent = generatedExpectedMoveEvent || movedToDeck;
@@ -1031,19 +1034,19 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             return result;
         }
 
-        private static int ResolveDeckInsertIndex(DeckInsertMode insertMode, int currentDeckCount)
+        private static int ResolveDeckInsertIndex(DeckInsertMode insertMode, int currentDeckCount, Random? random)
         {
             return insertMode switch
             {
                 DeckInsertMode.Top => 0,
                 DeckInsertMode.Bottom => currentDeckCount,
-                _ => Random.Shared.Next(0, currentDeckCount + 1)
+                _ => (random ?? Random.Shared).Next(0, currentDeckCount + 1)
             };
         }
 
         public DomainOperationResult ShuffleCardsIntoDeck(
             List<CardInstance> cardInstancesToShuffle,
-            DeckInsertMode insertMode = DeckInsertMode.Random)
+            DeckInsertMode insertMode = DeckInsertMode.Random, Random? random = null)
         {
             var result = new DomainOperationResult();
             if (cardInstancesToShuffle == null)
@@ -1062,7 +1065,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                     continue;
                 }
 
-                var insertIndex = ResolveDeckInsertIndex(insertMode, projectedDeckCount);
+                var insertIndex = ResolveDeckInsertIndex(insertMode, projectedDeckCount, random);
                 var shuffleResult = MoveCard(cardInstance, CardZone.Deck, insertIndex, CardMoveReason.ShuffledIntoDeck);
                 var movedToDeck = HasMoveToZone(shuffleResult, CardZone.Deck);
                 generatedExpectedMoveEvent = generatedExpectedMoveEvent || movedToDeck;
@@ -1075,7 +1078,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
             if (generatedExpectedMoveEvent)
             {
-                ShuffleDeck();
+                ShuffleDeck(random);
                 result.GeneratedEvents.Add(new DeckCountChangedEvent(this, Deck.Count));
             }
 

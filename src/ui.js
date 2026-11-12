@@ -2237,7 +2237,9 @@ function endPlayerChoice(notifyBackendOfCancellation = true) {
 // --- End UI State Management Functions ---
 
 let restoreDiscoverPreview = null;
+let cleanupDiscoverBoardView = null;
 function removeChoiceOverlayUI() {
+    cleanupDiscoverBoardView?.(); cleanupDiscoverBoardView = null;
     restoreDiscoverPreview?.(); restoreDiscoverPreview = null;
     document.getElementById('choice-overlay-root')?.remove();
     // Backward compatibility cleanup (older prompt overlay).
@@ -4255,6 +4257,13 @@ function renderBattleCardPreview(cardInstance) {
     });
 }
 
+export function clearSelfReturnVisuals(cardUid) {
+    cancelCommittedHandPlayVisual(cardUid, { animateBack: false });
+    if (String(battleCardPreviewEl?.dataset.previewUid).toLowerCase() === String(cardUid).toLowerCase()) {
+        renderBattleCardPreview(null);
+    }
+}
+
 export function replaceBattleCardPreviewIdentity(previousUid, cardInstance) {
     if (String(battleCardPreviewEl?.dataset.previewUid).toLowerCase() === String(previousUid).toLowerCase()) {
         renderBattleCardPreview(cardInstance);
@@ -6254,6 +6263,39 @@ function renderChoiceOverlayUI() {
         dialog.className = 'discover-dialog';dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','发现');
         dialog.innerHTML = '<h2>发现</h2><p>请选择一张卡片加入手牌</p><div class="discover-candidates"></div>';
         overlayRoot.append(dialog);
+        const boardToggle = document.createElement('button');
+        boardToggle.type = 'button';
+        boardToggle.className = 'discover-board-toggle';
+        boardToggle.textContent = '查看战场';
+        boardToggle.setAttribute('aria-pressed', 'false');
+        overlayRoot.append(boardToggle);
+        let viewingBoard = false;
+        // Keep the pending choice intact. Only card inspection is allowed while
+        // the discovery panel is folded away; never pass input to battle actions.
+        const guardBoardInput = event => {
+            if (!viewingBoard) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            if (event.type !== 'click') return;
+            const element = event.target.closest?.('[data-uid]');
+            const card = element ? findCardInstanceByUid(element.dataset.uid) : null;
+            if (card) renderBattleCardPreview(card);
+        };
+        const guardedEvents = ['click', 'pointerdown', 'mousedown', 'touchstart', 'dblclick', 'contextmenu', 'keydown'];
+        for (const type of guardedEvents) container.addEventListener(type, guardBoardInput, {capture: true, passive: false});
+        cleanupDiscoverBoardView = () => {
+            for (const type of guardedEvents) container.removeEventListener(type, guardBoardInput, true);
+        };
+        boardToggle.onclick = () => {
+            viewingBoard = !viewingBoard;
+            restoreDiscoverPreview?.(); restoreDiscoverPreview = null;
+            renderBattleCardPreview(null);
+            overlayRoot.classList.toggle('discover-viewing-board', viewingBoard);
+            dialog.hidden = viewingBoard;
+            boardToggle.textContent = viewingBoard ? '返回发现' : '查看战场';
+            boardToggle.setAttribute('aria-pressed', String(viewingBoard));
+            dialog.setAttribute('aria-modal', String(!viewingBoard));
+        };
         const list=dialog.querySelector('.discover-candidates');
         for(const dto of currentChoiceRequest.SelectableCardInstances || []) {
             const card=createDiscoverPreviewCard(dto); if(!card)continue;

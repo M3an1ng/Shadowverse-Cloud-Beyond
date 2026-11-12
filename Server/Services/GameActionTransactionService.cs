@@ -205,6 +205,8 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public async Task<PausableTransactionResult> ProcessTransactionAsync(GameContext gameContext, IEnumerable<IGameEvent> initialEvents)
         {
+            if (gameContext.CurrentGameState.IsLocalAiTraining && gameContext.CurrentGameState.BenchmarkRandom is { } random)
+                gameContext = gameContext with { BenchmarkRandom = random.BeginAction() };
             var initialEventList = initialEvents.ToList();
             _logger.LogInformation("--- Transaction Start: Processing {EventCount} initial events. ---", initialEventList.Count);
 
@@ -1925,6 +1927,15 @@ namespace ShadowverseBeyond.Server.Services
                         continue;
                     }
 
+                    // Inspect configuration before processing: a normal Before ability must not
+                    // consume its trigger count (or Intermezzo state) during interception probing.
+                    // The ordinary Before phase below owns its one and only execution.
+                    if (ability is Ability configuredAbility
+                        && !configuredAbility.Config.Effects.Any(effect => effect.IsEnabled && IsInterceptEffectType(effect.Type)))
+                    {
+                        continue;
+                    }
+
                     var abilityContext = gameContext with { SourceCard = ability.SourceCard, TriggeringEvent = currentEvent };
                     var abilityResult = await gameContext.AbilityManager.ProcessSingleAbilityAsync(
                         ability,
@@ -2301,7 +2312,7 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 var weights = NormalizeWeights(resolvedRandom.Weights, optionIds.Count);
-                var selectedIndexes = SampleWeightedIndexes(weights, selectionCount, resolvedRandom.AllowRepeat);
+                var selectedIndexes = SampleWeightedIndexes(weights, selectionCount, resolvedRandom.AllowRepeat, gameContext.BenchmarkRandom ?? Random.Shared);
                 resolvedRandom.SetSelectedOptionIndexes(selectedIndexes);
 
                 if (phase == DecisionResolutionPhase.Preflight && usePreflightDecisionCache)
@@ -2329,15 +2340,18 @@ namespace ShadowverseBeyond.Server.Services
                     PendingChoiceId = Guid.NewGuid(),
                     SourceAbilityRuntimeId = ability.RuntimeId,
                     TargetKey = "decision",
+                    OptionSourceCard = ability.SourceCard,
                     RequestingPlayerId = gameContext.RequestingPlayerId,
                     SelectableTargetIds = optionIds.ToList(),
                     SelectableCardInstances = Ability.BuildDecisionOptionCards(orderedOptions, gameContext.RequestingPlayerId),
+                    DecisionOptions = orderedOptions.ToDictionary(option => option.Id, option => option.Config),
                     MinSelectionCount = selectionCount,
                     MaxSelectionCount = selectionCount,
                     Message = BuildDecisionChoicePrompt(selectionCount),
                     IsCancellable = phase == DecisionResolutionPhase.Preflight
                 };
 
+                AiGeneratedDefenseModes.Bind(request,currentEffect,ability,phase==DecisionResolutionPhase.Preflight);
                 _logger.LogInformation("Awaiting player decision for ability {AbilityKeywords}.", ability.KeywordSummary);
                 var choiceResult = await _pendingActionService.WaitForPlayerChoiceAsync(gameContext.CurrentGameState.GameId, request, gameContext.CancellationToken);
 
@@ -2535,7 +2549,8 @@ namespace ShadowverseBeyond.Server.Services
         private static List<int> SampleWeightedIndexes(
             IReadOnlyList<double> weights,
             int selectionCount,
-            bool allowRepeat)
+            bool allowRepeat,
+            Random rng)
         {
             var results = new List<int>();
             if (selectionCount <= 0 || weights.Count == 0)
@@ -2543,7 +2558,6 @@ namespace ShadowverseBeyond.Server.Services
                 return results;
             }
 
-            var rng = Random.Shared;
             if (allowRepeat)
             {
                 for (var i = 0; i < selectionCount; i++)
@@ -3368,6 +3382,13 @@ namespace ShadowverseBeyond.Server.Services
             {
                 while (eventStagingArea.Count > 0 || _effectQueue.Count > 0 || queueDrainedDelayedEvents.Count > 0)
                 {
+                    // The winning GameEnd has already been committed and retained below.
+                    // Do not run queued turn transitions or effects after the match is terminal.
+                    if (gameContext.CurrentGameState.IsGameOver)
+                    {
+                        _effectQueue.Clear();
+                        break;
+                    }
                     if (eventStagingArea.Count == 0 && _effectQueue.Count == 0)
                     {
                         ReleaseAllDelayedEventsWhenIdle(eventStagingArea, delayedEventsByParent);
@@ -3714,10 +3735,11 @@ namespace ShadowverseBeyond.Server.Services
             Dictionary<Guid, AttackFlowContext> attackFlowsByEventId,
             int recursionDepth)
         {
-            if (gameContext.CurrentGameState.IsGameOver && gameEvent is GameEndEvent)
+            if (gameContext.CurrentGameState.IsGameOver)
             {
                 _logger.LogDebug(
-                    "Skipping GameEndEvent ({EventId}) because game {GameId} is already over.",
+                    "Skipping {EventType} ({EventId}) because game {GameId} is already over.",
+                    gameEvent.EventType,
                     gameEvent.EventId,
                     gameContext.CurrentGameState.GameId);
                 return PausableTransactionResult.Success(new List<IGameEvent>());
@@ -4465,7 +4487,8 @@ namespace ShadowverseBeyond.Server.Services
 
                             attackFlowsByEventId,
 
-                            recursionDepth + 1);
+                            recursionDepth + 1,
+                            chainedSourceCard: chainedAbility.SourceCard);
                         if (subEffectResult.ShouldStop)
                         {
                             return subEffectResult;
@@ -5270,8 +5293,12 @@ namespace ShadowverseBeyond.Server.Services
             Queue<IGameEvent> queueDrainedDelayedEvents,
             HashSet<Guid> readyQueueDrainedEvents,
             Dictionary<Guid, AttackFlowContext> attackFlowsByEventId,
-            int recursionDepth)
+            int recursionDepth,
+            CardInstance? chainedSourceCard = null)
         {
+            if (gameContext.CurrentGameState.IsGameOver)
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+
             _logger.LogDebug("Processing effect: {EffectType}", effect.Type);
             using var effectExecutionScope = BeginEffectExecutionScope(effect.Id);
 
@@ -5319,7 +5346,8 @@ namespace ShadowverseBeyond.Server.Services
 
             var effectContext = gameContext with
             {
-                SourceCard = sourceCard,
+                // An already-resolving chain can outlive its source instance after a transform.
+                SourceCard = sourceCard ?? chainedSourceCard,
                 TriggeringEvent = triggeringEvent,
                 CurrentEffect = effect,
                 AttackFlow = effectAttackFlow,
@@ -5520,6 +5548,14 @@ namespace ShadowverseBeyond.Server.Services
 
                 var completionResolvedParameters = effectResult.ResolvedParameters?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
                     ?? new Dictionary<string, object>();
+
+                // Discovery materializes the chosen card only after its interactive request commits.
+                // Capture the resulting hand instance after that commit for chained abilities.
+                if (effect.Type == EffectType.Discover)
+                {
+                    generatedCards = CollectGeneratedCards(generatedEvents);
+                    generatedSnapshots = generatedCards.Select(CardInstanceSnapshot.From).ToList();
+                }
 
                 var generatedEventsSnapshot = generatedEvents.ToList().AsReadOnly();
 

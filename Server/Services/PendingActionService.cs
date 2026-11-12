@@ -92,7 +92,7 @@ namespace ShadowverseBeyond.Server.Services
                             gameStateDto = GameStateProjection.Create(game, gameContext);
                         }
 
-                        var aiResult = await aiService.DecideTargetChoiceAsync(request, gameStateDto);
+                        var aiResult = await aiService.DecideTargetChoiceAsync(request, gameStateDto, cancellationToken);
 
                         var dto = new SubmitTargetChoiceActionDto
                         {

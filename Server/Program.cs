@@ -47,6 +47,12 @@ using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Infrastructure.Logging;
 using ShadowverseBeyond.Server.Infrastructure.Uploads;
 
+if (args.Length == 2 && args[0] == "--validate-ai-model")
+{
+    var model = AiLearningModel.Load(args[1]);
+    Console.WriteLine($"Valid AI model: {model.Version}; networks: {model.Models.Count}");
+    return;
+}
 // REMOVED: Static Serilog configuration block (Lines 23-39)
 try // Wrap application startup in try-finally to ensure logs are flushed
 {
@@ -181,6 +187,11 @@ try // Wrap application startup in try-finally to ensure logs are flushed
 
     builder.Services.AddSingleton<IGameStateManager, InMemoryGameStateManager>(); // Register InMemoryGameStateManager as singleton
     Log.Information("Registered IGameStateManager."); // Added Log
+    builder.Services.AddSingleton<AiLearningModel>();
+    builder.Services.AddHttpClient("AiStrategy", client => client.MaxResponseContentBufferSize = 512 * 1024)
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+    builder.Services.AddSingleton<AiStrategyPlanner>();
+    builder.Services.AddSingleton<LocalAiTrainingService>();
     builder.Services.AddScoped<IAiService, AiService>(); // Register AiService as Scoped
     Log.Information("Registered IAiService."); // Added Log
                                                // Register Effect Handling Services (moved to avoid duplication)

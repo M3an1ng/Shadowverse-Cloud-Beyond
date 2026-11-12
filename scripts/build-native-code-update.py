@@ -26,6 +26,7 @@ shutil.copy2(root / 'dist/index.html', stage / 'app/index.html')
 shutil.copy2(root / 'data/about-changelog.json', stage / 'app/data/about-changelog.json')
 entry = re.search(r'<script\b[^>]*\bsrc="([^"]+)"', (stage / 'app/index.html').read_text(encoding='utf-8')).group(1)
 (stage / 'entry-script.txt').write_text(entry + '\n', encoding='utf-8')
+shutil.copy2(root / 'deploy/ubuntu/update-ai-model.sh', stage / 'update-ai-model.sh')
 (stage / 'update.sh').write_text((root / 'deploy/ubuntu/update-native.sh').read_text(encoding='utf-8'), encoding='utf-8', newline='\n')
 def digest(path):
     sha = hashlib.sha256()

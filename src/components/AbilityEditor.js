@@ -1,3 +1,4 @@
+import { isActiveDiscoverParameter } from '../discoverParameters.js';
 import { alternatePlayFromEffects, alternatePlayPatch } from '../alternatePlayConfig.js';
 import { confirmDialog } from '../siteDialog.js';
 import { showAlert } from '../siteDialog.js';
@@ -610,6 +611,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
     }
 
     async collectEffectDslIssues() {
+        this.effectEditor?.flushPoolConditionEditors();
         const issues = { errors: [], warns: [], infos: [] };
         const pushError = (message) => issues.errors.push(message);
         const triggeringEventContext = this.getTriggeringEventContextForDsl();
@@ -625,6 +627,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
             const parameters = effect.parameters || {};
 
             for (const [paramName, valueConfig] of Object.entries(parameters)) {
+                if (!isActiveDiscoverParameter(effect.type, parameters, paramName)) continue;
                 if (!valueConfig || typeof valueConfig !== 'object') continue;
                 if (valueConfig.$type !== 'FormulaValueConfig') continue;
                 const formula = valueConfig.Formula || '';

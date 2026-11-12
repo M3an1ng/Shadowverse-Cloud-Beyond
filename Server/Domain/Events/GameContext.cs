@@ -49,6 +49,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public DeckEnvironment CurrentEnvironment => CurrentGameState.GetRequiredUniqueEnvironment();
 
         public Guid RequestingPlayerId { get; }
+        internal Random? BenchmarkRandom { get; init; }
 
         /// <summary>
         /// Indicates whether the current transaction/ability processing is cancellable (pre-commit).
@@ -130,6 +131,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
             Mapper = mapper;
             CurrentGameState = currentGameState;
             RequestingPlayerId = requestingPlayerId;
+            BenchmarkRandom = currentGameState.IsLocalAiTraining
+                ? currentGameState.BenchmarkRandom?.CreatePreview(currentGameState.StateRevision) : null;
             CancellationToken = cancellationToken;
             TriggeringEvent = triggeringEvent;
             SourceCard = sourceCard;

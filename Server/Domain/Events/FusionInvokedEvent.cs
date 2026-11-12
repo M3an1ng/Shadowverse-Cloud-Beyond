@@ -28,13 +28,17 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("融合卡牌", "发动融合能力的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? FusionCard => Target.FirstOrDefault()?.Card;
 
+        public Guid? TriggeredAbilityRuntimeId { get; }
+
         public FusionInvokedEvent(
             PlayerState requestingPlayer,
             CardInstance sourceCard,
             Guid? eventId = null,
-            DateTime? timestamp = null)
+            DateTime? timestamp = null,
+            Guid? triggeredAbilityRuntimeId = null)
             : base(EventType.Fusion, eventId, timestamp)
         {
+            TriggeredAbilityRuntimeId = triggeredAbilityRuntimeId;
             Source = TargetInfo.ForPlayer(requestingPlayer);
             Target.Add(TargetInfo.ForCard(sourceCard));
         }

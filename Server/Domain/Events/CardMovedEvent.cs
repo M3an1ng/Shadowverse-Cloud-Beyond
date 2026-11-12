@@ -46,6 +46,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("目标索引", "卡牌移动到目标区域时的插入索引。null 表示追加到末尾。")]
         public int? DestinationIndex { get; }
 
+        // Set only by effects that explicitly transfer the original card to another player.
+        internal Guid? DestinationOwnerPlayerId { get; set; }
+
         public CardMovedEvent(
             CardInstance card,
             CardZone fromZone,
@@ -88,6 +91,14 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return result;
             }
 
+            var sourceOwner = owner;
+            if (DestinationOwnerPlayerId.HasValue)
+            {
+                owner = context.CurrentGameState.GetPlayerState(DestinationOwnerPlayerId.Value);
+                if (owner == null)
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Card move destination player not found." };
+            }
+
             var effectiveToZone = ToZone;
             var effectiveMoveReason = MoveReason;
             if (ToZone == CardZone.Hand && owner.Hand.Count >= GameConstants.Hand.MaxHandSize)
@@ -102,9 +113,24 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 card.Name, card.InstanceId, FromZone, effectiveToZone, effectiveMoveReason, preserveState);
 
             // Execute internal state mutation on the aggregate
-            bool ok = owner.ApplyCardZoneChange(card, FromZone, effectiveToZone, DestinationIndex);
+            var sourceIndex = card.ZoneIndex;
+            var transferring = sourceOwner != owner;
+            if (transferring)
+            {
+                // Remove from the original owner's zone before changing ownership. The
+                // temporary None zone is internal; observers see only the committed move.
+                if (card.CurrentZone != FromZone || !sourceOwner.ApplyCardZoneChange(card, FromZone, CardZone.None, null))
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Card move source is no longer available." };
+                card.OwnerPlayerId = owner.PlayerId;
+            }
+            bool ok = owner.ApplyCardZoneChange(card, transferring ? CardZone.None : FromZone, effectiveToZone, DestinationIndex);
             if (!ok)
             {
+                if (transferring)
+                {
+                    card.OwnerPlayerId = sourceOwner.PlayerId;
+                    sourceOwner.ApplyCardZoneChange(card, CardZone.None, FromZone, sourceIndex);
+                }
                 result.Success = false;
                 result.ErrorMessage = $"Failed to apply card move from {FromZone} to {effectiveToZone} for {card.InstanceId}.";
                 return result;
@@ -152,8 +178,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
             // Derive follow-up notifications (can later be centralized)
             if (effectiveToZone == CardZone.Hand || FromZone == CardZone.Hand)
                 result.GeneratedEvents.Add(new HandUpdatedEvent(owner, owner.Hand.ToList()));
-            if (effectiveToZone == CardZone.Deck || FromZone == CardZone.Deck)
+            if (transferring && FromZone == CardZone.Hand)
+                result.GeneratedEvents.Add(new HandUpdatedEvent(sourceOwner, sourceOwner.Hand.ToList()));
+            if (effectiveToZone == CardZone.Deck || (!transferring && FromZone == CardZone.Deck))
                 result.GeneratedEvents.Add(new DeckCountChangedEvent(owner, owner.Deck.Count));
+            if (transferring && FromZone == CardZone.Deck)
+                result.GeneratedEvents.Add(new DeckCountChangedEvent(sourceOwner, sourceOwner.Deck.Count));
             if (effectiveToZone == CardZone.Graveyard || FromZone == CardZone.Graveyard)
                 result.GeneratedEvents.Add(new GraveyardUpdatedEvent(owner, owner.GraveyardCount));
 

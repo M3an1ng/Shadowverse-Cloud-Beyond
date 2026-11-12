@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.ComponentModel;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
@@ -9,7 +10,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers.Parameters
 {
     public enum GrantAbilitySourceMode
     {
+        [Description("内联能力配置")]
         InlineConfigs = 0,
+        [Description("能力定义ID")]
         AbilityDefinitionIds = 1
     }
 

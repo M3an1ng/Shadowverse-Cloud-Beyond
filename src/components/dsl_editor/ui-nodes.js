@@ -238,6 +238,14 @@ export function renderValueNode(editor, node, container) {
         return;
     }
 
+    if (node.metadata?.isDynamicMemberAccess && node.metadata?.baseAST) {
+        const source = document.createElement('span');
+        source.className = 'dsl-dynamic-member-source';
+        editor.renderASTNodeRecursive(node.metadata.baseAST, source);
+        source.appendChild(document.createTextNode(' . '));
+        container.appendChild(source);
+    }
+
     const nodeElement = document.createElement("span");
     nodeElement.className = "dsl-node dsl-value-node";
     nodeElement.dataset.nodeType = node.metadata?.type || node.type;
@@ -246,7 +254,9 @@ export function renderValueNode(editor, node, container) {
         nodeElement.textContent = editor.getReadableValueLabel(node);
         nodeElement.classList.add("dsl-value-node--context");
     } else if (node.metadata.type === "property") {
-        nodeElement.textContent = editor.getReadableValueLabel(node);
+        nodeElement.textContent = node.metadata.isDynamicMemberAccess && node.metadata.baseAST
+            ? node.metadata.displayName || node.metadata.property
+            : editor.getReadableValueLabel(node);
         nodeElement.classList.add("dsl-value-node--property");
     } else if (node.metadata.type === "staticValue") {
         if (node.metadata.isAwaitingInput) {

@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
@@ -294,8 +294,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
             var traceSettings = _serviceProvider.GetService<IConditionTraceSettings>();
             var traceEntries = traceSettings?.IsEffectEnabledFor(gameContext) == true ? new List<ConditionTraceEntryDto>() : null;
 
+            var discoverUsesInstances = false;
+            if (effectConfig.Type == EffectType.Discover)
+            {
+                var mode = effectConfig.Parameters.FirstOrDefault(p => string.Equals(p.Key, "Mode", StringComparison.OrdinalIgnoreCase)).Value;
+                var resolvedMode = mode is ValueConfig config ? _valueSourceResolver.Resolve(config, gameContext) : mode;
+                discoverUsesInstances = string.Equals(resolvedMode?.ToString(), "Copy", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(resolvedMode?.ToString(), "Instance", StringComparison.OrdinalIgnoreCase)
+                    || resolvedMode?.ToString() is "1" or "2";
+            }
             foreach (var paramKvp in effectConfig.Parameters)
             {
+                if (effectConfig.Type == EffectType.Discover && string.Equals(paramKvp.Key, discoverUsesInstances ? "CardDefinitionIds" : "CopySourceTargets", StringComparison.OrdinalIgnoreCase)) continue;
                 if (effectConfig.Type == EffectType.Draw
                     && string.Equals(paramKvp.Key, "SearchTargets", StringComparison.OrdinalIgnoreCase))
                 {
@@ -446,6 +456,15 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                             }
                         }
 
+                        // Static JSON arrays may already have been resolved into List<object>.
+                        // Rehydrate nested condition objects instead of silently dropping the pool filter.
+                        if (value != null && property.PropertyType == typeof(List<ShadowverseBeyond.Server.Domain.Abilities.Conditions.ConditionConfig>)
+                            && !property.PropertyType.IsInstanceOfType(value))
+                        {
+                            value = JsonSerializer.Deserialize(JsonSerializer.Serialize(value), property.PropertyType,
+                                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        }
+
                         // Handle null values first, especially for nullable property types.
                         if (value == null)
                         {
@@ -489,6 +508,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                                     _logger.LogWarning(ex, "Failed to parse enum value '{StringValue}' for property {PropertyName} of type {EnumType}. Skipping.", stringValue, property.Name, property.PropertyType.Name);
                                     continue; // Skip this property if parsing fails
                                 }
+                            }
+                            else if (property.PropertyType.IsEnum && IsIntegerType(value.GetType()))
+                            {
+                                value = Enum.ToObject(property.PropertyType, value);
                             }
                             // Handle potential integer type mismatches (e.g., config uses int, property expects long or vice versa)
                             else if (IsIntegerType(property.PropertyType) && IsIntegerType(value.GetType()))
@@ -624,7 +647,30 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
             var elementType = targetType.GetGenericArguments()[0];
             if (elementType != typeof(int))
             {
-                return false;
+                // DSL select returns a lazy IEnumerable<T>, not necessarily List<T>.
+                // Preserve typed objects (notably AbilityConfig) when binding list parameters.
+                if (value is not global::System.Collections.IEnumerable items || value is string)
+                {
+                    return false;
+                }
+                var converted = (global::System.Collections.IList)Activator.CreateInstance(targetType)!;
+                foreach (var item in items)
+                {
+                    if (item != null && elementType.IsInstanceOfType(item))
+                    {
+                        converted.Add(item);
+                    }
+                    else if (item != null && IsIntegerType(elementType) && IsIntegerType(item.GetType()))
+                    {
+                        converted.Add(Convert.ChangeType(item, elementType));
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
+                result = converted;
+                return true;
             }
 
             if (value is IEnumerable<int> intEnumerable)

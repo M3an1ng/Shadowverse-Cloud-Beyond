@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Domain.Entities;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
 {
@@ -29,6 +30,11 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// The runtime ID of the ability that triggered this choice request.
         /// </summary>
         public Guid SourceAbilityRuntimeId { get; set; }
+
+        internal CardInstance? OptionSourceCard { get; set; }
+        // Server-only binding: presentation names and array order are not ability identities.
+        internal IReadOnlyDictionary<Guid, ShadowverseBeyond.Server.Domain.Abilities.AbilityConfig> DecisionOptions { get; set; }
+            = new Dictionary<Guid, ShadowverseBeyond.Server.Domain.Abilities.AbilityConfig>();
 
         /// <summary>
         /// The ID of the player who needs to make the choice.

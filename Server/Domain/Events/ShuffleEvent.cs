@@ -54,7 +54,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "ShuffleEvent.Commit: target player is null." };
             }
 
-            return player.ShuffleCardsIntoDeck(ShuffledCards, InsertMode);
+            return player.ShuffleCardsIntoDeck(ShuffledCards, InsertMode, context.BenchmarkRandom);
         }
 
         public string GetAnnouncement(GameState gameState)

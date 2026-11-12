@@ -1031,7 +1031,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
 
             var genericMethod = takeMethod.MakeGenericMethod(elementType);
-            return Expression.Call(null, genericMethod, enumerableSource, countExpression);
+            return node.Selection.Strategy == SelectionStrategy.Random
+                ? Expression.Call(null, genericMethod, enumerableSource, countExpression, _gameContextParam)
+                : Expression.Call(null, genericMethod, enumerableSource, countExpression);
         }
 
         private LambdaExpression BuildPredicateLambda(ExpressionNode filterExpression, Type elementType)

@@ -82,7 +82,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                     var maxCostCandidates = eligibleCards
                         .Where(card => card.BaseCost == maxCost)
                         .ToList();
-                    var selectedDefinitionId = SelectWeightedDefinition(maxCostCandidates);
+                    var selectedDefinitionId = SelectWeightedDefinition(maxCostCandidates, ctx.BenchmarkRandom);
 
                     var summoned = _cardFactory.CreateAndRegisterNewCard(
                         ctx.CurrentGameState,
@@ -129,7 +129,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
             return serviceResult;
         }
 
-        private static int SelectWeightedDefinition(List<CardInstance> candidates)
+        private static int SelectWeightedDefinition(List<CardInstance> candidates, Random? random)
         {
             if (candidates.Count == 1)
             {
@@ -158,7 +158,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                 return grouped[0].DefinitionId;
             }
 
-            var rng = RandomOverride ?? Random.Shared;
+            var rng = RandomOverride ?? random ?? Random.Shared;
             var roll = rng.Next(1, totalWeight + 1);
             var cumulative = 0;
 

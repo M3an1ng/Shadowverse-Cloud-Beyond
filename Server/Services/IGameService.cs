@@ -1,4 +1,4 @@
-﻿// File: Server/Services/IGameService.cs
+// File: Server/Services/IGameService.cs
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using ShadowverseBeyond.Server.Domain.Entities; // Added for GameState domain entity
 using System.Threading.Tasks;
@@ -91,6 +91,8 @@ namespace ShadowverseBeyond.Server.Services
         /// </summary>
         Task RefreshActPlayabilityAsync(string gameId, Guid playerId, CancellationToken cancellationToken);
         Task<PlayabilityResultDto> GetCardPlayabilityAsync(string gameId, Guid playerId, Guid cardInstanceId, CancellationToken cancellationToken);
+        Task<PlayabilityResultDto> GetCardPlayabilityForModeAsync(string gameId, Guid playerId, Guid cardInstanceId,
+            ShadowverseBeyond.Server.Dtos.Enums.PlayMode mode, CancellationToken cancellationToken);
 
         /// <summary>
         /// Marks a player as disconnected and pauses turn processing if needed.

@@ -32,6 +32,8 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events
         /// </summary>
         public Guid CardUid { get; set; } = Guid.Empty;
 
+        public bool IsSelfReturn { get; init; }
+
         /// <summary>
         /// Snapshot of the returned card (optional, may be null if unavailable).
         /// </summary>

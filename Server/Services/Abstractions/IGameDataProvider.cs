@@ -62,6 +62,9 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
         /// <returns>Buff定义，如果不存在则返回null</returns>
         BuffDefinition? GetBuffDefinition(string buffId);
 
+        /// <summary>Loaded buff templates for consistent rule identity; null means enumeration is unsupported.</summary>
+        IReadOnlyDictionary<string,BuffDefinition>? GetAllBuffDefinitions() => null;
+
         /// <summary>
         /// 刷新缓存，重新从数据库加载所有数据
         /// </summary>

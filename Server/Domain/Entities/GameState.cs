@@ -34,6 +34,24 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public InGameIdRegistry InGameIds { get; } = new();
 
         public string GameId { get; set; }
+        public bool IsLocalAiTraining { get; set; }
+        internal BenchmarkBattleRandom? BenchmarkRandom { get; set; }
+        internal int? StrategyTurnBudgetMs { get; set; }
+        internal bool StrategyChoicesOnly { get; set; }
+        internal Guid? StrategyBenchmarkPlayerId { get; set; }
+        internal Guid? AiGeneratedStormSource { get; set; }
+        internal int? AiGeneratedStormTokenId { get; set; }
+        internal Guid? LegacyEternalEnginePlayerId { get; set; }
+        internal Guid? LegacyGeneratedTokenPlayerId { get; set; }
+        internal long GeneratedTokenTacticUses;
+        internal string? StrategyBenchmarkDeckName { get; set; }
+        internal Guid? LegacyAiPlayerId { get; set; }
+        // Local offline benchmark only: same engine/search, frozen pre-fix learned-model inputs.
+        internal Guid? LegacyModelInputsPlayerId { get; set; }
+        internal Guid? LegacyCombatThreatPlayerId { get; set; }
+        internal Guid? ValueSearchComparisonPlayerId { get; set; }
+        internal long ValueSearchEvaluations;
+        internal Action<Guid, string>? LocalAiTrainingObservation;
 
         public GameStatus Status { get; set; } = GameStatus.Starting;
 

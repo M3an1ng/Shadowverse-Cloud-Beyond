@@ -553,7 +553,7 @@ namespace ShadowverseBeyond.Server.Domain.Query
 
                 case SelectionStrategy.Random:
                     _logger.LogTrace("Applying Random strategy with count: {Count}", count);
-                    return DslQueryOperations.TakeRandom(pool, count).Cast<object>().ToList();
+                    return DslQueryOperations.TakeRandom(pool, count, tsc.GameContext).Cast<object>().ToList();
 
                 default:
                     _logger.LogWarning("Unsupported SelectionStrategy: {Strategy}. Returning pool as is.", selectionOp.Strategy);

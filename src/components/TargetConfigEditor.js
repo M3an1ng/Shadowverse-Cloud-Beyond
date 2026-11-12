@@ -502,7 +502,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         const header = document.createElement('div');
         header.className = 'section-header-with-toggle';
         
-        const enabled = target.playerChoiceOptions != null;
+        const enabled = target.playerChoiceOptions?.isRequired === true;
         const toggle = this.createAccordionToggleSwitch(enabled, (checked) => {
             if (checked) {
                 this.updateTarget(index, {
@@ -516,6 +516,16 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         
         header.appendChild(toggle);
         container.appendChild(header);
+
+        if (!enabled) {
+            container.appendChild(this.createAccordionToggleSwitch(
+                target.playerChoiceOptions?.isInverseSelection === true,
+                checked => this.updateTarget(index, {
+                    playerChoiceOptions: checked ? { isRequired: false, isInverseSelection: true } : null
+                }),
+                '反选：选择除指定目标外的卡'
+            ));
+        }
 
         if (enabled) {
             const opts = target.playerChoiceOptions;
@@ -1188,11 +1198,11 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             sourcePoolExpression = `${wrapForCall(sourcePoolExpression)}.take(random ${count})`;
             playerChoiceOptions = null;
         } else if (method === 'Select') {
-            if (!playerChoiceOptions) {
-                playerChoiceOptions = { isRequired: true, minCount: 1, maxCount: 1 };
-            }
+            playerChoiceOptions = { minCount: 1, maxCount: 1, ...playerChoiceOptions, isRequired: true };
         } else {
-            playerChoiceOptions = null;
+            playerChoiceOptions = playerChoiceOptions?.isInverseSelection === true
+                ? { isRequired: false, isInverseSelection: true }
+                : null;
         }
 
         return {
@@ -1488,7 +1498,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
 
         if (method === 'Random') {
             simplified._simpleRandomCount = randomCount;
-        } else if (target?.playerChoiceOptions) {
+        } else if (target?.playerChoiceOptions?.isRequired === true) {
             simplified._simpleMethod = 'Select';
         }
 

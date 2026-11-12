@@ -1,3 +1,4 @@
+import { isActiveDiscoverParameter } from '../discoverParameters.js';
 import { confirmDialog } from '../siteDialog.js';
 // src/components/EffectConfigEditor.js - 效果配置编辑器 (Refactored)
 //
@@ -415,19 +416,19 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
 
         const isDiscoverEffect = String(effectMeta.effectTypeName || effectMeta.EffectTypeName || '').toLowerCase() === 'discover';
         const discoverModeValue = this.getEffectParameterValue(parameters, effectMeta, 'Mode');
-        const discoverCopy = ['copy','1'].includes(String(discoverModeValue ?? 'Definition').toLowerCase());
+        const discoverUsesInstances = ['copy','1','instance','2'].includes(String(discoverModeValue ?? 'Definition').toLowerCase());
         if (isDiscoverEffect) container.addEventListener('change', () => requestAnimationFrame(() => {
             const latest=getLatestParameters();
-            const copy=['copy','1'].includes(String(this.getEffectParameterValue(latest,effectMeta,'Mode') ?? 'Definition').toLowerCase());
-            if(copy !== discoverCopy && container.isConnected) container.replaceWith(this.createParametersPanel(effectMeta,latest,onChange,options));
+            const usesInstances=['copy','1','instance','2'].includes(String(this.getEffectParameterValue(latest,effectMeta,'Mode') ?? 'Definition').toLowerCase());
+            if(usesInstances !== discoverUsesInstances && container.isConnected) container.replaceWith(this.createParametersPanel(effectMeta,latest,onChange,options));
         }));
 
         effectiveParameters.forEach(paramMeta => {
             const paramName = this.getEffectParameterName(paramMeta);
-            if (isDiscoverEffect && ((paramName === 'CardDefinitionIds' && discoverCopy) || (paramName === 'CopySourceTargets' && !discoverCopy))) return;
             if (!paramName) {
                 return;
             }
+            if (isDiscoverEffect && !isActiveDiscoverParameter('Discover', parameters, paramName)) return;
             const displayName = paramMeta.displayName || paramMeta.DisplayName;
             const description = paramMeta.description || paramMeta.Description;
             const controlType = (paramMeta.controlType || paramMeta.ControlType || '').toString();
@@ -3389,9 +3390,18 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             const effectMeta = getEffectMeta(effect.type);
             const withDefaults = this.applyDefaultParameters(effect, effectMeta);
             const cleanParams = this.sanitizeParameters(withDefaults.parameters);
+            for (const key of Object.keys(cleanParams)) {
+                if (!isActiveDiscoverParameter(effect.type, withDefaults.parameters, key)) delete cleanParams[key];
+            }
             const cleanOutputs = this.sanitizeOutputs(withDefaults.outputs ?? withDefaults.Outputs);
             return { ...withDefaults, parameters: cleanParams, outputs: cleanOutputs };
         });
+    }
+
+    flushPoolConditionEditors() {
+        for (const editor of this._poolConditionEditors || []) {
+            if (editor.container?.isConnected) editor.flushDslEditors();
+        }
     }
 
     validateEffects() {
