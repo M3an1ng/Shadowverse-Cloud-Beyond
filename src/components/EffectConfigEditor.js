@@ -2914,9 +2914,7 @@ export class EffectConfigEditor extends MetadataDrivenComponent {
             conditions: Array.isArray(parsed?.conditions)
                 ? parsed.conditions
                 : (Array.isArray(updatedConfig?.conditions) ? updatedConfig.conditions : []),
-            targets: Array.isArray(parsed?.targets)
-                ? parsed.targets
-                : (Array.isArray(updatedConfig?.targets) ? updatedConfig.targets : []),
+            targets: parsed?.targets ?? updatedConfig?.targets ?? [],
             effects: Array.isArray(parsed?.effects)
                 ? parsed.effects
                 : (Array.isArray(updatedConfig?.effects) ? updatedConfig.effects : []),

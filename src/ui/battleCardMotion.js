@@ -4,6 +4,8 @@
 //       全卡种无遮罩悬停展示（随从/护符/法术均先悬停再落位/生效）、接触式攻击冲撞与致死交接、
 //       同波受击震动/浮字、进化爆发与语义化退场（破坏/消失/回手）。
 
+import { alternateCastTimings, castCardPose, paintAlternateCastEffect } from './alternateCastEffect.js';
+
 const STRIP_CLONE_CLASSES = [
     'is-selected',
     'is-targetable',
@@ -144,6 +146,7 @@ export function createBattleMotionController({
     let generation = 1;
     const activeAnimations = new Set();
     const activeTimers = new Set();
+    const activeAlternateCasts = new Set();
     const hiddenRealElements = new Map();
     const hiddenEntityUidCounts = new Map();
     const flipAnimationsByElement = new WeakMap();
@@ -247,6 +250,7 @@ export function createBattleMotionController({
 
     function cancelAll() {
         generation += 1;
+        activeAlternateCasts.forEach(cancel => cancel());
         activeTimers.forEach(id => window.clearTimeout(id));
         activeTimers.clear();
         activeAnimations.forEach(anim => {
@@ -1092,7 +1096,100 @@ export function createBattleMotionController({
         });
     }
 
-    // 6. 全卡种无遮罩悬停出牌展示（随从 / 护符 / 法术通用：飞入悬停点 -> 260ms 悬停展示 -> 落入战场槽位或绽放奥术环）
+    function playAlternateCast({
+        layer, carrier, stageEl, stageRect, geometry, mode, targetUid, fastForward, onResolveImpact
+    }) {
+        const { width, height } = stageRect;
+        if (!width || !height) return null;
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+
+        const timing = alternateCastTimings[mode];
+        const speed = fastForward ? 0.55 : 1;
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5, 1440 / width, 900 / height);
+        canvas.width = Math.max(1, Math.round(width * pixelRatio));
+        canvas.height = Math.max(1, Math.round(height * pixelRatio));
+        canvas.className = 'bui-alternate-cast-effect';
+        canvas.setAttribute('aria-hidden', 'true');
+        ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+
+        const label = document.createElement('div');
+        label.className = `bui-alternate-cast-label is-${mode}`;
+        label.textContent = timing.label;
+        carrier.append(label);
+        layer.append(canvas);
+
+        const targetEl = queryBoardEntityElement(targetUid);
+        if (targetUid) hideRealElement(targetEl, targetUid);
+        const updateTarget = () => {
+            const current = queryBoardEntityElement(targetUid);
+            const rect = current && toStageRect(current.getBoundingClientRect(), stageEl.getBoundingClientRect());
+            geometry.target = rect ? { x: rect.cx, y: rect.cy } : geometry.hover;
+        };
+        updateTarget();
+
+        let resolveSequence;
+        const sequence = new Promise(resolve => { resolveSequence = resolve; });
+        const startedAt = performance.now();
+        let frameId;
+        let impacted = false;
+        let flightStarted = false;
+
+        function resolveImpact() {
+            if (impacted) return;
+            impacted = true;
+            if (targetUid) restoreRealElement(targetEl, targetUid);
+            carrier.remove();
+            resolveSequence();
+            onResolveImpact?.();
+        }
+
+        function draw(ms) {
+            if (!flightStarted && ms >= timing.resolve) {
+                flightStarted = true;
+                updateTarget();
+            }
+            if (!impacted) {
+                const pose = castCardPose(mode, ms, geometry);
+                carrier.style.translate = `${pose.x - geometry.hover.x}px ${pose.y - geometry.hover.y}px`;
+                carrier.style.scale = `${pose.scaleX} ${pose.scaleY}`;
+                carrier.style.rotate = `${pose.rotate}deg`;
+                carrier.style.opacity = pose.opacity;
+                label.style.opacity = pose.labelOpacity;
+            }
+            ctx.clearRect(0, 0, width, height);
+            paintAlternateCastEffect(ctx, mode, ms, geometry);
+        }
+
+        function tick(now) {
+            const ms = Math.max(0, (now - startedAt) / speed);
+            draw(ms);
+            if (ms < timing.done) frameId = window.requestAnimationFrame(tick);
+        }
+
+        function cancel() {
+            activeAlternateCasts.delete(cancel);
+            window.cancelAnimationFrame(frameId);
+            window.clearTimeout(impactTimer);
+            window.clearTimeout(cleanupTimer);
+            canvas.remove();
+            carrier.remove();
+            if (!impacted && targetUid) restoreRealElement(targetEl, targetUid);
+            resolveSequence();
+        }
+
+        // Resolve the card move even when background tabs pause animation frames.
+        const impactTimer = window.setTimeout(resolveImpact, timing.impact * speed);
+        const cleanupTimer = window.setTimeout(cancel, timing.done * speed);
+        activeAlternateCasts.add(cancel);
+        draw(0);
+        frameId = window.requestAnimationFrame(tick);
+        return sequence;
+    }
+
+    // 6. 出牌展示（飞入悬停点，再落位或结算法术）
     function playCastHoverSequence({
         cardHtmlElement,
         sourceRect,
@@ -1100,6 +1197,7 @@ export function createBattleMotionController({
         isSpell = false,
         isOpponent = false,
         isFromDrag = false,
+        alternateAnimation = null,
         fastForward = false,
         pulseTone = null,
         onResolveImpact
@@ -1130,11 +1228,6 @@ export function createBattleMotionController({
         const startCy = sourceRect?.cy ?? (isOpponent ? 48 : stageRect.height - 80);
         const startScale = isOpponent ? 0.36 : (isFromDrag ? 1.06 : 0.96);
 
-        const targetEl = targetUid ? queryBoardEntityElement(targetUid) : null;
-        if (targetUid) {
-            hideRealElement(targetEl, targetUid);
-        }
-
         const carrier = document.createElement('div');
         carrier.className = `bui-motion-carrier is-cast-hover ${isOpponent ? 'is-opp-cast' : 'is-self-cast'}`;
         carrier.style.width = `${w}px`;
@@ -1142,11 +1235,27 @@ export function createBattleMotionController({
         carrier.style.left = `${hoverCx - w / 2}px`;
         carrier.style.top = `${hoverCy - h / 2}px`;
 
-        const halo = document.createElement('div');
-        halo.className = `bui-cast-hover-halo ${isOpponent ? 'is-opp' : 'is-self'}`;
-        carrier.appendChild(halo);
         carrier.appendChild(cardHtmlElement);
         layer.appendChild(carrier);
+
+        if (alternateAnimation === 'accelerate' || alternateAnimation === 'crystalize') {
+            const sequence = playAlternateCast({
+                layer, carrier, stageEl, stageRect, targetUid, fastForward, onResolveImpact,
+                mode: alternateAnimation,
+                geometry: {
+                    source: { x: startCx, y: startCy, scale: startScale },
+                    hover: { x: hoverCx, y: hoverCy },
+                    width: w, height: h, drag: isFromDrag
+                }
+            });
+            if (sequence) return sequence;
+        }
+
+        const targetEl = targetUid ? queryBoardEntityElement(targetUid) : null;
+        if (targetUid) hideRealElement(targetEl, targetUid);
+        const halo = document.createElement('div');
+        halo.className = `bui-cast-hover-halo ${isOpponent ? 'is-opp' : 'is-self'}`;
+        carrier.prepend(halo);
 
         const startDx = startCx - hoverCx;
         const startDy = startCy - hoverCy;

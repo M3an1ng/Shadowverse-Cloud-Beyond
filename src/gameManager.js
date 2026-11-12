@@ -4292,7 +4292,9 @@ export function handleCardPlayed(eventData) {
         timestampUtc: eventData.TimestampUtc ?? eventData.timestampUtc ?? new Date().toISOString()
     });
 
-    return gameView.notifyCardPlayed?.(playedCard, sourcePlayerId);
+    const paidCost = eventData.PaidCost ?? eventData.paidCost;
+    const playMode = eventData.PlayMode ?? eventData.playMode;
+    return gameView.notifyCardPlayed?.(playedCard, sourcePlayerId, Number.isFinite(paidCost) ? paidCost : undefined, playMode);
 }
 
 export function handleCardSummoned(eventData) {

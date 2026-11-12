@@ -17,6 +17,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
     constructor() {
         super();
         this.targets = [];
+        this.usesNamedTargets = false;
         this.onChange = null;
         this.container = null;
         this.dslEditors = new Map();
@@ -26,21 +27,21 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
 
     async render(container, targets = [], onChange = () => {}, options = {}) {
         await this.initialize();
-        
-        this.container = container;
-        this.targets = (targets || []).map(target => this.normalizeTargetConfig(target));
-        this.onChange = onChange;
-        this.options = options || {};
-        const forcedMode = this.options?.forceMode;
-        if (forcedMode) {
-            this.targets = this.targets.map(target => ({ ...target, _uiMode: forcedMode }));
-        }
-        this.dslEditors = new Map();
-        this.dslEditorRenderPromises = new Map();
-
         this.clearContainer(container);
         
         try {
+            this.container = container;
+            this.usesNamedTargets = !!targets && typeof targets === 'object' && !Array.isArray(targets);
+            const items = this.usesNamedTargets
+                ? Object.entries(targets).map(([key, target]) => ({ ...target, key }))
+                : (targets || []);
+            this.targets = items.map(target => this.normalizeTargetConfig(target));
+            this.onChange = onChange;
+            this.options = options || {};
+            const forcedMode = this.options?.forceMode;
+            if (forcedMode) {
+                this.targets = this.targets.map(target => ({ ...target, _uiMode: forcedMode }));
+            }
             const wrapper = document.createElement('div');
             wrapper.className = 'step-content-wrapper targets-step';
 
@@ -80,6 +81,8 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
     }
 
     renderTargetsList(container) {
+        this.dslEditors.clear();
+        this.dslEditorRenderPromises.clear();
         this.clearContainer(container);
 
         if (this.targets.length === 0) {
@@ -128,6 +131,9 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             <span class="item-title">目标配置</span>
             <span class="item-status ${statusClass}">${statusText}</span>
         `;
+        if (this.usesNamedTargets) {
+            headerInfo.querySelector('.item-title').textContent = target.key;
+        }
 
         const headerActions = document.createElement('div');
         headerActions.className = 'header-actions';
@@ -253,14 +259,15 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         container.className = 'dsl-editor-wrapper';
 
         const dslEditor = new DslEditor();
-        const editorKey = `sourcePool_${index}`;
-        this.dslEditors.set(editorKey, dslEditor);
+        this.dslEditors.set(index, dslEditor);
 
         const renderPromise = dslEditor.render(
             container,
             target.query?.sourcePoolExpression || '',
             (expression) => {
-                this.updateTargetQuery(index, { sourcePoolExpression: expression });
+                if (this.dslEditors.get(index) === dslEditor) {
+                    this.updateTargetQuery(index, { sourcePoolExpression: expression });
+                }
             },
             {
                 expectedType: 'List<CardInstance>',
@@ -272,13 +279,13 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             }
         );
         const renderEntry = { promise: renderPromise, done: false };
-        this.dslEditorRenderPromises.set(editorKey, renderEntry);
+        this.dslEditorRenderPromises.set(index, renderEntry);
         renderPromise
             .catch((error) => {
                 console.warn('TargetConfigEditor: DSL editor render failed', error);
             })
             .finally(() => {
-                const current = this.dslEditorRenderPromises.get(editorKey);
+                const current = this.dslEditorRenderPromises.get(index);
                 if (current === renderEntry) {
                     current.done = true;
                 }
@@ -705,6 +712,8 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         const existingNode = listContainer.querySelector(`[data-target-index="${index}"]`);
         if (!existingNode) return;
         
+        this.dslEditors.delete(index);
+        this.dslEditorRenderPromises.delete(index);
         const isExpanded = existingNode.classList.contains('expanded');
         const newNode = this.createTargetNode(this.targets[index], index);
         
@@ -1507,7 +1516,7 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
 
     // ... 其余辅助方法 (addTarget, removeTarget, etc.) ...
     addTarget() {
-        this.targets.push({
+        const target = {
             isEnabled: true,
             targetHandlingStrategy: 0,
             requireValidTarget: false,
@@ -1517,7 +1526,16 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
             _simpleScope: 'Self',
             _simpleZone: ['Battlefield'],
             _simpleType: ['Unit']
-        });
+        };
+        if (this.usesNamedTargets) {
+            const usedKeys = new Set(this.targets.map(item => item.key));
+            let number = this.targets.length + 1;
+            while (usedKeys.has(`target${number}`)) {
+                number++;
+            }
+            target.key = `target${number}`;
+        }
+        this.targets.push(target);
         this.renderTargetsList(this.container.querySelector('#targets-list-container'));
         this.notifyChange();
     }
@@ -1730,7 +1748,9 @@ export class TargetConfigEditor extends MetadataDrivenComponent {
         });
 
         this.targets = normalizedTargets;
-        this.onChange(normalizedTargets);
+        this.onChange(this.usesNamedTargets
+            ? Object.fromEntries(normalizedTargets.map(({ key, ...target }) => [key, target]))
+            : normalizedTargets);
     }
 
     async flushDslEditors() {

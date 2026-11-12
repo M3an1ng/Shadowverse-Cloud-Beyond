@@ -55,6 +55,38 @@
     z-index: 9680;
 }
 
+.bui-alternate-cast-effect {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 9681;
+    pointer-events: none;
+}
+
+.bui-alternate-cast-label {
+    --cast-accent: #9eeaff;
+    position: absolute;
+    top: calc(100% + 9px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 3px 13px 3px 15px;
+    border-block: 1px solid var(--cast-accent);
+    clip-path: polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%);
+    background: #101823;
+    color: var(--cast-accent);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-shadow: 0 0 8px var(--cast-accent);
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.bui-alternate-cast-label.is-crystalize {
+    --cast-accent: #f5d896;
+}
+
 #game-container .bui-exit-clip-shell {
     z-index: 9630;
     will-change: clip-path, translate, scale, opacity;

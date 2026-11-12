@@ -1301,18 +1301,18 @@ function ensureEagerCardArt(cardEl, cardData) {
     }
 }
 
-function buildStandaloneMotionCardClone(cardDtoOrInstance) {
+function buildStandaloneMotionCardClone(cardDtoOrInstance, paidCost) {
     if (!cardDtoOrInstance) return null;
     const hydrated = createDiscoverPreviewCard(cardDtoOrInstance) ?? cardDtoOrInstance;
-    const paidCostRaw = cardDtoOrInstance.CurrentCost
+    const snapshotCost = cardDtoOrInstance.CurrentCost
         ?? cardDtoOrInstance.currentCost
         ?? cardDtoOrInstance.Cost
         ?? cardDtoOrInstance.cost;
-    if (hydrated && hydrated !== cardDtoOrInstance && Number.isFinite(Number(paidCostRaw))) {
-        hydrated.currentCost = Number(paidCostRaw);
-        hydrated.cost = Number(paidCostRaw);
+    if (hydrated && hydrated !== cardDtoOrInstance && Number.isFinite(Number(snapshotCost))) {
+        hydrated.currentCost = Number(snapshotCost);
+        hydrated.cost = Number(snapshotCost);
     }
-    const rawCardEl = createCardElement(hydrated, 'hand');
+    const rawCardEl = createCardElement(hydrated, 'hand', paidCost);
     if (!rawCardEl) return null;
     ensureEagerCardArt(rawCardEl, cardDtoOrInstance);
     return createCleanCardClone(rawCardEl, 102, 140);
@@ -1348,7 +1348,7 @@ function playUnitEvolutionEffect(unitUid, isSuper = false) {
     return getBattleMotionController().playEvolveBurst(String(unitUid), Boolean(isSuper));
 }
 
-function notifyCardPlayed(playedCardDto, sourcePlayerId) {
+function notifyCardPlayed(playedCardDto, sourcePlayerId, paidCost, playMode) {
     if (!isGamePageActive() || !playedCardDto) return undefined;
     const stageEl = gameContainerEl ?? document.getElementById('game-container');
     if (!stageEl) return undefined;
@@ -1391,11 +1391,13 @@ function notifyCardPlayed(playedCardDto, sourcePlayerId) {
         }
     }
 
-    const cardHtmlElement = buildStandaloneMotionCardClone(playedCardDto);
+    const cardHtmlElement = buildStandaloneMotionCardClone(playedCardDto, paidCost);
     if (!cardHtmlElement) return undefined;
 
     const rawType = String(playedCardDto.Type ?? playedCardDto.type ?? '').trim().toLowerCase();
     const isSpell = rawType === 'spell';
+    const legacyName = playMode == null ? (playedCardDto.Name ?? playedCardDto.name ?? '') : '';
+    const alternateAnimation = playModeVisual(playMode, legacyName).animation;
 
     markTimedUidFlag(suppressedExitUids, cardUid, 2600);
     if (!isSpell) {
@@ -1409,6 +1411,7 @@ function notifyCardPlayed(playedCardDto, sourcePlayerId) {
         isOpponent,
         isFromDrag,
         isSpell,
+        alternateAnimation,
         createdAt: now
     });
     return undefined;
@@ -1482,6 +1485,7 @@ function commitCardMoveVisual(moveContext, preMoveVisual, movedInstance) {
             isSpell: toZone !== 'field',
             isOpponent: pendingPlay.isOpponent,
             isFromDrag: pendingPlay.isFromDrag,
+            alternateAnimation: pendingPlay.alternateAnimation,
             fastForward: isPresentationFastForward()
         });
     }
@@ -4652,7 +4656,7 @@ function buildKeywordBadgesHtml(cardInstance, context) {
     return `<div class="keyword-badges${denseClass}">${badges.join('')}</div>`;
 }
 
-function createCardElement(cardInstance, context = 'hand') { // context: 'hand', 'field'
+function createCardElement(cardInstance, context = 'hand', displayCostOverride = null) { // context: 'hand', 'field'
     if (!cardInstance) {
         return null;
     }
@@ -4735,7 +4739,7 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
           <div class="card-art"></div>
           ${archetypeOrnamentHtml}
           ${sevoRingHtml}
-          <div class="cost"><span>${costInfo.displayCost ?? '?'}</span></div>
+          <div class="cost"><span>${displayCostOverride ?? costInfo.displayCost ?? '?'}</span></div>
           <div class="name">${cardInstance.Name ?? cardInstance.name ?? 'Unknown Card'}</div>
           ${
         isFollowerType ?

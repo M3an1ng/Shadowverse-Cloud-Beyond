@@ -954,6 +954,10 @@ foreach(var mode in new[]{PlayMode.Accelerate,PlayMode.Crystalize}) Test($"{mode
  activeAbilities.Clear();p1.Hand.Clear();p1.Field.Clear();p1.MaxPlayPoints=2;p1.CurrentPlayPoints=2;var old=factory.CreateAndRegisterNewCard(game,7,p1.PlayerId,CardZone.Hand);var combo=p1.Combo;
  var ev=new PlayCardEvent(p1,old,mode,paidCost:1,alternateCardDefinitionId:mode==PlayMode.Accelerate?8:9);var result=ev.Commit(context);
  Check(result.Success,"play failed: "+result.ErrorMessage);Check(result.GeneratedEvents.OfType<PpUpdateEvent>().Count()==1,"payment event count");foreach(var payment in result.GeneratedEvents.OfType<PpUpdateEvent>())payment.Commit(context);Check(p1.CurrentPlayPoints==1,"PP charged twice");Check(p1.Combo==combo+1,"combo charged twice");Check(ev.PlayedCard!.InstanceId==old.InstanceId && ReferenceEquals(ev.PlayedCard,old),"preflight identity lost");Check(!p1.Hand.Any(card=>card.BaseDefinitionId==7),"original definition remains");Check(ev.PlayedCard.BaseDefinitionId==(mode==PlayMode.Accelerate?8:9),"wrong card definition");Check(ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create(ev.PlayedCard,context).ArtPreview=="/original.png","original art lost");
+ var processor = new EventProcessor(NullLogger<EventProcessor>.Instance, services.GetRequiredService<IEventHistoryService>());
+ var dto = processor.ProcessEventAsync(ev, context).GetAwaiter().GetResult()
+     .ResultingDtos.OfType<ShadowverseBeyond.Server.Dtos.SignalR.Events.CardPlayedEventDto>().Single();
+ Check(dto.PlayMode == mode && dto.PaidCost == 1, "play animation lost the committed mode or cost");
 });
 Test("transform event transports old-to-new identity",()=>{
  activeAbilities.Clear();p1.Field.Clear();var old=factory.CreateAndRegisterNewCard(game,2,p1.PlayerId,CardZone.Field);var ev=new TransformEvent(old,3);ev.Commit(context);
@@ -961,6 +965,23 @@ Test("transform event transports old-to-new identity",()=>{
  var method=typeof(EventProcessor).GetMethod("ConvertTransformEvent",BindingFlags.Instance|BindingFlags.NonPublic)!;
  var dto=(ShadowverseBeyond.Server.Dtos.SignalR.Events.CardInstanceUpdatedEventDto)method.Invoke(processor,new object[]{ev,context})!;
  Check(dto.ReplacedCardInstanceIds[old.InstanceId]==ev.TransformingCard!.InstanceId,"transport mapping missing");
+});
+Test("play animation receives the committed cost, including zero", () =>
+{
+    p1.Field.Clear();
+    var card = factory.CreateAndRegisterNewCard(game, 7, p1.PlayerId, CardZone.Field);
+    var processor = new EventProcessor(NullLogger<EventProcessor>.Instance, services.GetRequiredService<IEventHistoryService>());
+    var play = new PlayCardEvent(p1, card, PlayMode.Base, paidCost: 0);
+    var dto = processor.ProcessEventAsync(play, context).GetAwaiter().GetResult()
+        .ResultingDtos.OfType<ShadowverseBeyond.Server.Dtos.SignalR.Events.CardPlayedEventDto>().Single();
+    Check(dto.PaidCost == 0 && dto.PlayedCardInstance.CurrentCost == 7, "animation cost was not kept separate from the card snapshot");
+    var serialized = JsonSerializer.SerializeToElement(dto);
+    Check(serialized.GetProperty("PaidCost").GetInt32() == 0, "free play cost was not sent");
+    var legacy = new ShadowverseBeyond.Server.Dtos.SignalR.Events.CardPlayedEventDto(p1.PlayerId, dto.PlayedCardInstance);
+    var restored = JsonSerializer.Deserialize<ShadowverseBeyond.Server.Dtos.SignalR.Events.CardPlayedEventDto>(
+        JsonSerializer.Serialize(legacy));
+    Check(restored?.PaidCost is null && restored?.PlayMode is null && restored?.PlayedCardInstance.CurrentCost == 7,
+        "older events without a paid cost or mode could not be read");
 });
 Test("stacked numeric attached effects remain visible",()=>{
  activeAbilities.Clear();p1.Field.Clear();var card=factory.CreateAndRegisterNewCard(game,2,p1.PlayerId,CardZone.Field);

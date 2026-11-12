@@ -750,20 +750,24 @@ function ensureChatPanelStructure(chatContent) {
 
         form.addEventListener('submit', async event => {
             event.preventDefault();
-            const normalized = normalizeChatText(input.value);
+            if (isChatSending) return;
+
+            const submittedDraft = input.value;
+            const normalized = normalizeChatText(submittedDraft);
             if (!normalized) {
                 setChatSendStatus('消息不能为空。', 'error');
                 renderInMatchChatDock();
                 return;
             }
 
-            logPanelChatDraft = normalized;
+            logPanelChatDraft = submittedDraft;
             setChatSendStatus('发送中...', 'neutral');
             isChatSending = true;
             sendButton.disabled = true;
             renderInMatchChatDock();
 
             const result = await sendChatMessage(normalized);
+            if (!input.isConnected) return;
             if (!result?.ok) {
                 setChatSendStatus(result?.error || '发送失败，请稍后重试。', 'error');
                 isChatSending = false;
@@ -772,7 +776,10 @@ function ensureChatPanelStructure(chatContent) {
                 return;
             }
 
-            logPanelChatDraft = '';
+            if (input.value === submittedDraft) {
+                input.value = '';
+                logPanelChatDraft = '';
+            }
             setChatSendStatus('已发送', 'success');
             isChatSending = false;
             sendButton.disabled = false;

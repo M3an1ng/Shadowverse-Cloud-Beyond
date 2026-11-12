@@ -19,6 +19,15 @@ import { validateDslExpression } from '../dslValidation.js';
 import { getBlockingLoader } from './blockingLoader.js';
 import { ensureEnumLocalization } from '../enumLocalizationCache.js';
 
+const legacyCompiledTargetExpressions = new Map([
+    ['[SourcePlayer.Leader]', 'context.owner.leader'],
+    ['[OpponentPlayer.Leader]', 'context.opponent.leader'],
+    ['OpponentPlayer.Field', 'context.opponent.field.query(self.type == "Follower")'],
+    ['SourcePlayer.Field', 'context.owner.field.query(self.type == "Follower")'],
+    ['[SourceCard]', 'context.SourceCard'],
+    ['SourcePlayer.Hand', 'context.owner.hand']
+]);
+
 /**
  * 主要的能力编辑器组件
  * 采用分步向导（Wizard）模式，引导用户完成能力配置
@@ -105,6 +114,19 @@ export class AbilityEditor extends MetadataDrivenComponent {
         const legacyExecutionKind = ability.executionKind || ability.ExecutionKind || '';
         const normalizedType = ability.type || ability.Type
             || (String(legacyExecutionKind).toLowerCase() === 'aura' ? 'Continuous' : '');
+        const targets = ability.targets ?? ability.Targets ?? [];
+        if (!Array.isArray(targets)) {
+            for (const [key, target] of Object.entries(targets)) {
+                const query = target?.query;
+                const oldExpression = query?.sourcePoolExpression;
+                const replacement = legacyCompiledTargetExpressions.get(oldExpression);
+                if (!replacement) continue;
+                query.sourcePoolExpression = oldExpression === 'SourcePlayer.Field'
+                    && key === 'chosenFriendlyFollower' && ability.description?.includes('自己的其他随从')
+                    ? 'context.owner.field.query(self.type == "Follower" && self.instanceId != context.SourceCard.instanceId)'
+                    : replacement;
+            }
+        }
         const alternatePlay = ability.alternatePlay || ability.AlternatePlay || null;
         const effects = (ability.effects?.length ? ability.effects : [{type:'',parameters:{}}]).map(effect => ({...effect}));
         const mode = this.normalizeAbilityKeywords(ability).find(entry => ['Accelerate','Crystalize'].includes(entry.keyword))?.keyword;
@@ -129,7 +151,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
             executionKind: legacyExecutionKind,
             trigger,
             conditions: ability.conditions || [],
-            targets: ability.targets || [],
+            targets,
             effects,
             auraConfig,
             alternatePlay: ability.alternatePlay || ability.AlternatePlay || null,
@@ -567,7 +589,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
         const pushWarn = (message) => issues.warns.push(message);
         const triggeringEventContext = this.getTriggeringEventContextForDsl();
 
-        const targets = this.ability.targets || [];
+        const targets = Object.values(this.ability.targets);
         for (let index = 0; index < targets.length; index++) {
             const target = targets[index];
             if (target?.isEnabled === false) {
@@ -1247,7 +1269,7 @@ export class AbilityEditor extends MetadataDrivenComponent {
             .filter(entry => entry.targetType === 'Player')
             .map(({ targetType, ...rest }) => ({ ...rest, playerScope: rest.playerScope || 'Self' }));
             
-        const { cardName, abilitySequence, ...baseAbility } = this.ability;
+        const { cardName, abilitySequence, targets, ...baseAbility } = this.ability;
         const finalAbility = {
             ...baseAbility,
             name: finalName,
@@ -1257,6 +1279,9 @@ export class AbilityEditor extends MetadataDrivenComponent {
             playerCounterRegistrations
         };
         const cleanedAbility = this.stripUiFields(finalAbility);
+        cleanedAbility.targets = Array.isArray(targets)
+            ? this.stripUiFields(targets)
+            : Object.fromEntries(Object.entries(targets).map(([key, target]) => [key, this.stripUiFields(target)]));
         cleanedAbility.effects = this.effectEditor.synchronizeDecisionBranchTriggers(cleanedAbility.effects, cleanedAbility.trigger);
         const finalizedEffects = this.effectEditor.buildEffectsForSave(cleanedAbility.effects, this.metadata);
         cleanedAbility.alternatePlay = alternatePlayFromEffects({...cleanedAbility,effects:finalizedEffects});

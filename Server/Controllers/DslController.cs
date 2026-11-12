@@ -471,6 +471,7 @@ namespace ShadowverseBeyond.Server.Controllers
 
             // 3. Effects & Targets resolution
             int order = 0;
+            const string enemyFollowers = "context.opponent.field.query(self.type == \"Follower\")";
 
             // 3a. Necromancy cost
             var necroMatch = Regex.Match(text, @"【?死灵术】?\s*(\d+)");
@@ -517,7 +518,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 if (int.TryParse(amtStr, out var healAmt))
                 {
                     const string targetKey = "selfLeader";
-                    targets[targetKey] = BuildTarget("[SourcePlayer.Leader]", requireChoice: false);
+                    targets[targetKey] = BuildTarget("context.owner.leader", requireChoice: false);
                     effects.Add(new
                     {
                         type = "Heal",
@@ -537,7 +538,7 @@ namespace ShadowverseBeyond.Server.Controllers
             if (dmgLeaderMatch.Success && int.TryParse(dmgLeaderMatch.Groups[1].Value, out var dmgLeaderAmt))
             {
                 const string targetKey = "enemyLeader";
-                targets[targetKey] = BuildTarget("[OpponentPlayer.Leader]", requireChoice: false);
+                targets[targetKey] = BuildTarget("context.opponent.leader", requireChoice: false);
                 effects.Add(new
                 {
                     type = "Damage",
@@ -560,7 +561,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 if (int.TryParse(amtStr, out var dmgAoeAmt))
                 {
                     const string targetKey = "enemyFollowersAoe";
-                    targets[targetKey] = BuildTarget("OpponentPlayer.Field", requireChoice: false);
+                    targets[targetKey] = BuildTarget(enemyFollowers, requireChoice: false);
                     effects.Add(new
                     {
                         type = "Damage",
@@ -583,7 +584,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 {
                     bool isRandom = text.Contains("随机");
                     const string targetKey = "enemyFollowerTarget";
-                    targets[targetKey] = BuildTarget("OpponentPlayer.Field", requireChoice: !isRandom, randomCount: isRandom ? 1 : null);
+                    targets[targetKey] = BuildTarget(enemyFollowers, requireChoice: !isRandom, randomCount: isRandom ? 1 : null);
                     effects.Add(new
                     {
                         type = "Damage",
@@ -603,7 +604,7 @@ namespace ShadowverseBeyond.Server.Controllers
             if (Regex.IsMatch(text, @"破坏(?:所有|全体)敌方随从|破坏敌方(?:所有|全体)随从"))
             {
                 const string targetKey = "destroyAllEnemies";
-                targets[targetKey] = BuildTarget("OpponentPlayer.Field", requireChoice: false);
+                targets[targetKey] = BuildTarget(enemyFollowers, requireChoice: false);
                 effects.Add(new
                 {
                     type = "Destroy",
@@ -617,7 +618,7 @@ namespace ShadowverseBeyond.Server.Controllers
             {
                 bool isRandom = text.Contains("随机");
                 const string targetKey = "destroyEnemyTarget";
-                targets[targetKey] = BuildTarget("OpponentPlayer.Field", requireChoice: !isRandom, randomCount: isRandom ? 1 : null);
+                targets[targetKey] = BuildTarget(enemyFollowers, requireChoice: !isRandom, randomCount: isRandom ? 1 : null);
                 effects.Add(new
                 {
                     type = "Destroy",
@@ -637,7 +638,13 @@ namespace ShadowverseBeyond.Server.Controllers
                 bool allFriendly = Regex.IsMatch(text, @"自己的(?:所有|全体)随从");
                 bool chooseFriendly = !allFriendly && Regex.IsMatch(text, @"1\s*个自己的(?:其他)?随从");
                 string targetKey = allFriendly ? "friendlyFollowers" : (chooseFriendly ? "chosenFriendlyFollower" : "selfCard");
-                string poolExpr = (allFriendly || chooseFriendly) ? "SourcePlayer.Field" : "[SourceCard]";
+                string poolExpr = (allFriendly || chooseFriendly)
+                    ? "context.owner.field.query(self.type == \"Follower\")"
+                    : "context.SourceCard";
+                if (chooseFriendly && text.Contains("自己的其他随从"))
+                {
+                    poolExpr = "context.owner.field.query(self.type == \"Follower\" && self.instanceId != context.SourceCard.instanceId)";
+                }
                 targets[targetKey] = BuildTarget(poolExpr, requireChoice: chooseFriendly);
                 effects.Add(new
                 {
@@ -684,7 +691,7 @@ namespace ShadowverseBeyond.Server.Controllers
             if (sbMatch.Success && int.TryParse(sbMatch.Groups[1].Value, out var sbAmt))
             {
                 const string targetKey = "selfHand";
-                targets[targetKey] = BuildTarget("SourcePlayer.Hand", requireChoice: false);
+                targets[targetKey] = BuildTarget("context.owner.hand", requireChoice: false);
                 effects.Add(new
                 {
                     type = "SpellBoost",
@@ -804,15 +811,9 @@ namespace ShadowverseBeyond.Server.Controllers
 
         private static object BuildTarget(string sourcePoolExpression, bool requireChoice, int? randomCount = null)
         {
-            var operations = new List<object>();
-            if (randomCount.HasValue && randomCount.Value > 0)
+            if (randomCount is > 0)
             {
-                operations.Add(new
-                {
-                    type = "Take",
-                    strategy = "Random",
-                    count = StaticVal(randomCount.Value)
-                });
+                sourcePoolExpression = $"{sourcePoolExpression}.take(random {randomCount.Value})";
             }
 
             return new
@@ -823,15 +824,14 @@ namespace ShadowverseBeyond.Server.Controllers
                 query = new
                 {
                     sourcePoolExpression,
-                    operations
+                    operations = Array.Empty<object>()
                 },
                 playerChoiceOptions = requireChoice
                     ? new
                     {
                         isRequired = true,
-                        minSelections = 1,
-                        maxSelections = 1,
-                        selectionTimeoutSeconds = 30
+                        minCount = 1,
+                        maxCount = 1
                     }
                     : null
             };
