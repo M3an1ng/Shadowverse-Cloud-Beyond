@@ -4,6 +4,35 @@ import {getUserSession} from './userSession.js';
 import {showAlert} from './siteDialog.js';
 import {ensureEnumLocalization,getCachedEnumLabel} from './enumLocalizationCache.js';
 import './styles/local-ai-training.css';
+const actionNames = {PlayCard:'出牌', PerformAttack:'攻击', PerformEvolve:'进化', PerformSuperEvolve:'超进化',
+ RequestAct:'启动', RequestFusion:'融合', PerformPpBoost:'切换PP+1', EndTurn:'结束回合'};
+function describeAction(action, cards) {
+ const card = id => cards?.[id] || '#' + id;
+ return [actionNames[action.kind] || action.kind, action.cardId && card(action.cardId), action.abilityName,
+  action.targetCardId && '→ ' + card(action.targetCardId)].filter(Boolean).join(' ');
+}
+function describeRootSpot({zone, index, cardId, side}, cards, showSide=false) {
+  const place = {hand:'手牌',field:'战场',emblem:'纹章'}[zone];
+  const owner = showSide ? (side==='own' ? '我方' : '敌方') : '';
+ return owner + (cards?.[cardId] || '#' + cardId) + (place && index != null ? `（${place}第 ${index+1} 张）` : '');
+}
+function describeRootMove(move, cards) {
+ const mode = move.playMode ? playModeNames[move.playMode] || move.playMode : '';
+ return [actionNames[move.kind] || move.kind, move.source && describeRootSpot(move.source, cards), mode,
+  move.paidCost == null ? '' : `${move.paidCost} PP`,
+  move.abilityDefinitionId == null ? '' : `能力 #${move.abilityDefinitionId}`,
+  move.targets?.length ? '→ ' + move.targets.map(card => describeRootSpot(card, cards, true)).join('、') : ''].filter(Boolean).join(' ');
+}
+function describeSubchoice(choice, cards) {
+ if (choice.cancelled) return '取消';
+ const kind = {mode:'模式',discover:'发现',target:'目标'}[choice.kind] || '选择';
+ const selected = choice.selected.map(option => {
+  if (option.location) return describeRootSpot(option.location, cards, true);
+  if (choice.kind === 'mode') return [`第 ${option.index+1} 项`, option.name].filter(Boolean).join(' ');
+  return option.name || cards?.[option.cardId] || '#' + option.cardId;
+ });
+ return [kind, selected.length ? selected.join('、') : '空选'].join(' ');
+}
 const local=()=>['localhost','127.0.0.1','[::1]','::1'].includes(location.hostname);
 async function request(path,options={}) {
  const response=await fetch('/api/local-ai/'+path,{...options,headers:{'Content-Type':'application/json','X-Editor-UserId':getUserSession().userId||'',...options.headers}});
@@ -51,6 +80,12 @@ async function openTraining() {
  compareStrategy.type = 'checkbox';
  strategyLabel.append(compareStrategy, '大模型对照评测');
  strategyLabel.hidden = true;
+ const experienceLabel = document.createElement('label');
+ experienceLabel.className = 'local-ai-continuous';
+ const compareExperience = document.createElement('input');
+ compareExperience.type = 'checkbox';
+ experienceLabel.append(compareExperience, '历史经验对照（两组都调用大模型）');
+ experienceLabel.hidden = true;
  const choicesLabel = document.createElement('label');
  choicesLabel.className = 'local-ai-continuous';
  const strategyChoicesOnly = document.createElement('input');
@@ -72,27 +107,48 @@ async function openTraining() {
  const compareCombatProjection=document.createElement('input');compareCombatProjection.type='checkbox';
  projectionLabel.append(compareCombatProjection,'攻击前效果对照（免费，不训练或替换模型）');
  let supportsCombatProjection=false;
+ let supportsExperience=false;
+ const groupSize = () => compareStrategy.checked && compareExperience.checked ? 8 : 4;
+ const updateRunOptions = () => {
+  const strategy = compareStrategy.checked;
+  const projection = compareCombatProjection.checked;
+  experienceLabel.hidden = !strategy || !supportsExperience;
+  choicesLabel.hidden = !strategy;
+  seedLabel.hidden = !strategy;
+  games.min = String(strategy ? groupSize() : projection ? 12 : 10);
+  games.step = String(strategy || projection ? groupSize() : 1);
+  continuous.disabled = strategy || projection;
+  start.textContent = strategy || projection ? '开始对照评测' : '开始训练';
+ };
  compareCombatProjection.onchange=()=>{
-  if(compareCombatProjection.checked){compareStrategy.checked=false;strategyChoicesOnly.checked=false;choicesLabel.hidden=true;seedLabel.hidden=true;continuous.checked=false;games.value='24';parallel.value='1';}
-  games.min=compareCombatProjection.checked?'12':'10';games.step=compareCombatProjection.checked?'4':'1';
-  continuous.disabled=compareCombatProjection.checked;start.textContent=compareCombatProjection.checked?'开始对照评测':'开始训练';
+  if(compareCombatProjection.checked){
+   compareStrategy.checked=false;
+   compareExperience.checked=false;
+   strategyChoicesOnly.checked=false;
+   continuous.checked=false;
+   games.value='24';
+   parallel.value='1';
+  } else if(Number(games.value)<10) games.value='10';
+  updateRunOptions();
  };
  compareStrategy.onchange = () => {
-  choicesLabel.hidden = !compareStrategy.checked;
-  seedLabel.hidden = !compareStrategy.checked;
   if (compareStrategy.checked) {
    compareCombatProjection.checked=false;
-   continuous.checked = false;
-   games.value = '4';
-   parallel.value = '1';
+   continuous.checked=false;
+   games.value='4';
+   parallel.value='1';
+  } else {
+   compareExperience.checked=false;
+   if(Number(games.value)<10) games.value='10';
   }
-  if (!compareStrategy.checked && Number(games.value) < 10) games.value = '10';
-  games.min = compareStrategy.checked ? '4' : '10';
-  games.step = compareStrategy.checked ? '4' : '1';
-  continuous.disabled = compareStrategy.checked;
-  start.textContent = compareStrategy.checked ? '开始对照评测' : '开始训练';
+  updateRunOptions();
  };
- const controls=section('本地训练设置');controls.append(message,row,continuousLabel,strategyLabel,choicesLabel,seedLabel,projectionLabel,buttons);
+ compareExperience.onchange = () => {
+  const size=groupSize();
+  if(Number(games.value)<size || Number(games.value)%size!==0) games.value=String(size);
+  updateRunOptions();
+ };
+ const controls=section('本地训练设置');controls.append(message,row,continuousLabel,strategyLabel,experienceLabel,choicesLabel,seedLabel,projectionLabel,buttons);
 
  const strategyPanel = section('大模型规划');
  const strategySummary = document.createElement('p');
@@ -109,6 +165,23 @@ async function openTraining() {
  const strategyTiming = document.createElement('p');
  const cacheUsage = document.createElement('p');
  const strategyMatchups = document.createElement('ul');
+ const rootDifferences = document.createElement('details');
+ const rootTitle = document.createElement('summary');
+ const rootNote = document.createElement('p');
+ rootNote.className = 'muted';
+ rootNote.textContent = '对照已完成的根动作及其中引擎接收的选择。核对公开战场、资源、选择方手牌和选项。未记录的效果与状态需在回放中核对。';
+ const rootList = document.createElement('ul');
+ rootDifferences.append(rootTitle, rootNote, rootList);
+ rootDifferences.hidden = true;
+ const experienceExamples = document.createElement('details');
+ const exampleTitle = document.createElement('summary');
+ exampleTitle.textContent = '查看已结算的不同动作';
+ const exampleNote = document.createElement('p');
+ exampleNote.className = 'muted';
+ exampleNote.textContent = '列出各局实际执行的动作及同局面的本地候选。结算变化来自已执行的动作，另一组的对局路径可能不同。';
+ const exampleList = document.createElement('ul');
+ experienceExamples.append(exampleTitle, exampleNote, exampleList);
+ experienceExamples.hidden = true;
  const guideText = document.createElement('p');
  const turnText = document.createElement('p');
  const experienceText=document.createElement('p');experienceText.className='muted';
@@ -118,7 +191,7 @@ async function openTraining() {
  const roleList = document.createElement('ul');
  rolesDetails.append(rolesTitle, roleList);
  rolesDetails.hidden = true;
- strategyPanel.append(strategySummary,retryStrategy, strategyResults, strategyTiming, cacheUsage, strategyMatchups, guideText, turnText, experienceText, rolesDetails);
+ strategyPanel.append(strategySummary,retryStrategy, strategyResults, strategyTiming, cacheUsage, strategyMatchups, rootDifferences, experienceExamples, guideText, turnText, experienceText, rolesDetails);
  const history = document.createElement('details');
  const historyTitle = document.createElement('summary');
  historyTitle.textContent = '历史对局与学习经验';
@@ -535,21 +608,17 @@ async function openTraining() {
      const detail=document.createElement('details');const title=document.createElement('summary');
      title.textContent=`已完成动作前后对照 · ${lesson.completedActions.length} 条记录`;
      const note=document.createElement('p');note.className='muted';note.textContent='确认动作完成后的公开结果，包含触发响应；不代表未选路线的模拟结果。';
-     const names={PlayCard:'出牌',PerformAttack:'攻击',PerformEvolve:'进化',PerformSuperEvolve:'超进化',RequestAct:'启动',RequestFusion:'融合',PerformPpBoost:'切换PP+1',EndTurn:'结束回合'};
      const list=document.createElement('ul');
      for(const fact of lesson.completedActions){
       const a=fact.before,b=fact.after,line=document.createElement('li');
-      line.textContent=`T${fact.turn} ${names[fact.action.kind]||fact.action.kind}${fact.action.cardId?' · '+(data.cards?.[fact.action.cardId]||'#'+fact.action.cardId):''}：我方生命 ${a.ownHealth??'?'}→${b.ownHealth??'?'}，敌方生命 ${a.enemyHealth??'?'}→${b.enemyHealth??'?'}；PP ${a.pp}→${b.pp}，EP ${a.ep}→${b.ep}，SEP ${a.sep}→${b.sep}；手牌 ${a.ownHand}→${b.ownHand}，战场 ${a.ownField}/${a.enemyField}→${b.ownField}/${b.enemyField}`;
+      line.textContent=`T${fact.turn} ${actionNames[fact.action.kind]||fact.action.kind}${fact.action.cardId?' · '+(data.cards?.[fact.action.cardId]||'#'+fact.action.cardId):''}：我方生命 ${a.ownHealth??'?'}→${b.ownHealth??'?'}，敌方生命 ${a.enemyHealth??'?'}→${b.enemyHealth??'?'}；PP ${a.pp}→${b.pp}，EP ${a.ep}→${b.ep}，SEP ${a.sep}→${b.sep}；手牌 ${a.ownHand}→${b.ownHand}，战场 ${a.ownField}/${a.enemyField}→${b.ownField}/${b.enemyField}`;
       const resourceDetail=document.createElement('p');resourceDetail.className='muted';
       const emblems=(ids,omitted)=>ids==null?'未知':(ids.length?ids.map(id=>data.cards?.[id]||'#'+id).join('、'):'无')+(omitted>0?`（另有 ${omitted} 张未展开）`:'');
       resourceDetail.textContent=`血池 ${a.bloodPool??'未知'}→${b.bloodPool??'未知'}；我方纹章：${emblems(a.ownEmblemIds,a.ownEmblemsOmitted)} → ${emblems(b.ownEmblemIds,b.ownEmblemsOmitted)}；敌方纹章：${emblems(a.enemyEmblemIds,a.enemyEmblemsOmitted)} → ${emblems(b.enemyEmblemIds,b.enemyEmblemsOmitted)}`;
       if (fact.decision) {
        const comparison = document.createElement('p');
        comparison.className = 'muted';
-       const local = fact.decision.local;
-       const cardName = id => data.cards?.[id] || '#' + id;
-       const alternative = [names[local.kind] || local.kind, local.cardId ? cardName(local.cardId) : '',
-        local.abilityName, local.targetCardId ? '→ ' + cardName(local.targetCardId) : ''].filter(Boolean).join(' ');
+       const alternative = describeAction(fact.decision.local, data.cards);
        const policy = fact.decision.policy === 'model-first-action' ? '采纳模型第一步建议' : '使用计划参与排序';
        comparison.textContent = `${policy} · ${fact.decision.different ? '本地候选未执行' : '与本地候选一致'} · ${alternative}`;
        line.append(comparison);
@@ -622,17 +691,30 @@ async function openTraining() {
   }
   strategyLabel.hidden = !data.strategyConfigured;
   strategySummary.textContent = data.strategyConfigured
-   ? `已接入 ${data.strategyModel || '大模型'}。勾选对照评测后，只有实验侧使用大模型规划。`
+   ? `已接入 ${data.strategyModel || '大模型'}。标准对照只有实验侧使用模型。历史经验对照的两组均使用模型。`
    : '尚未配置大模型。普通训练使用本地模型。';
   if (data.providerStatus?.available === false && data.strategyConfigured)
    strategySummary.textContent = data.providerStatus.message;
   retryStrategy.hidden = !data.strategyConfigured || data.providerStatus?.available !== false;
   retryStrategy.disabled = s.running;
   const completed = s.completed || 0;
-  const benchmark = s.strategyBenchmark;
+  const experienceBenchmark = s.strategyExperienceBenchmark;
+  const benchmark = experienceBenchmark ?? s.strategyBenchmark;
   const completeGroups = new Set(benchmark?.completeGroups ?? []);
-  const strategyProgress = `已完赛 ${completed} 局 · ${s.strategyGames || 0}/${completed} 局获得模型建议 · ${s.strategyPlans || 0} 次规划 · 各牌组沿用开跑时的经验和攻略`;
-  if (s.compareStrategy && benchmark) {
+  const scope = experienceBenchmark ? '对照使用开跑时冻结的经验' : '各牌组沿用开跑时的经验和攻略';
+  const strategyProgress = `已完赛 ${completed} 局 · ${s.strategyGames || 0}/${completed} 局获得模型建议 · ${s.strategyPlans || 0} 次规划 · ${scope}`;
+  if (experienceBenchmark) {
+   const outcomes = experienceBenchmark.pairOutcomes;
+   const results = outcomes
+    ? ` · ${outcomes.improved} 对有经验组更好 · ${outcomes.regressed} 对更差 · ${outcomes.unchanged} 对结果相同 · ${outcomes.withAdviceInBoth} 对两边均有有效模型建议` : '';
+   const summary = completeGroups.size
+    ? `完整对照 ${completeGroups.size}/${benchmark.plannedGroups} 组${results}`
+    : '尚无完整对照组 · 每组八局，每个牌组和先后手组合各跑有经验、无经验两局';
+   const pending = benchmark.unpairedGames ? ` · ${benchmark.unpairedGames} 局未纳入配对` : '';
+   const mismatches = (benchmark.openingMismatchGroups || 0) + (benchmark.postMulliganMismatchGroups || 0);
+   const mismatch = mismatches ? ` · ${mismatches} 组开局或换牌后牌序不一致` : '';
+   strategyResults.textContent = `${summary}${pending}${mismatch} · 起手种子 ${s.benchmarkSeed} · ${strategyProgress}`;
+  } else if (s.compareStrategy && benchmark) {
    const paired = completeGroups.size
     ? `完整对照 ${completeGroups.size}/${benchmark.plannedGroups} 组 · 实验侧 ${benchmark.wins} 胜 ${benchmark.losses} 负 ${benchmark.draws} 平 · 分组 ${benchmark.groupsAhead} 优 ${benchmark.groupsBehind} 劣 ${benchmark.groupsTied} 平`
     : `尚无完整对照组 · 每组四局，交换牌组和先后手`;
@@ -665,26 +747,72 @@ async function openTraining() {
    ? `本次服务启动以来 · API 已报告输入 ${usage.promptTokens||0} tokens · 已报告输出 ${usage.completionTokens||0} tokens · 缓存命中 ${usage.cachedTokens||0} / ${measuredCache??0} tokens（${cacheRatio}，仅统计返回完整缓存数据的响应）${usage.cacheUnknownResponses?` · ${usage.cacheUnknownResponses} 次响应未提供有效缓存数据，未按零命中计算`:''}${usage.promptUnreportedResponses?` · ${usage.promptUnreportedResponses} 次响应的输入用量未知`:''}`
    : '等待 API 返回用量统计';
   const groups = new Map();
-  for (const match of s.strategyMatches ?? []) {
-   if (s.compareStrategy && !completeGroups.has(Math.floor((match.episode - 1) / 4))) continue;
-   const key = match.deckId + ':' + match.first;
-   const group = groups.get(key) ?? { name: match.deckName, first: match.first, win: 0, loss: 0, draw: 0, total: 0, elapsed: 0 };
+  const comparisonSize = experienceBenchmark ? 8 : 4;
+  const matched = (s.strategyMatches ?? []).filter(match =>
+   !s.compareStrategy || completeGroups.has(Math.floor((match.episode - 1) / comparisonSize)));
+  const armName = withHistory => withHistory ? '有经验组' : '无经验组';
+  for (const match of matched) {
+   const arm = experienceBenchmark ? armName(match.withStrategyExperience) : '';
+   const key = [match.deckId, match.first, arm].join(':');
+   const group = groups.get(key) ?? { name: match.deckName, arm, first: match.first, win: 0, loss: 0, draw: 0, total: 0, elapsed: 0 };
    group[match.result]++;
    group.total++;
    group.elapsed += match.elapsedMs;
    groups.set(key, group);
   }
   strategyMatchups.replaceChildren(...[...groups.values()]
-   .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN') || Number(b.first) - Number(a.first))
+   .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN') || Number(b.first) - Number(a.first) || a.arm.localeCompare(b.arm, 'zh-CN'))
    .map(group => {
     const item = document.createElement('li');
-    item.textContent = `${group.name} · ${group.first ? '先手' : '后手'} · ${group.win} 胜 ${group.loss} 负 ${group.draw} 平 · 每局平均 ${(group.elapsed / group.total / 1000).toFixed(1)} 秒`;
+    item.textContent = `${group.arm ? group.arm + ' · ' : ''}${group.name} · ${group.first ? '先手' : '后手'} · ${group.win} 胜 ${group.loss} 负 ${group.draw} 平 · 每局平均 ${(group.elapsed / group.total / 1000).toFixed(1)} 秒`;
     return item;
    }));
   strategyMatchups.hidden = groups.size === 0;
-  strategyTiming.textContent = s.compareStrategy
-   ? [timing('回合规划', s.turnDecisions), timing('模式与发现', s.optionDecisions)].filter(Boolean).join(' · ')
-   : '';
+  const rootComparisons = experienceBenchmark?.rootComparisons ?? [];
+  const actionDifferences = rootComparisons.filter(pair => pair.status === 'root-action-difference').length;
+  rootDifferences.hidden = rootComparisons.length === 0;
+  const choiceDifferences = rootComparisons.filter(pair => pair.status === 'subchoice-difference').length;
+  rootTitle.textContent = `查看两组的首次分歧 · ${actionDifferences}/${rootComparisons.length} 对在相同记录局面采取不同动作 · ${choiceDifferences} 对在结算中改选`;
+  const rootStatuses = {
+   'position-difference':'下一步前的局面记录已不同',
+   'same-recorded-roots':'已记录的根动作一致',
+   'trace-limit':'追踪达到上限',
+   'different-length':'动作记录长度不同',
+   'unobserved':'缺少可比较的动作记录',
+   'choice-unobserved':'缺少引擎接收的选择或对应选项记录',
+   'choice-context-difference':'结算中出现不同的局面或选项',
+   'choice-length-difference':'结算中的选择次数不同',
+   'choice-limit':'结算中可比较的选择已达上限'
+  };
+  rootList.replaceChildren(...rootComparisons.slice(-16).map(pair => {
+   const item = document.createElement('li');
+   const prefix = `第 ${pair.historyEpisode} / ${pair.controlEpisode} 局 · 前 ${pair.matchedRoots} 步一致`;
+   const history = pair.history;
+   item.textContent = pair.status === 'root-action-difference' && history && pair.control
+    ? `${prefix} · T${history.turn} ${history.seat==='model'?'模型席':'对手席'} · 有经验组 ${describeRootMove(history, data.strategyExampleCards)} · 无经验组 ${describeRootMove(pair.control, data.strategyExampleCards)}`
+    : pair.status === 'subchoice-difference' && history && pair.historyChoice && pair.controlChoice
+     ? `${prefix} · T${history.turn} ${describeRootMove(history, data.strategyExampleCards)} · 第 ${pair.choiceIndex+1} 次选择 · 有经验组 ${describeSubchoice(pair.historyChoice, data.strategyExampleCards)} · 无经验组 ${describeSubchoice(pair.controlChoice, data.strategyExampleCards)}`
+     : `${prefix} · ${rootStatuses[pair.status] || '未取得分歧动作'}`;
+   return item;
+  }));
+  const examples = experienceBenchmark ? matched.sort((a,b) => a.episode - b.episode)
+   .flatMap(match => (match.experienceOutcomeExamples ?? []).filter(fact => fact.decision?.different)
+    .map(fact => ({match, fact}))).slice(-16) : [];
+  experienceExamples.hidden = examples.length === 0;
+  exampleList.replaceChildren(...examples.map(({match, fact}) => {
+   const item = document.createElement('li');
+   const actual = describeAction(fact.action, data.strategyExampleCards);
+   const alternative = describeAction(fact.decision.local, data.strategyExampleCards);
+   const {before, after} = fact;
+   item.textContent = `${armName(match.withStrategyExperience)} · 第 ${match.episode} 局 · T${fact.turn} · 执行 ${actual} · 本地候选 ${alternative}`
+    + ` · PP ${before.pp} → ${after.pp} · 手牌 ${before.ownHand} → ${after.ownHand} · 敌方生命 ${before.enemyHealth ?? '未知'} → ${after.enemyHealth ?? '未知'}`;
+   return item;
+  }));
+  const armMetrics = (label, arm) => `${label} · 有效回合规划 ${arm.acceptedPlans}/${arm.planningAttempts}，有效模式与发现 ${arm.acceptedChoices}/${arm.choiceAttempts}，实际改动 ${arm.differentCompletedActions} 次动作、${arm.differentCommittedOptions} 次模式或发现`;
+  strategyTiming.textContent = experienceBenchmark
+   ? completeGroups.size ? [armMetrics('有经验组', experienceBenchmark.withHistory),
+    armMetrics('无经验组', experienceBenchmark.withoutHistory)].join(' / ') : ''
+   : s.compareStrategy ? [timing('回合规划', s.turnDecisions), timing('模式与发现', s.optionDecisions)].filter(Boolean).join(' · ') : '';
   const latest = s.latestStrategy;
   const retrieved=latest?.experienceRetrieval;
   experienceText.textContent=retrieved?`经验检索：${retrieved.available} 场中选取 ${retrieved.selected} 场，规则一致 ${retrieved.compatibleSelected} 场，相关案例 ${retrieved.relevantSelected} 场（请求准备，不代表已采纳）`:'';
@@ -713,59 +841,66 @@ async function openTraining() {
    }));
   }
   rolesDetails.hidden = roles.length === 0;
-  if (s.running) compareStrategy.checked = Boolean(s.compareStrategy);
-  compareStrategy.disabled = s.running;
-  if (s.running) {
-   strategyChoicesOnly.checked = Boolean(s.strategyChoicesOnly);
-   if (s.compareStrategy) {
-    compareStrategy.checked = true;
-    choicesLabel.hidden = false;
-    seedLabel.hidden = false;
-    benchmarkSeed.value = String(s.benchmarkSeed);
-   }
+  supportsExperience=Boolean(data.strategyExperienceBenchmarkSupported);
+  supportsCombatProjection=Boolean(data.combatProjectionBenchmarkSupported);
+  projectionLabel.hidden=!supportsCombatProjection;
+  if(s.running) {
+   compareStrategy.checked=Boolean(s.compareStrategy);
+   compareExperience.checked=Boolean(s.compareStrategyExperience);
+   strategyChoicesOnly.checked=Boolean(s.strategyChoicesOnly);
+   compareCombatProjection.checked=Boolean(s.compareCombatProjection);
+   if(s.compareStrategy) benchmarkSeed.value=String(s.benchmarkSeed);
   }
-  compareStrategy.disabled = s.running;
-  strategyChoicesOnly.disabled = s.running;
-  choicesLabel.hidden = !data.strategyConfigured || !compareStrategy.checked;
-  supportsCombatProjection=Boolean(data.combatProjectionBenchmarkSupported);projectionLabel.hidden=!supportsCombatProjection;
-  if(!supportsCombatProjection)compareCombatProjection.checked=false;
-  if(s.running)compareCombatProjection.checked=Boolean(s.compareCombatProjection);
+  if(!supportsCombatProjection) compareCombatProjection.checked=false;
+  if(!supportsExperience) compareExperience.checked=false;
+  updateRunOptions();
+  choicesLabel.hidden ||= !data.strategyConfigured;
+  experienceLabel.hidden ||= !data.strategyConfigured;
+  compareStrategy.disabled=s.running;
+  compareExperience.disabled=s.running;
+  strategyChoicesOnly.disabled=s.running;
   compareCombatProjection.disabled=s.running;
-  start.textContent = compareStrategy.checked||compareCombatProjection.checked ? '开始对照评测' : '开始训练';
  };
  const winrates=section('卡组胜率');const winGrid=document.createElement('div');winGrid.className='ai-training-deck-grid';const winTiles=[];
  for(let i=0;i<2;i++){const tile=document.createElement('div');tile.className='ai-training-deck-stat';const name=document.createElement('strong');const percent=document.createElement('span');const details=document.createElement('small');tile.append(name,percent,details);winGrid.append(tile);winTiles.push({name,percent,details});}
  const winNote=document.createElement('p');winNote.className='muted';winNote.textContent='本次训练任务累计的卡组自对战胜率，双方交替换边；失败或中断对局不计入。不是模型的独立评测胜率。';winrates.append(winGrid,winNote);
  modal.body.append(version,architecture,live,winrates,controls,strategyPanel,validation);let busy=false,timer,hasDecks=false;
- const refresh=async()=>{if(!modal.overlay.isConnected)return;try{const data=await request('status');version.textContent=`当前对手：${data.modelVersion||'尚未载入'} · 每2秒刷新`;architectureText.textContent=`已载入 ${data.models} 个网络 · ${data.specialists} 组牌组专项 · 本地训练继续更新局面评估网络。`;note.textContent=data.modelPromotionGate?'按完整对局隔离训练与验证。误差改善后保存候选，再进行24局免费的新旧模型对照，通过后才替换当前模型。':'当前服务仅进行预测误差验证，暂未启用实战对照。';const s=data.training;showStrategy(data,s);showLocalValidation(s.modelValidations);const evaluation=s.modelEvaluation;modelEvaluation.textContent=s.validatingModel?'正在对战旧模型，验证候选的实际表现。':evaluation?`实战对照：${evaluation.wins}胜 ${evaluation.losses}负 ${evaluation.draws}平 · 完成 ${evaluation.games}/24局${evaluation.failed?` · 失败 ${evaluation.failed}局`:''} · ${evaluation.message}${s.promoted?' · 当前模型已更新':''}`:'';if(s.running){if(!s.validatingModel){continuous.checked=s.continuous;parallel.value=String(s.parallel);games.value=String(s.planned);}if(s.playerDeckId)fields[0].value=s.playerDeckId;if(s.opponentDeckId)fields[1].value=s.opponentDeckId;}winNote.textContent = s.compareStrategy
+ const refresh=async()=>{if(!modal.overlay.isConnected)return;try{const data=await request('status');version.textContent=`当前对手：${data.modelVersion||'尚未载入'} · 每2秒刷新`;architectureText.textContent=`已载入 ${data.models} 个网络 · ${data.specialists} 组牌组专项 · 本地训练继续更新局面评估网络。`;note.textContent=data.modelPromotionGate?'按完整对局隔离训练与验证。误差改善后保存候选，再进行24局免费的新旧模型对照，通过后才替换当前模型。':'当前服务仅进行预测误差验证，暂未启用实战对照。';const s=data.training;showStrategy(data,s);showLocalValidation(s.modelValidations);const evaluation=s.modelEvaluation;modelEvaluation.textContent=s.validatingModel?'正在对战旧模型，验证候选的实际表现。':evaluation?`实战对照：${evaluation.wins}胜 ${evaluation.losses}负 ${evaluation.draws}平 · 完成 ${evaluation.games}/24局${evaluation.failed?` · 失败 ${evaluation.failed}局`:''} · ${evaluation.message}${s.promoted?' · 当前模型已更新':''}`:'';if(s.running){if(!s.validatingModel){continuous.checked=s.continuous;parallel.value=String(s.parallel);games.value=String(s.planned);}if(s.playerDeckId)fields[0].value=s.playerDeckId;if(s.opponentDeckId)fields[1].value=s.opponentDeckId;}winNote.textContent = s.compareStrategyExperience
+ ? '两组分别计算胜率。仅纳入开局和换牌后牌序均一致的配对，后续行动变化会影响局势和随机效果。'
+ : s.compareStrategy
  ? '胜率按开局牌序一致的完整四局组统计。每组交换牌组与先后手，换牌和后续效果仍有随机性。'
  : s.benchmarkSeed != null
   ? '双方按起手分组交换牌组与先后手；胜率只反映本组对照，失败或中断对局不计入。'
   : '本次训练任务累计的卡组自对战胜率，双方交替换边；失败或中断对局不计入。不是模型的独立评测胜率。';
 const winStats = s.compareStrategy ? s.strategyBenchmark : s;
-const total = s.compareStrategy ? (winStats?.completeGroups.length ?? 0) * 4 : s.totalCompleted || 0;
-const draws = winStats?.draws || 0;
 for (let i = 0; i < 2; i++) {
- const wins = i === 0 ? winStats?.wins : winStats?.losses;
- const losses = i === 0 ? winStats?.losses : winStats?.wins;
+ const experience = s.strategyExperienceBenchmark;
+ const arm = i === 0 ? experience?.withHistory : experience?.withoutHistory;
+ const total = arm?.games ?? (s.compareStrategy ? (winStats?.completeGroups.length ?? 0) * 4 : s.totalCompleted || 0);
+ const draws = arm?.draws ?? winStats?.draws ?? 0;
+ const wins = arm?.wins ?? (i === 0 ? winStats?.wins : winStats?.losses);
+ const losses = arm?.losses ?? (i === 0 ? winStats?.losses : winStats?.wins);
  winTiles[i].name.textContent=s.validatingModel?(i===0?'候选模型':'旧模型'):s.compareCombatProjection?(i===0?'计入攻击前效果':'原基础预测'):s.compareSummonSources?(i===0?'识别召唤斩杀出牌':'原出牌判断'):s.compareGeneratedTokens?(i===0?'本地生成疾驰路线':'原本地策略'):s.compareValueSearch
  ? (i===0?'模型参与搜索':'原搜索对照')
+ :s.compareStrategyExperience
+ ? (i===0?'有经验组':'无经验组')
  :s.compareStrategy
  ? (i===0?'大模型实验侧':'本地模型对照侧')
  : (i===0?'训练卡组':'对手卡组')+' · '+((i===0?s.playerDeckName:s.opponentDeckName)||'尚未选择');winTiles[i].percent.textContent=total?((wins||0)/total*100).toFixed(1)+'%':'--';winTiles[i].details.textContent=`${wins||0}胜 ${losses||0}负 ${draws}平 · ${total}局`;}
 progress.max=Math.max(1,s.planned);progress.value=s.completed+s.failed;metricValues[0].textContent=String(s.completed);metricValues[1].textContent=String(s.failed);metricValues[2].textContent=String(s.samples);live.classList.toggle('ai-current-evaluation',s.running);status.textContent=`${s.message} · 第${s.round||1}轮${s.continuous?" · 自动连续":""} · 完成 ${s.completed}/${s.planned} · ${s.parallel||1}路并行 · 当前同时训练 ${s.active||0} 局`;const coverage=s.trainingPositions;const sampling=coverage?` · 已观察回合开始 ${coverage.observedTurnStarts||0} 次、结算后 ${coverage.observedAfterActions||0} 次；入模 ${coverage.samplesTurnStarts||0}/${coverage.samplesAfterActions||0} 个` : '';report.textContent=s.compareCombatProjection?`已通过真实结算确认 ${s.combatProjectionCommittedChanges||0} 次不同首步。${s.combatProjectionCommittedChanges?'胜负仅反映本组固定卡组对照。':'尚无确认的不同首步，胜负不能归因于该功能。'}对照不调用大模型、不训练或替换权重。`:s.compareSummonSources?`新增出牌判断实际触发 ${s.generatedSummonTacticUses||0} 次；${s.generatedSummonTacticUses?'胜率为本组对照结果。':'尚未触发时，本组胜负不能归因于该功能。'}对照期间不训练或替换权重。`:s.compareGeneratedTokens?`实际执行生成疾驰路线 ${s.generatedTokenTacticUses||0} 次；交换牌组与先后手，对照期间不训练或替换权重。`:s.compareValueSearch?`本地模型局面评估 ${s.valueSearchEvaluations||0} 次；交换牌组与先后手进行搜索对照。本次不训练、不替换权重。`:s.compareStrategy?'对照评测记录规划和胜负，模型权重由普通训练更新。':s.before==null?'等待收集足够的完整对局，开始局面模型学习。':`验证误差：${s.before.toFixed(4)} → ${s.after.toFixed(4)}${s.promoted?' · 已替换当前模型':s.candidateVersion?' · 已保存候选':''}`;report.textContent+=sampling+(s.sampleReplaySaved?' · 本轮训练数据已保留，可重复检验':'');start.disabled=busy||s.running||!hasDecks;fields.forEach(field=>field.disabled=s.running);games.disabled=s.running;parallel.disabled=s.running;benchmarkSeed.disabled=s.running;continuous.disabled=s.running||compareStrategy.checked||compareCombatProjection.checked;stop.disabled=!s.running;download.disabled=s.running||!data.modelVersion;}catch(e){status.textContent=e.message;}if(modal.overlay.isConnected)timer=setTimeout(refresh,2000);};
  start.onclick=async()=>{
   if(compareCombatProjection.checked&&!supportsCombatProjection){await showAlert('当前后端尚未支持此对照，请先更新本地服务。');return;}
-  const minimumEvaluationGames = compareStrategy.checked ? 4 : 12;
-  if ((compareStrategy.checked||compareCombatProjection.checked) && (Number(games.value) < minimumEvaluationGames || Number(games.value) % 4 !== 0 || Number(parallel.value) > 2)) {
-   await showAlert(`对照评测至少 ${minimumEvaluationGames} 局，局数须为 4 的倍数，并行最多 2 路。`);
+  const size=groupSize();
+  const minimumEvaluationGames = compareStrategy.checked ? size : 12;
+  if ((compareStrategy.checked||compareCombatProjection.checked) && (Number(games.value) < minimumEvaluationGames || Number(games.value) % size !== 0 || Number(parallel.value) > 2)) {
+   await showAlert(`对照评测至少 ${minimumEvaluationGames} 局，局数须为 ${size} 的倍数，并行最多 2 路。`);
    return;
   }
   if (compareStrategy.checked && !benchmarkSeed.checkValidity()) {
    await showAlert('请输入有效的起手种子，范围为 −2147483648 至 2147483647。');
    return;
   }
-  busy=true;start.disabled=true;try{await request('start',{method:'POST',body:JSON.stringify({playerDeckId:fields[0].value,opponentDeckId:fields[1].value,games:Number(games.value),parallel:Number(parallel.value),continuous:continuous.checked,compareStrategy:compareStrategy.checked,benchmarkSeed:compareStrategy.checked?Number(benchmarkSeed.value):18431,compareCombatProjection:compareCombatProjection.checked,strategyChoicesOnly:compareStrategy.checked&&strategyChoicesOnly.checked})});}catch(e){await showAlert(e.message);}finally{busy=false;clearTimeout(timer);void refresh();}};
+  busy=true;start.disabled=true;try{await request('start',{method:'POST',body:JSON.stringify({playerDeckId:fields[0].value,opponentDeckId:fields[1].value,games:Number(games.value),parallel:Number(parallel.value),continuous:continuous.checked,compareStrategy:compareStrategy.checked,compareStrategyExperience:compareStrategy.checked&&compareExperience.checked,benchmarkSeed:compareStrategy.checked?Number(benchmarkSeed.value):18431,compareCombatProjection:compareCombatProjection.checked,strategyChoicesOnly:compareStrategy.checked&&strategyChoicesOnly.checked})});}catch(e){await showAlert(e.message);}finally{busy=false;clearTimeout(timer);void refresh();}};
  stop.onclick=async()=>{try{await request('stop',{method:'POST'});clearTimeout(timer);void refresh();}catch(e){await showAlert(e.message);}};
  download.onclick=async()=>{download.disabled=true;try{const blob=await request('export');const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='svnebula-ai-model.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);}catch(e){await showAlert(e.message);}finally{download.disabled=false;}};
  try{const response=await fetch('/api/decks?userId='+encodeURIComponent(getUserSession().userId));if(!response.ok)throw Error('卡组载入失败');const decks=await response.json();for(const select of fields)for(const deck of decks){const option=document.createElement('option');option.value=deck.deckId;option.textContent=deck.name;select.append(option);}hasDecks=decks.length>0;if(!hasDecks)message.textContent='请先在牌组编辑中创建训练卡组。';void refresh();}catch(e){status.textContent=e.message;}

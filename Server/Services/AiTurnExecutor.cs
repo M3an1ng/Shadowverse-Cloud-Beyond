@@ -543,6 +543,9 @@ public class AiTurnExecutor
         planner?.BindPendingComparison(game,action.ActionData);
         if (action.ActionData is AttackActionDto attack)
             planner?.SetPendingAttack(game, attack.AttackerUid, attack.TargetUid, attackFact);
+        var pairedTrace = AiExperienceRootTrace.For(game);
+        var pairedStep = observationBefore == null ? null : pairedTrace?.Capture(game, observationBefore, action);
+        if (pairedStep != null) pairedTrace!.BeginChoices();
         try
         {
             if(observationBefore!=null&&planner!=null) {
@@ -553,16 +556,19 @@ public class AiTurnExecutor
             if (await _gameService.EnqueuePlayerActionAsync(game.GameId, action))
             {
                 var completion = await action.Completion.WaitAsync(token);
+                pairedTrace?.Record(completion.Status == PlayerActionCompletionStatus.Completed ? pairedStep : null);
                 if (completion.Status == PlayerActionCompletionStatus.Completed && game.IsLocalAiTraining)
                     game.LocalAiTrainingObservation?.Invoke(action.PlayerId, action.ActionType);
                 return completion;
             }
 
+            pairedTrace?.Record(null);
             _logger.LogWarning("[AI_EXECUTOR:{GameId}] Action was not admitted.", game.GameId);
             return null;
         }
         finally
         {
+            pairedTrace?.EndChoices();
             planner?.EndActionOutcome(game,action);
             if (generatedStormSource.HasValue)
             {

@@ -583,6 +583,12 @@ namespace ShadowverseBeyond.Server.Services
             using var eternal = AiEternalEngine.Use(game,aiPlayerId);
             using var combatComparison = AiCombatThreat.UseLegacy(game?.IsLocalAiTraining == true && game.LegacyCombatThreatPlayerId == aiPlayerId);
             var source = game?.AbilityManager?.GetAbilityByRuntimeId(request.SourceAbilityRuntimeId);
+            if (game != null && AiExperienceRootTrace.For(game) is { } pairedTrace)
+            {
+                var pending = scope.ServiceProvider.GetService<IPendingActionService>()
+                    ?.GetPendingChoiceForPlayer(gameId, aiPlayerId);
+                pairedTrace.CaptureChoice(game, gameState, request, pending, source as Ability);
+            }
             var player = gameState.Players.FirstOrDefault(p => p.PlayerId == aiPlayerId);
             var hand = player?.Hand;
             var choosesFusionMaterials = source?.HasKeyword(AbilityKeyword.Fusion) == true

@@ -7,7 +7,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
+using ShadowverseBeyond.Server.Models;
 using ShadowverseBeyond.Server.Services;
 
 internal static class AiModelEvaluationTests
@@ -122,12 +126,24 @@ internal static class AiModelEvaluationTests
         var report = status.StrategyExperienceBenchmark!;
         Check(status.StrategyBenchmark == null && report.CompleteGroups.SequenceEqual([0])
             && report.WithHistory.Wins == 4 && report.WithoutHistory.Losses == 4
-            && report.WithHistory.GamesWithHistory == 4 && report.WithoutHistory.GamesWithHistory == 0,
+            && report.WithHistory.GamesWithHistory == 4 && report.WithoutHistory.GamesWithHistory == 0
+            && report.PairOutcomes == new AiStrategyExperiencePairOutcomes(4, 0, 0, 4),
             "experience pairs did not keep treatment and control separate");
+        // Equal aggregate scores can hide an improvement and a regression at different seats.
+        var mixed = matches.Select(match => match with { Result = match.Episode switch
+        {
+            1 or 4 => "win", 2 or 3 => "loss", _ => "draw"
+        }}).ToArray();
+        mixed[1] = mixed[1] with { Turn = new(), Choice = new(1, 0) };
+        var balanced = (status with { StrategyMatches = mixed }).StrategyExperienceBenchmark!;
+        Check(balanced.WithHistory.Wins == balanced.WithoutHistory.Wins
+            && balanced.PairOutcomes == new AiStrategyExperiencePairOutcomes(1, 1, 2, 3),
+            "equal totals concealed pair-level gains, regressions, or a missing model response");
         var mismatch = matches.ToArray();
         mismatch[3] = mismatch[3] with { Opening = new("different-a", "fixture-b") };
         var rejected = (status with { StrategyMatches = mismatch }).StrategyExperienceBenchmark!;
-        Check(rejected.UnpairedGames == 8 && rejected.OpeningMismatchGroups == 1 && rejected.WithHistory.Games == 0,
+        Check(rejected.UnpairedGames == 8 && rejected.OpeningMismatchGroups == 1 && rejected.WithHistory.Games == 0
+            && rejected.PairOutcomes == new AiStrategyExperiencePairOutcomes(0, 0, 0, 0),
             "an actual opening mismatch entered the history comparison");
         foreach (var different in new AiBenchmarkOpening?[] { null, new("different-post-a", "post-b") })
         {
@@ -143,6 +159,93 @@ internal static class AiModelEvaluationTests
             "a control that received historical games was included");
         Check((status with { StrategyMatches = matches[..7] }).StrategyExperienceBenchmark!.CompleteGroups.Length == 0,
             "an incomplete history comparison group was included");
+        RootEvidence(matches[0], matches[1]);
+    }
+
+    private static void RootEvidence(StrategyMatchResult history, StrategyMatchResult control)
+    {
+        const BindingFlags instance = BindingFlags.Instance | BindingFlags.NonPublic;
+        const BindingFlags staticMethod = BindingFlags.Static | BindingFlags.NonPublic;
+        var type = typeof(AiStrategyPlanner).Assembly.GetType("ShadowverseBeyond.Server.Services.AiExperienceRootTrace")!;
+        var capture = type.GetMethod("Capture", instance)!;
+        var record = type.GetMethod("Record", instance)!;
+        var compare = type.GetMethod("Compare", staticMethod)!;
+        var beginChoices = type.GetMethod("BeginChoices", instance)!;
+        var captureChoice = type.GetMethod("CaptureChoice", instance)!;
+        var attach = typeof(StrategyMatchResult).GetProperty("ExperienceRoots", instance)!;
+        object Build(int handIndex, int pp, int hiddenId, bool missing = false, int? selected = null,
+            int secondOffer = 31, bool accepted = true, bool target = false, CardZone offeredZone = CardZone.Staging)
+        {
+            var player = Guid.NewGuid();
+            var enemy = Guid.NewGuid();
+            var game = new GameState(Guid.NewGuid().ToString(), new(player), new(enemy), player);
+            CardInstanceDto Hand(Guid owner, int id) => new() {InstanceId=Guid.NewGuid(),OwnerPlayerId=owner,
+                Zone=CardZone.Hand,CardId=id,CurrentCost=1};
+            var own = new PlayerStateDto {PlayerId=player,TurnNumber=3,CurrentPP=3,Hand=[Hand(player,10),Hand(player,10)]};
+            own.Hand[0].BuffSummaries.Add(new BuffSummaryDto
+            {
+                SourceCardDefinitionId = 20,
+                NumericEffects = [new() { Field="Cost", Layer="Additive", Value=-1,
+                    PolicyKey=Guid.NewGuid().ToString(), Duration="Permanent" }]
+            });
+            var opposing = new PlayerStateDto {PlayerId=enemy,Hand=[Hand(enemy,hiddenId)]};
+            var snapshot = new GameStateDto {GameId=game.GameId,CurrentPlayerId=player,Players=[own,opposing]};
+            var trace = Activator.CreateInstance(type, nonPublic:true)!;
+            var end = new PlayerActionWrapper("EndTurn", player, new object());
+            record.Invoke(trace,[capture.Invoke(trace,[game,snapshot,end])]);
+            own.CurrentPP = pp;
+            var play = new PlayerActionWrapper("PlayCard", player,
+                new PlayCardActionDto {CardUid=own.Hand[handIndex].InstanceId,PlayMode=PlayMode.Base,PaidCost=1});
+            if (selected is int pick)
+            {
+                beginChoices.Invoke(trace, null);
+                var offers = target ? own.Hand : [Hand(player,30) with { Zone=offeredZone },
+                    Hand(player,secondOffer) with { Zone=offeredZone }];
+                var request = new PlayerChoiceRequest
+                {
+                    GameId=game.GameId,RequestingPlayerId=player,TargetKey=target?"discard":"discover",
+                    SelectableTargetIds=offers.Select(card=>card.InstanceId).ToList(),
+                    SelectableCardInstances=target?[]:offers,
+                    MinSelectionCount=1,MaxSelectionCount=1
+                };
+                var response = new TaskCompletionSource<PlayerChoiceResult>();
+                var pending = new PendingChoiceContext(request,response,default);
+                captureChoice.Invoke(trace,[game,snapshot,request,pending,null]);
+                if (accepted) response.SetResult(new() { ChosenTargetIds=[offers[pick].InstanceId] });
+            }
+            record.Invoke(trace,[missing ? null : capture.Invoke(trace,[game,snapshot,play])]);
+            return trace;
+        }
+        AiExperienceRootComparison Measure(object a, object b)
+        {
+            attach.SetValue(history,a);
+            attach.SetValue(control,b);
+            return (AiExperienceRootComparison)compare.Invoke(null,[history,control])!;
+        }
+        var left = Build(0, 3, 72);
+        Check(Measure(left, Build(0,3,99)) is {Status:"same-recorded-roots",MatchedRoots:2},
+            "runtime identities or the opposing hidden card invalidated the recorded prefix");
+        Check(Measure(left, Build(1,3,99)) is {Status:"root-action-difference",MatchedRoots:1,
+            History.Source.Index:0,Control.Source.Index:1}, "different copies of the same card were collapsed");
+        Check(Measure(left, Build(1,2,99)) is {Status:"position-difference",MatchedRoots:1,History:null,Control:null},
+            "different sampled positions were misreported as a comparable action");
+        Check(Measure(left, Build(1,3,99,missing:true)) is {Status:"unobserved",MatchedRoots:1},
+            "a missing root was treated as comparable");
+        var firstOffer = Build(0,3,72,selected:0);
+        Check(Measure(firstOffer, Build(0,3,99,selected:1)) is { Status:"subchoice-difference",
+            MatchedRoots:1,ChoiceIndex:0,HistoryChoice.Selected:[{CardId:30}],ControlChoice.Selected:[{CardId:31}] },
+            "different accepted discover cards at the same root were missed");
+        Check(Measure(firstOffer, Build(0,3,99,selected:0)) is {Status:"same-recorded-roots",MatchedRoots:2},
+            "fresh discover runtime IDs changed the same selection");
+        Check(Measure(firstOffer, Build(0,3,99,selected:1,secondOffer:32)) is {Status:"choice-context-difference",HistoryChoice:null},
+            "different discover offers were described as comparable picks");
+        Check(Measure(firstOffer, Build(0,3,99,selected:1,offeredZone:CardZone.Deck))
+            is {Status:"choice-context-difference"}, "deck instances were compared as staged discover definitions");
+        Check(Measure(firstOffer, Build(0,3,99,selected:1,accepted:false)) is {Status:"choice-unobserved",HistoryChoice:null},
+            "a proposed choice without engine acceptance was counted");
+        Check(Measure(Build(0,3,72,selected:0,target:true),Build(0,3,99,selected:1,target:true))
+            is {Status:"subchoice-difference",HistoryChoice.Selected:[{Location.Index:0}],ControlChoice.Selected:[{Location.Index:1}]},
+            "target selection collapsed separate copies at the same location type");
     }
 
     internal static void OpeningEvidence()

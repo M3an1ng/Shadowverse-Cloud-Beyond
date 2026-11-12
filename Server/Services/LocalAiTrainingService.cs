@@ -33,6 +33,7 @@ public sealed record StrategyMatchResult(int Episode, int ShuffleSeed, Guid Deck
     string Result, long ElapsedMs, AiStrategyPlanner.DecisionMetrics Turn, AiStrategyPlanner.DecisionMetrics Choice,long ValueSearchEvaluations=0,long GeneratedTokenTacticUses=0,AiEternalMatchFacts[]? EternalEngine=null,long GeneratedSummonTacticUses=0,AiCombatProjectionMatchFacts? CombatProjection=null,int DifferentCompletedActions=0,int DifferentCommittedOptions=0,AiBenchmarkOpening? Opening=null,int WeaverPreparations=0,bool? WithStrategyExperience=null,int ExperienceGames=0,AiCompletedActionFact[]? ExperienceOutcomeExamples=null,AiBenchmarkOpening? AfterMulligan=null, AiLeaderRecoveryMatchFacts? LeaderRecovery=null)
 {
     public AiEvolutionMatchFacts? EvolutionEffects { get; init; }
+    internal AiExperienceRootTrace? ExperienceRoots { get; init; }
 }
 
 public sealed record LocalTrainingStatus(bool Running=false,int Completed=0,int Failed=0,int Planned=0,int Samples=0,string Message="尚未开始训练",bool Promoted=false,double? Before=null,double? After=null,int Parallel=1,int Active=0,bool Continuous=false,int Round=1,int TotalCompleted=0,int Wins=0,int Losses=0,int Draws=0,string PlayerDeckName="",string OpponentDeckName="",Guid PlayerDeckId=default,Guid OpponentDeckId=default,int CandidateFirstGames=0,int CandidateFirstWins=0,int? BenchmarkSeed=null,int StrategyGames=0,int StrategyPlans=0,bool CompareStrategy=false,AiStrategyPlanner.StrategyReport? LatestStrategy=null,
@@ -200,6 +201,7 @@ public sealed class LocalAiTrainingService(IServiceScopeFactory scopes,AiLearnin
                         engineObservation?.AfterMulligan(player.PlayerId);
                     }
                     var afterMulligan = opening != null ? AiBenchmarkOpening.CaptureAfterMulligan(game, playerSeat) : null;
+                    if (request.CompareStrategyExperience) AiExperienceRootTrace.Attach(game);
                     for(var turn=0;turn<100&&!game.IsGameOver;turn++) {
                         deadline.Token.ThrowIfCancellationRequested();var actor=game.CurrentPlayerId??throw new InvalidOperationException("训练缺少当前玩家");
                         if(positions!=null)positions.Record(actor,false,AiFeatures.Value(Snapshot(actor),actor));
@@ -237,7 +239,10 @@ public sealed class LocalAiTrainingService(IServiceScopeFactory scopes,AiLearnin
                                 request.CompareStrategyExperience ? withExperience : null, experienceGames,
                                 request.CompareStrategyExperience ? strategy.ExperienceOutcomeExamples(game) : null, afterMulligan,
                                 AiLeaderRecoveryEvaluation.For(game)?.Snapshot())
-                            { EvolutionEffects = AiEvolutionEvaluation.For(game)?.Snapshot(game) };
+                            {
+                                EvolutionEffects = AiEvolutionEvaluation.For(game)?.Snapshot(game),
+                                ExperienceRoots = AiExperienceRootTrace.For(game)
+                            };
                             status = status with
                             {
                                 StrategyMatches = [.. status.StrategyMatches ?? [], matchResult],

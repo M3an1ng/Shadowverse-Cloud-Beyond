@@ -100,8 +100,11 @@ public sealed record AiStrategyExperienceArm(int Games, int Wins, int Losses, in
     }
 }
 
+public sealed record AiStrategyExperiencePairOutcomes(int Improved, int Regressed, int Unchanged, int WithAdviceInBoth);
+
 public sealed record AiStrategyExperienceBenchmark(int PlannedGroups, int[] CompleteGroups, int UnpairedGames,
-    int OpeningMismatchGroups, int PostMulliganMismatchGroups, AiStrategyExperienceArm WithHistory, AiStrategyExperienceArm WithoutHistory)
+    int OpeningMismatchGroups, int PostMulliganMismatchGroups, AiStrategyExperienceArm WithHistory, AiStrategyExperienceArm WithoutHistory,
+    AiStrategyExperiencePairOutcomes PairOutcomes, AiExperienceRootComparison[] RootComparisons)
 {
     internal static (int MatchSlot, bool WithHistory) Schedule(int episode)
     {
@@ -122,10 +125,27 @@ public sealed record AiStrategyExperienceBenchmark(int PlannedGroups, int[] Comp
             .All(pair => pair.First().AfterMulligan is { } opening && pair.All(match => match.AfterMulligan == opening)))
             .OrderBy(group => group.Key).ToArray();
         var rows = complete.SelectMany(group => group).ToArray();
+        static int Score(string result) => result switch { "win" => 2, "draw" => 1, _ => 0 };
+        var pairs = rows.GroupBy(match => Schedule(match.Episode - 1).MatchSlot).Select(pair =>
+        {
+            var history = pair.Single(match => match.WithStrategyExperience == true);
+            var control = pair.Single(match => match.WithStrategyExperience == false);
+            return new
+            {
+                Difference = Score(history.Result) - Score(control.Result),
+                Roots = AiExperienceRootTrace.Compare(history, control),
+                BothUsedAdvice = history.Turn.Accepted + history.Choice.Accepted > 0
+                    && control.Turn.Accepted + control.Choice.Accepted > 0
+            };
+        }).ToArray();
+        var outcomes = new AiStrategyExperiencePairOutcomes(pairs.Count(pair => pair.Difference > 0),
+            pairs.Count(pair => pair.Difference < 0), pairs.Count(pair => pair.Difference == 0),
+            pairs.Count(pair => pair.BothUsedAdvice));
         return new(planned / 8, complete.Select(group => group.Key).ToArray(), matches.Count - rows.Length,
             scheduled.Length - sameDeal.Length, sameDeal.Length - complete.Length,
             AiStrategyExperienceArm.Count(rows.Where(row => row.WithStrategyExperience == true)),
-            AiStrategyExperienceArm.Count(rows.Where(row => row.WithStrategyExperience == false)));
+            AiStrategyExperienceArm.Count(rows.Where(row => row.WithStrategyExperience == false)), outcomes,
+            pairs.Select(pair => pair.Roots).OrderBy(pair => Math.Min(pair.HistoryEpisode, pair.ControlEpisode)).ToArray());
     }
 
     private static bool MatchesSchedule(StrategyMatchResult match, int seed, Guid deckA, Guid deckB)
