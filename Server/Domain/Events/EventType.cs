@@ -520,6 +520,40 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [Description("发现选择")]
         DiscoverRequest,
 
+        // --- 幻境战棋 (Mirage Auto-Battler) 事件 ---
+        [Description("幻境准备就绪请求")]
+        MirageSetReadyRequested,
+        [Description("幻境轮次开始")]
+        MirageRoundStarted,
+        [Description("幻境购买报价请求")]
+        MirageBuyOfferRequested,
+        [Description("幻境出售随从请求")]
+        MirageSellCardRequested,
+        [Description("幻境刷新商店请求")]
+        MirageRefreshShopRequested,
+        [Description("幻境升星请求")]
+        MirageUpgradeTierRequested,
+        [Description("幻境冻结切换请求")]
+        MirageToggleFreezeRequested,
+        [Description("幻境站位重排请求")]
+        MirageReorderFieldRequested,
+        [Description("幻境兑现凭据请求")]
+        MirageRedeemTicketRequested,
+        [Description("幻境选择主战者请求")]
+        MirageSelectLeaderRequested,
+        [Description("随从出售")]
+        CardSold,
+        [Description("随从出售完成")]
+        CardSoldCompleted,
+        [Description("战场站位重排")]
+        FieldReordered,
+        [Description("幻境三连合成")]
+        MirageTripleSynthesized,
+        [Description("幻境战果提交")]
+        MirageCombatResultCommitted,
+
+        DebugIntent,
+
     }
 
 

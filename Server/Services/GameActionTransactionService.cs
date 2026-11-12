@@ -18,12 +18,9 @@ using ShadowverseBeyond.Server.Domain.Events.ActionRequests;
 using ShadowverseBeyond.Server.Domain.GameFlow.EffectQueue;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
-using ShadowverseBeyond.Server.Dtos.Replay;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Events.Services;
-using Microsoft.Extensions.Options;
-using ShadowverseBeyond.Server.Options;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
@@ -46,14 +43,9 @@ namespace ShadowverseBeyond.Server.Services
         private readonly IPendingActionService _pendingActionService;
         private readonly IEffectExecutor _effectExecutor;
         private readonly IClientMethodMapper _clientMethodMapper;
-        private readonly ICommittedEventJournal _eventJournal;
-        private readonly ISnapshotStore _snapshotStore;
-        private readonly IRecordedEventMapper _recordedEventMapper;
-        private readonly IGameEventRawEventMapper _rawEventMapper;
         private readonly IMetaProgressionService _metaProgressionService;
         private readonly IWinrateStatsService _winrateStatsService;
         private readonly IMatchService? _matchService;
-        private readonly ReplayOptions _replayOptions;
         private readonly Queue<Effect> _effectQueue = new();
         private readonly HashSet<Guid> _activeEffectExecutionIds = new();
         private readonly HashSet<SameNameTriggerKey> _sameNameTriggeredInTransaction = new();
@@ -164,13 +156,8 @@ namespace ShadowverseBeyond.Server.Services
             IPendingActionService pendingActionService,
             IEffectExecutor effectExecutor,
             IClientMethodMapper clientMethodMapper,
-            ICommittedEventJournal eventJournal,
-            ISnapshotStore snapshotStore,
-            IRecordedEventMapper recordedEventMapper,
-            IGameEventRawEventMapper rawEventMapper,
             IMetaProgressionService metaProgressionService,
             IWinrateStatsService winrateStatsService,
-            IOptions<ReplayOptions> replayOptions,
             IMatchService? matchService = null)
         {
             _logger = logger;
@@ -179,14 +166,9 @@ namespace ShadowverseBeyond.Server.Services
             _pendingActionService = pendingActionService;
             _effectExecutor = effectExecutor;
             _clientMethodMapper = clientMethodMapper;
-            _eventJournal = eventJournal;
-            _snapshotStore = snapshotStore;
-            _recordedEventMapper = recordedEventMapper;
-            _rawEventMapper = rawEventMapper;
             _metaProgressionService = metaProgressionService;
             _winrateStatsService = winrateStatsService;
             _matchService = matchService;
-            _replayOptions = replayOptions.Value;
         }
 
         private string ResolveRoomScopedId(string gameId)
@@ -310,7 +292,17 @@ namespace ShadowverseBeyond.Server.Services
                 actionRootEvents.AddRange(generatedRoots);
             }
 
-            return (PausableTransactionResult.Success(new List<IGameEvent>()), commitEvents, actionRootEvents);
+            var preflightRoots = new List<IGameEvent>();
+            foreach (var root in actionRootEvents)
+            {
+                preflightRoots.Add(root);
+                if (root is PlayCardEvent { MirageTripleEvolution: { } evolution })
+                {
+                    preflightRoots.Add(evolution);
+                }
+            }
+
+            return (PausableTransactionResult.Success(new List<IGameEvent>()), commitEvents, preflightRoots);
         }
 
         private void ClearActivePreflightSession()
@@ -442,6 +434,21 @@ namespace ShadowverseBeyond.Server.Services
                     .Select(card => card.InstanceId.ToString("N"))
                     .OrderBy(id => id));
 
+            var mirageFingerprint = gameState.Mode == GameMode.Mirage && gameState.Mirage != null
+                ? string.Join(":",
+                    gameState.Mode.ToString(),
+                    gameState.Phase.ToString(),
+                    gameState.Mirage.RoundNumber.ToString(CultureInfo.InvariantCulture),
+                    (gameState.Mirage.ClosingRecruitRoundNumber ?? -1).ToString(CultureInfo.InvariantCulture),
+                    string.Join(",", gameState.Mirage.ReadyPlayerIds.Select(id => id.ToString("N")).OrderBy(id => id)),
+                    gameState.Player1.Leader?.InstanceId.ToString("N") ?? string.Empty,
+                    (gameState.Player1.Leader?.ActsThisTurn ?? 0).ToString(CultureInfo.InvariantCulture),
+                    gameState.Player1.CurrentPlayPoints.ToString(CultureInfo.InvariantCulture),
+                    gameState.Player2.Leader?.InstanceId.ToString("N") ?? string.Empty,
+                    (gameState.Player2.Leader?.ActsThisTurn ?? 0).ToString(CultureInfo.InvariantCulture),
+                    gameState.Player2.CurrentPlayPoints.ToString(CultureInfo.InvariantCulture))
+                : string.Empty;
+
             return string.Join("|",
                 gameState.StateRevision.ToString(CultureInfo.InvariantCulture),
                 gameState.CurrentPlayerId?.ToString("N") ?? string.Empty,
@@ -450,7 +457,8 @@ namespace ShadowverseBeyond.Server.Services
                 gameState.Player1.Hand.Count.ToString(CultureInfo.InvariantCulture),
                 gameState.Player2.Hand.Count.ToString(CultureInfo.InvariantCulture),
                 player1Field,
-                player2Field);
+                player2Field,
+                mirageFingerprint);
         }
 
         private void CaptureAbilityTargetSignatures(Ability ability, Guid triggeringEventId)
@@ -698,6 +706,8 @@ namespace ShadowverseBeyond.Server.Services
 
                     foreach (var ability in primaryAbilities)
                     {
+                        if (TryGetSameNameTriggerKey(ability, out var primaryKey)
+                            && GetPreflightSameNameState()?.Contains(primaryKey) == true) continue;
                         var requiresPreflight = RequiresAbilityPreflight(
                             ability,
                             executionIsCancellable: true,
@@ -720,6 +730,7 @@ namespace ShadowverseBeyond.Server.Services
 
                         // Preflight primary abilities are cancellable.
                         var abilityContext = gameContext with { SourceCard = ability.SourceCard, TriggeringEvent = gameEvent, IsCancellable = true };
+                        if (IntromezzoGate.Owner(ability, abilityContext)?.IsIntromezzoActive == false) continue;
                         var abilityResult = await gameContext.AbilityManager.ProcessSingleAbilityAsync(
                             ability,
                             abilityContext,
@@ -750,6 +761,9 @@ namespace ShadowverseBeyond.Server.Services
                             _logger.LogError("Primary ability '{AbilityKeywords}' failed to process: {Error}", ability.KeywordSummary, abilityResult.ErrorMessage);
                             return PausableTransactionResult.Failure(abilityResult.ErrorMessage ?? "Primary ability processing failed.");
                         }
+
+                        if (abilityResult.ShouldEmitAbilityTriggeredEvent
+                            && !TryAcquireSameNameTriggerSlot(ability, "preflight-primary", GetPreflightSameNameState())) continue;
 
                         if (ability is Ability resolvedAbility)
                         {
@@ -1541,7 +1555,10 @@ namespace ShadowverseBeyond.Server.Services
 
             foreach (var ability in triggeredAbilities)
             {
-                if (!TryAcquireSameNameTriggerSlot(ability, $"trigger-{timing.ToString().ToLowerInvariant()}"))
+                if (timing == TriggerTiming.Before && ability is Ability beforeAbility
+                    && beforeAbility.Config.Effects.Any(e => e.IsEnabled && IsInterceptEffectType(e.Type))) continue;
+                if (TryGetSameNameTriggerKey(ability, out var triggerKey)
+                    && _sameNameTriggeredInTransaction.Contains(triggerKey))
                 {
                     continue;
                 }
@@ -1560,6 +1577,7 @@ namespace ShadowverseBeyond.Server.Services
                     if (preflightShouldEmitAbilityTriggeredEvent && !IntromezzoGate.Enter(ability, abilityContext)) continue;
                     if (preflightShouldEmitAbilityTriggeredEvent)
                     {
+                        if (!TryAcquireSameNameTriggerSlot(ability, $"trigger-{timing.ToString().ToLowerInvariant()}")) continue;
                         ability.RecordTrigger(abilityContext);
                         if (ShouldEmitAbilityTriggeredEvent(ability, abilityContext))
                         {
@@ -1584,6 +1602,8 @@ namespace ShadowverseBeyond.Server.Services
                     return (PausableTransactionResult.Failure(abilityResult.ErrorMessage ?? "Chained ability processing failed."), generatedEffects, generatedEvents);
                 }
 
+                if (abilityResult.ShouldEmitAbilityTriggeredEvent
+                    && !TryAcquireSameNameTriggerSlot(ability, $"trigger-{timing.ToString().ToLowerInvariant()}")) continue;
                 generatedEffects.AddRange(abilityResult.Effects);
                 if (abilityResult.GeneratedEvents.Count > 0)
                 {
@@ -1643,7 +1663,6 @@ namespace ShadowverseBeyond.Server.Services
             sameNameTriggered ??= _sameNameTriggeredInTransaction;
 
             var filtered = new List<IAbility>(candidates.Count);
-            var seenInBatch = new HashSet<SameNameTriggerKey>();
 
             foreach (var ability in candidates)
             {
@@ -1657,17 +1676,6 @@ namespace ShadowverseBeyond.Server.Services
                 {
                     _logger.LogDebug(
                         "Suppressed same-name trigger candidate in phase {PhaseTag}: owner={OwnerPlayerId}, definition={DefinitionId}, runtime={RuntimeId}",
-                        phaseTag,
-                        key.OwnerPlayerId,
-                        key.AbilityDefinitionId,
-                        ability.RuntimeId);
-                    continue;
-                }
-
-                if (!seenInBatch.Add(key))
-                {
-                    _logger.LogDebug(
-                        "Suppressed duplicate same-name trigger candidate in phase {PhaseTag}: owner={OwnerPlayerId}, definition={DefinitionId}, runtime={RuntimeId}",
                         phaseTag,
                         key.OwnerPlayerId,
                         key.AbilityDefinitionId,
@@ -1926,6 +1934,10 @@ namespace ShadowverseBeyond.Server.Services
                     {
                         continue;
                     }
+                    if (ability is not Ability interceptAbility
+                        || !interceptAbility.Config.Effects.Any(e => e.IsEnabled && IsInterceptEffectType(e.Type))) continue;
+                    if (TryGetSameNameTriggerKey(ability, out var interceptKey)
+                        && (sameNameTriggered ?? _sameNameTriggeredInTransaction).Contains(interceptKey)) continue;
 
                     // Inspect configuration before processing: a normal Before ability must not
                     // consume its trigger count (or Intermezzo state) during interception probing.
@@ -1950,6 +1962,13 @@ namespace ShadowverseBeyond.Server.Services
                     }
 
                     var interceptEffects = abilityResult.Effects.Where(IsInterceptEffect).ToList();
+                    if (abilityResult.ShouldEmitAbilityTriggeredEvent
+                        && IntromezzoGate.Owner(ability, abilityContext)?.IsIntromezzoActive == false)
+                    {
+                        if (shouldRecordRuntimeState) IntromezzoGate.Enter(ability, abilityContext);
+                        interceptedAbilityIds.Add(ability.RuntimeId);
+                        continue;
+                    }
                     if (interceptEffects.Count == 0)
                     {
                         continue;
@@ -2332,6 +2351,21 @@ namespace ShadowverseBeyond.Server.Services
                 if (selectionCount == 0)
                 {
                     resolvedChoose.SetSelectedOptionIndexes(Array.Empty<int>());
+                    return PausableTransactionResult.Success(new List<IGameEvent>());
+                }
+
+                if (gameContext.CurrentGameState.IsCombatSandbox)
+                {
+                    var equalWeights = Enumerable.Repeat(1d, optionIds.Count).ToList();
+                    var sandboxSelectedIndexes = SampleWeightedIndexes(equalWeights, selectionCount, allowRepeat: false, gameContext.BenchmarkRandom ?? Random.Shared);
+                    resolvedChoose.SetSelectedOptionIndexes(sandboxSelectedIndexes);
+                    if (phase == DecisionResolutionPhase.Preflight && usePreflightDecisionCache)
+                    {
+                        UpsertPreflightDecisionState(
+                            cacheKey,
+                            signature,
+                            sandboxSelectedIndexes);
+                    }
                     return PausableTransactionResult.Success(new List<IGameEvent>());
                 }
 
@@ -2775,6 +2809,7 @@ namespace ShadowverseBeyond.Server.Services
             effectContext = effectContext with { ResolvedTargets = effect.ResolvedTargets };
 
             var actionResult = _effectExecutor.ExecuteEffect(effect, effectContext);
+            ReplayRecorder.EffectApplied(effectContext, effect.Id, effect.Type.ToString(), actionResult.Success, actionResult.ErrorMessage, actionResult.GeneratedEvents);
             if (!actionResult.Success)
             {
                 switch (effect.EffectConfig.OnFailure)
@@ -3355,12 +3390,16 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 gameContext.BuffService.RefreshDerivedStateCache(gameContext, "transaction_failed_partial");
+                if (gameContext.CurrentGameState.IsCombatSandbox)
+                {
+                    return failureResult;
+                }
 
                 var groupName = SignalRGroupNames.Game(ResolveRoomScopedId(gameContext.CurrentGameState.GameId));
 
                 if (processedEvents.Count > 0)
                 {
-                    var (broadcastPlan, _) = await BuildBroadcastArtifactsAsync(gameContext, processedEvents);
+                    var broadcastPlan = await BuildBroadcastArtifactsAsync(gameContext, processedEvents);
                     _logger.LogWarning(
                         "Transaction failed after partial commit. Broadcasting {Count} processed events. Error: {Error}",
                         processedEvents.Count,
@@ -3444,30 +3483,38 @@ namespace ShadowverseBeyond.Server.Services
 
             // Ensure all CardInstanceDto mappings in this transaction observe the latest derived state
             // (attack/health/cost/keywords) before materializing broadcast DTOs.
-            gameContext.BuffService.RefreshDerivedStateCache(gameContext, "transaction_end");
+            if (!processedEvents.Any(static e => e is MirageCombatResultCommittedEvent { WasNoOpIdempotent: false }))
+            {
+                gameContext.BuffService.RefreshDerivedStateCache(gameContext, "transaction_end");
+            }
+            if (gameContext.CurrentGameState.IsCombatSandbox)
+            {
+                return PausableTransactionResult.Success(processedEvents);
+            }
+            ReplayRecorder.Runtime(gameContext, "derived_state_finalized");
 
-            var (broadcastPlan, recordedEvents) = await BuildBroadcastArtifactsAsync(gameContext, processedEvents);
+            var broadcastPlan = await BuildBroadcastArtifactsAsync(gameContext, processedEvents);
 
             var persistenceFailures = new List<LogEventDto>();
-            var replayFailure = await PersistReplayArtifactsAsync(gameContext, processedEvents, recordedEvents, bundleId);
-            if (replayFailure != null)
-            {
-                persistenceFailures.Add(replayFailure);
-            }
-
             // Rules are already committed. Persistence failures must not turn the action into
             // a rejection or hide its events; settlement still precedes statistics, without retry.
             var persistenceStage = "结算保存失败，统计尚未执行";
+            var hasTerminalGameEnd = processedEvents.Any(static e =>
+                e.EventType == EventType.GameEnd
+                || e is MirageCombatResultCommittedEvent { WasNoOpIdempotent: false, IsGameOverResult: true });
             try
             {
                 await _metaProgressionService.ApplyPostCommitAsync(gameContext, processedEvents, gameContext.CancellationToken);
+                MatchCommandObservation.Persistence("settlement", gameContext.CurrentGameState.ReplayBranch != null ? "excluded_resumed_match" : hasTerminalGameEnd ? "unknown" : "not_applicable");
                 persistenceStage = "统计保存失败";
                 await _winrateStatsService.ApplyPostCommitAsync(gameContext, processedEvents, gameContext.CancellationToken);
+                MatchCommandObservation.Persistence("statistics", gameContext.CurrentGameState.ReplayBranch != null ? "excluded_resumed_match" : hasTerminalGameEnd ? "unknown" : "not_applicable");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Post-commit persistence failed for GameId={GameId}: {Stage}.", gameContext.CurrentGameState.GameId, persistenceStage);
                 persistenceFailures.Add(CreatePersistenceFailureLog(persistenceStage));
+                MatchCommandObservation.Persistence(persistenceStage.StartsWith("统计", StringComparison.Ordinal) ? "statistics" : "settlement", new { Status = "failed", Error = ex.Message });
             }
 
             _logger.LogInformation("Broadcasting {Count} processed events at the end of the transaction.", processedEvents.Count);
@@ -3482,12 +3529,11 @@ namespace ShadowverseBeyond.Server.Services
             return PausableTransactionResult.Success(processedEvents);
         }
 
-        private async Task<(List<TransactionBroadcastItem> BroadcastPlan, List<CommittedEventWriteDto> RecordedEvents)> BuildBroadcastArtifactsAsync(
+        private async Task<List<TransactionBroadcastItem>> BuildBroadcastArtifactsAsync(
             GameContext gameContext,
             IReadOnlyList<IGameEvent> eventsToBroadcast)
         {
             var broadcastPlan = new List<TransactionBroadcastItem>(eventsToBroadcast.Count);
-            var recordedEvents = new List<CommittedEventWriteDto>(eventsToBroadcast.Count);
 
             foreach (var gameEvent in eventsToBroadcast)
             {
@@ -3526,34 +3572,10 @@ namespace ShadowverseBeyond.Server.Services
                     dtos.Add(new LogEventDto(gameEvent.EventId, gameEvent.EventType.ToString(), announcement, sourcePlayerId));
                 }
 
-                var envelopes = _replayOptions.PersistClientDtos
-                    ? _recordedEventMapper.MapClientDtos(dtos)
-                    : Array.Empty<RecordedClientDtoEnvelopeDto>();
-                string? rawEventJson = null;
-                try
-                {
-                    rawEventJson = _rawEventMapper.MapToOutputRawEventJson(gameContext.CurrentGameState, gameEvent);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "Failed to map {EventType} (ID: {EventId}) to RawEventJson.", gameEvent.EventType, gameEvent.EventId);
-                }
-
-                var targets = gameEvent.Target?.Select(t => t.InstanceId).ToArray() ?? Array.Empty<Guid>();
-                recordedEvents.Add(new CommittedEventWriteDto(
-                    gameEvent.EventId,
-                    gameEvent.EventType.ToString(),
-                    gameEvent.Timestamp,
-                    announcement,
-                    gameEvent.Source?.InstanceId,
-                    targets,
-                    envelopes,
-                    rawEventJson));
-
                 broadcastPlan.Add(new TransactionBroadcastItem(gameEvent, announcement, dtos));
             }
 
-            return (broadcastPlan, recordedEvents);
+            return broadcastPlan;
         }
 
         private async Task BroadcastPlanAsync(
@@ -3594,67 +3616,12 @@ namespace ShadowverseBeyond.Server.Services
 
             var cardUpdateEvent = new CardInstanceUpdatedEvent(updatedCards);
             processedEvents.Add(cardUpdateEvent);
+            MatchCommandObservation.Trace(gameContext, cardUpdateEvent, "observed");
             await RecordEventHistoryAsync(gameContext, cardUpdateEvent);
         }
 
         private static LogEventDto CreatePersistenceFailureLog(string failure) =>
             new LogEventDto(Guid.NewGuid(), "PostCommitPersistenceFailed", $"对局操作已生效，但{failure}。未自动重试。");
-
-        private async Task<LogEventDto?> PersistReplayArtifactsAsync(
-            GameContext gameContext,
-            IReadOnlyList<IGameEvent> processedEvents,
-            IReadOnlyList<CommittedEventWriteDto> recordedEvents,
-            Guid bundleId)
-        {
-            if (!ShouldPersistReplay(gameContext.CurrentGameState))
-            {
-                _logger.LogDebug("Skipping replay persistence for game {GameId} (disabled by config or AI match).", gameContext.CurrentGameState.GameId);
-                return null;
-            }
-
-            try
-            {
-                var appendResult = await _eventJournal.AppendBundleAsync(
-                    gameContext.CurrentGameState.GameId,
-                    bundleId,
-                    recordedEvents,
-                    gameContext.CancellationToken);
-
-                if (!ShouldSaveReplaySnapshot(processedEvents, appendResult))
-                {
-                    return null;
-                }
-
-                var snapshot = GameStateProjection.Create(gameContext.CurrentGameState, gameContext);
-                await _snapshotStore.SaveSnapshotAsync(
-                    gameContext.CurrentGameState.GameId,
-                    appendResult.EndSeq,
-                    snapshot,
-                    gameContext.CancellationToken);
-                return null;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to persist replay bundle {BundleId} for GameId={GameId}.", bundleId, gameContext.CurrentGameState.GameId);
-                return CreatePersistenceFailureLog("回放保存失败");
-            }
-        }
-
-        private bool ShouldSaveReplaySnapshot(
-            IReadOnlyList<IGameEvent> processedEvents,
-            CommittedBundleAppendResult appendResult)
-        {
-            if (!_replayOptions.EnableSnapshots || appendResult.EndSeq <= 0)
-            {
-                return false;
-            }
-
-            return
-                (_replayOptions.SnapshotOnGameStart && processedEvents.Any(e => e.EventType == EventType.GameStart)) ||
-                (_replayOptions.SnapshotOnTurnStart && processedEvents.Any(e => e.EventType == EventType.TurnStart)) ||
-                (_replayOptions.SnapshotOnGameEnd && processedEvents.Any(e => e.EventType == EventType.GameEnd)) ||
-                (_replayOptions.SnapshotEveryBundles > 0 && appendResult.BundleSeq % _replayOptions.SnapshotEveryBundles == 0);
-        }
 
         private static List<CardInstance> CollectUpdatedCardInstances(GameContext gameContext, IReadOnlyList<IGameEvent> processedEvents)
         {
@@ -3698,6 +3665,16 @@ namespace ShadowverseBeyond.Server.Services
                         }
                     }
                 }
+                else if (gameEvent is MirageCombatResultCommittedEvent { WasNoOpIdempotent: false })
+                {
+                    foreach (var card in gameContext.CurrentGameState.AllCards)
+                    {
+                        if (card != null && card.InstanceId != Guid.Empty)
+                        {
+                            updatedIds.Add(card.InstanceId);
+                        }
+                    }
+                }
             }
 
             var updatedCards = new List<CardInstance>();
@@ -3713,15 +3690,7 @@ namespace ShadowverseBeyond.Server.Services
             return updatedCards;
         }
 
-        private bool ShouldPersistReplay(GameState gameState)
-        {
-            if (!_replayOptions.EnableJournalWrites)
-            {
-                return false;
-            }
 
-            return !gameState.Player1.IsAI && !gameState.Player2.IsAI;
-        }
 
         private async Task<PausableTransactionResult> ProcessEventRecursivelyAsync(
             GameContext gameContext,
@@ -3752,8 +3721,12 @@ namespace ShadowverseBeyond.Server.Services
                 return PausableTransactionResult.Failure(message);
             }
 
-            if (gameEvent is DiscoverRequestEvent discovering) await discovering.ResolveAsync(gameContext);
             if (gameEvent is DiscoverEvent discovered && discovered.DiscoveredCard?.CurrentZone != CardZone.Hand)
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+
+            // A summon can remove or evolve the triple before its automatic evolution is reached.
+            // Skip the event itself so no evolution abilities or client announcement are produced.
+            if (gameEvent is EvolveEvent { IsMirageEvolutionObsolete: true })
                 return PausableTransactionResult.Success(new List<IGameEvent>());
 
             var signature = BuildEventSignature(gameEvent);
@@ -3838,6 +3811,40 @@ namespace ShadowverseBeyond.Server.Services
                 if (cleanupResult.ShouldStop) return cleanupResult;
             }
 
+            if (gameEvent is MirageCombatResultCommittedEvent mirageCommitEvent)
+            {
+                processedEvents.Add(mirageCommitEvent);
+                DomainOperationResult mirageCommitResult;
+                try
+                {
+                    MatchCommandObservation.Trace(gameContext, mirageCommitEvent, "before_commit");
+                    mirageCommitResult = mirageCommitEvent.Commit(gameContext);
+                }
+                catch (Exception ex)
+                {
+                    processedEvents.RemoveAll(e => e.EventId == mirageCommitEvent.EventId);
+                    ReplayRecorder.Event(gameContext, mirageCommitEvent, "threw");
+                    var message = $"Commit threw for {mirageCommitEvent.GetType().Name}: {ex.Message}";
+                    _logger.LogError(ex, message);
+                    return PausableTransactionResult.Failure(message);
+                }
+
+                if (!mirageCommitResult.Success)
+                {
+                    MatchCommandObservation.Trace(gameContext, mirageCommitEvent, "rejected", mirageCommitResult.GeneratedEvents);
+                    ReplayRecorder.Event(gameContext, mirageCommitEvent, "rejected", mirageCommitResult.GeneratedEvents);
+                    processedEvents.RemoveAll(e => e.EventId == mirageCommitEvent.EventId);
+                    return PausableTransactionResult.Failure(mirageCommitResult.ErrorMessage ?? $"Commit failed for {mirageCommitEvent.GetType().Name}.");
+                }
+
+                gameContext.CurrentGameState.IncrementStateRevision();
+                MatchCommandObservation.Trace(gameContext, mirageCommitEvent, "committed", mirageCommitResult.GeneratedEvents);
+                await RecordEventHistoryAsync(gameContext, mirageCommitEvent, mirageCommitResult.GeneratedEvents);
+                ResetAbilityEventFlags(gameContext);
+                ReleaseDelayedEventsIfReady(mirageCommitEvent.EventId, eventStagingArea, delayedEventsByParent);
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+            }
+
             // 1a. Before phase (intercept sub-phase): allow rewrites/replacements before commit.
             var (interceptResult, interceptedEvent, interceptGeneratedEvents, deferredBeforeEffects, eventPrevented) = await ApplyBeforeInterceptsAsync(
                 gameContext,
@@ -3905,6 +3912,7 @@ namespace ShadowverseBeyond.Server.Services
                 return PausableTransactionResult.Success(new List<IGameEvent>());
             }
 
+            if (gameEvent is DiscoverRequestEvent discovering) await discovering.ResolveAsync(gameContext);
             var decisionResolveResult = await ResolveDecisionEventIfNeededAsync(gameContext, gameEvent, DecisionResolutionPhase.Commit);
             if (decisionResolveResult.ShouldStop) return decisionResolveResult;
 
@@ -3993,6 +4001,12 @@ namespace ShadowverseBeyond.Server.Services
                 if (eventResult.ShouldStop) return eventResult;
             }
 
+            if (gameEvent is EvolveEvent { IsMirageEvolutionObsolete: true })
+            {
+                processedEvents.RemoveAll(e => e.EventId == gameEvent.EventId);
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+            }
+
             // 2. 'On' phase: Effects are enqueued for later processing.
             var (onResult, onEffects, onEvents) = await GetTriggerAbilityEffectsAsync(gameContext, gameEvent, TriggerTiming.On);
             if (onResult.ShouldStop) return onResult;
@@ -4051,22 +4065,27 @@ namespace ShadowverseBeyond.Server.Services
                 DomainOperationResult commitResult;
                 try
                 {
+                    MatchCommandObservation.Trace(gameContext, gameEvent, "before_commit");
                     commitResult = committableEvent.Commit(gameContext);
                 }
                 catch (Exception ex)
                 {
                     processedEvents.RemoveAll(e => e.EventId == gameEvent.EventId);
+                    ReplayRecorder.Event(gameContext, gameEvent, "threw");
                     var message = $"Commit threw for {gameEvent.GetType().Name}: {ex.Message}";
                     _logger.LogError(ex, message);
                     return PausableTransactionResult.Failure(message);
                 }
                 if (!commitResult.Success)
                 {
+                    MatchCommandObservation.Trace(gameContext, gameEvent, "rejected", commitResult.GeneratedEvents);
+                    ReplayRecorder.Event(gameContext, gameEvent, "rejected", commitResult.GeneratedEvents);
                     processedEvents.RemoveAll(e => e.EventId == gameEvent.EventId);
                     return PausableTransactionResult.Failure(commitResult.ErrorMessage ?? $"Commit failed for {gameEvent.GetType().Name}.");
                 }
                 gameContext.CurrentGameState.IncrementStateRevision();
-                await RecordEventHistoryAsync(gameContext, gameEvent);
+                MatchCommandObservation.Trace(gameContext, gameEvent, "committed", commitResult.GeneratedEvents);
+                await RecordEventHistoryAsync(gameContext, gameEvent, commitResult.GeneratedEvents);
                 historyRecorded = true;
                 foreach (var subEvent in commitResult.GeneratedEvents)
                 {
@@ -4098,6 +4117,7 @@ namespace ShadowverseBeyond.Server.Services
 
             if (!historyRecorded)
             {
+                MatchCommandObservation.Trace(gameContext, gameEvent, "observed");
                 await RecordEventHistoryAsync(gameContext, gameEvent);
             }
 
@@ -4164,7 +4184,7 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
-        private async Task RecordEventHistoryAsync(GameContext gameContext, IGameEvent gameEvent)
+        private async Task RecordEventHistoryAsync(GameContext gameContext, IGameEvent gameEvent, IReadOnlyList<IGameEvent>? generated = null)
         {
             if (gameContext.CurrentGameState == null)
             {
@@ -4175,7 +4195,7 @@ namespace ShadowverseBeyond.Server.Services
                 return;
             }
 
-            var historyService = gameContext.ServiceProvider.GetService<IEventHistoryService>();
+            var historyService = gameContext.EventHistoryService ?? gameContext.ServiceProvider.GetService<IEventHistoryService>();
             if (historyService == null)
             {
                 _logger.LogWarning(
@@ -4185,19 +4205,29 @@ namespace ShadowverseBeyond.Server.Services
                 return;
             }
 
-            try
+            if (gameContext.CurrentGameState.IsCombatSandbox
+                && historyService is InMemorySandboxEventHistoryService sandboxHistory)
             {
-                await historyService.StoreEventAsync(gameContext.CurrentGameState.GameId, gameEvent);
+                await sandboxHistory.StoreEventAsync(gameContext.CurrentGameState.GameId, gameEvent);
+                await sandboxHistory.OnSandboxEventCommittedAsync(gameContext, gameEvent, _eventProcessor);
             }
-            catch (Exception ex)
+            else
             {
-                _logger.LogWarning(
-                    ex,
-                    "[GameActionTransactionService] Failed to persist event history for {EventType} (ID: {EventId}) in game {GameId}.",
-                    gameEvent.EventType,
-                    gameEvent.EventId,
-                    gameContext.CurrentGameState.GameId);
+                try
+                {
+                    await historyService.StoreEventAsync(gameContext.CurrentGameState.GameId, gameEvent);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "[GameActionTransactionService] Failed to persist event history for {EventType} (ID: {EventId}) in game {GameId}.",
+                        gameEvent.EventType,
+                        gameEvent.EventId,
+                        gameContext.CurrentGameState.GameId);
+                }
             }
+            ReplayRecorder.Event(gameContext, gameEvent, gameEvent is ICommittableEvent ? "committed" : "observed", generated);
         }
 
         private static void ResetAbilityEventFlags(GameContext gameContext)
@@ -5502,6 +5532,7 @@ namespace ShadowverseBeyond.Server.Services
                 effect.GeneratedEvents = decisionEvents;
 
                 var effectResult = _effectExecutor.ExecuteEffect(effect, effectContext); // Use the new context
+                ReplayRecorder.EffectApplied(effectContext, effect.Id, effect.Type.ToString(), effectResult.Success, effectResult.ErrorMessage, effectResult.GeneratedEvents);
 
                 var generatedEvents = (effectResult.GeneratedEvents ?? new List<IGameEvent>())
                     .Where(e => e is not EffectCompletedEvent)

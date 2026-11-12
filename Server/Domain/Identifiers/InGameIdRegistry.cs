@@ -4,7 +4,7 @@ using System.Threading;
 
 namespace ShadowverseBeyond.Server.Domain.Identifiers
 {
-    public sealed class InGameIdRegistry
+    public sealed partial class InGameIdRegistry
     {
         private int _nextCardId;
         private int _nextBuffId;

@@ -15,5 +15,7 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
         GameContext? GameContext { get; }
 
         GameContextScope Enter(GameContext context);
+
+        System.IDisposable SuspendAmbient();
     }
 }

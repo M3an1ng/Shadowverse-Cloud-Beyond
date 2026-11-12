@@ -6,6 +6,7 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using ShadowverseBeyond.Server.Domain.Identifiers;
 using System.Linq;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Events
 {
@@ -28,6 +29,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         [GameEventParameter("是否手动进化", "进化是否由玩家通过进化点触发（否则为效果进化）。")]
         public bool IsManualEvolution { get; }
+
+        internal bool IsMirageEvolutionObsolete => !IsManualEvolution && !IsSuperEvolution
+            && EvolvedCard is { IsMirageTriple: true } triple
+            && (triple.CurrentZone != CardZone.Field || triple.IsEvolved);
 
         public EvolveEvent(
             CardInstance evolvedCard,

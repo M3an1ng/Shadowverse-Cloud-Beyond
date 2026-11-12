@@ -289,7 +289,8 @@ export async function mountStyleEditor(editor) {
     editor._styleDrafts.set(id, config);
     let active = config.styles[0]?.id,
       dirty = false;
-    const picker = new DefinitionPicker(new DefinitionPickerCatalog());
+    const editorScope = editor?.cardPoolScope || "standard";
+    const picker = new DefinitionPicker(new DefinitionPickerCatalog({ scope: editorScope }));
     const changed = () => {
       dirty = true;
     };
@@ -329,13 +330,14 @@ export async function mountStyleEditor(editor) {
         if (save.disabled) return;
         save.disabled = true;
         try {
-          config = await historyRequest(`/api/card-styles/${id}`, {
+          config = await historyRequest(`/api/card-styles/${id}?scope=${encodeURIComponent(editorScope)}`, {
             method: "PUT",
             body: JSON.stringify(config),
           });
           dirty = false;
           editor._styleDrafts.set(id, config);
           await loadStyles(true);
+          document.dispatchEvent(new CustomEvent("svb:card-style-changed", { detail: { cardId: id } }));
           showAlert("卡片风格已保存");
           render();
         } catch (e) {
@@ -498,7 +500,7 @@ export async function mountStyleEditor(editor) {
         );
         if (!fresh.length) return;
         const cards = await Promise.all(
-          fresh.map((value) => historyRequest(`/api/cards/${value}`)),
+          fresh.map((value) => historyRequest(`/api/cards/${value}?scope=${encodeURIComponent(editorScope)}`)),
         );
         for (const card of cards)
           style.bindings.push({

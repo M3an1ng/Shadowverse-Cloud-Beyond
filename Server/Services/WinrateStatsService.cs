@@ -38,6 +38,7 @@ public sealed class WinrateStatsService : IWinrateStatsService
         CancellationToken cancellationToken)
     {
         var gameState = gameContext.CurrentGameState;
+        if (gameState.ReplayBranch != null) return;
         if (gameState == null || string.IsNullOrWhiteSpace(gameState.GameId))
         {
             return;
@@ -47,7 +48,7 @@ public sealed class WinrateStatsService : IWinrateStatsService
         if (gameState.IsLocalAiTraining) return;
         _runtimeTracker.TrackCommittedEvents(gameState, processedEvents);
 
-        var gameEndEvent = processedEvents.LastOrDefault(e => e is GameEndEvent) as GameEndEvent;
+        var gameEndEvent = ResolveTerminalGameEndEvent(processedEvents);
         if (gameEndEvent == null)
         {
             return;
@@ -113,6 +114,31 @@ public sealed class WinrateStatsService : IWinrateStatsService
             }
         });
         _runtimeTracker.Clear(gameState.GameId);
+    }
+
+    private static GameEndEvent? ResolveTerminalGameEndEvent(IReadOnlyList<IGameEvent> processedEvents)
+    {
+        for (int i = processedEvents.Count - 1; i >= 0; i--)
+        {
+            switch (processedEvents[i])
+            {
+                case GameEndEvent gameEnd:
+                    return gameEnd;
+                case MirageCombatResultCommittedEvent
+                {
+                    WasNoOpIdempotent: false,
+                    IsGameOverResult: true
+                } mirageCommit when mirageCommit.WinnerPlayerId != Guid.Empty && mirageCommit.LoserPlayerId != Guid.Empty:
+                    return new GameEndEvent(
+                        mirageCommit.WinnerPlayerId,
+                        mirageCommit.LoserPlayerId,
+                        mirageCommit.EndReason,
+                        mirageCommit.EventId,
+                        mirageCommit.Timestamp);
+            }
+        }
+
+        return null;
     }
 
     private async Task UpdateCardAggAsync(

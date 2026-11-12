@@ -124,13 +124,16 @@ if (-not $SkipFrontend) {
         Copy-Item (Join-Path "dist" $file) $targetPath -Force
     }
 
-    $existingCardsPath = Join-Path $root "assets\cards"
-    $preservedCardsPath = Join-Path $root ("cards.preserve-" + $stamp)
-    $cardsPreserved = $false
-    if (Test-Path $existingCardsPath) {
-        Move-Item $existingCardsPath $preservedCardsPath -Force
-        $cardsPreserved = $true
-        Write-Host "Preserved existing assets/cards for redeploy" -ForegroundColor Yellow
+    $preservedAssetSubdirs = @("cards", "emotes", "catalog-media")
+    $preservedAssetMap = @{}
+    foreach ($subdir in $preservedAssetSubdirs) {
+        $existingSubdirPath = Join-Path $root ("assets\" + $subdir)
+        if (Test-Path $existingSubdirPath) {
+            $tempPreservePath = Join-Path $root ($subdir + ".preserve-" + $stamp)
+            Move-Item $existingSubdirPath $tempPreservePath -Force
+            $preservedAssetMap[$subdir] = $tempPreservePath
+            Write-Host ("Preserved existing assets/" + $subdir + " for redeploy") -ForegroundColor Yellow
+        }
     }
 
     if (Test-Path "assets") {
@@ -142,13 +145,16 @@ if (-not $SkipFrontend) {
     }
     Copy-Item "dist\assets" "assets" -Recurse -Force
 
-    if ($cardsPreserved -and (Test-Path $preservedCardsPath)) {
-        $targetCardsPath = Join-Path $root "assets\cards"
-        if (Test-Path $targetCardsPath) {
-            Remove-Item $targetCardsPath -Recurse -Force
+    foreach ($subdir in $preservedAssetMap.Keys) {
+        $tempPreservePath = $preservedAssetMap[$subdir]
+        if (Test-Path $tempPreservePath) {
+            $targetSubdirPath = Join-Path $root ("assets\" + $subdir)
+            if (Test-Path $targetSubdirPath) {
+                Remove-Item $targetSubdirPath -Recurse -Force
+            }
+            Move-Item $tempPreservePath $targetSubdirPath -Force
+            Write-Host ("Restored assets/" + $subdir + " after frontend asset refresh") -ForegroundColor Green
         }
-        Move-Item $preservedCardsPath $targetCardsPath -Force
-        Write-Host "Restored assets/cards after frontend asset refresh" -ForegroundColor Green
     }
 
     Write-Host "Frontend prepared at root index.prod.html + assets/ + PWA files" -ForegroundColor Green

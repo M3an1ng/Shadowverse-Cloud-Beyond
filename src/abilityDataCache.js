@@ -2,20 +2,54 @@ import {
     CARD_CATALOG_INVALIDATED_EVENT,
     isAbilityOnlyInvalidation
 } from './dataChangeEvents.js';
+import { normalizeCardPoolScope } from './cardDefinitionsLoader.js';
 
-const abilityDataCache = {
-    cards: null,
-    abilities: null,
-    cardIndex: new Map(),
-    abilityIndex: new Map(),
-    abilitiesByCard: new Map(),
-    cardsPromise: null,
-    abilitiesPromise: null
-};
+function createScopedCache() {
+    return {
+        cards: null,
+        abilities: null,
+        cardIndex: new Map(),
+        abilityIndex: new Map(),
+        abilitiesByCard: new Map(),
+        cardsPromise: null,
+        abilitiesPromise: null
+    };
+}
+
+const cachesByScope = new Map([
+    ['standard', createScopedCache()],
+    ['mirage', createScopedCache()]
+]);
+
+let activeScope = 'standard';
+
+export function setActiveAbilityDataScope(scope) {
+    activeScope = normalizeCardPoolScope(scope);
+    return activeScope;
+}
+
+export function getActiveAbilityDataScope() {
+    return activeScope;
+}
+
+function resolveScope(scope) {
+    if (scope === undefined || scope === null || scope === '') {
+        return activeScope || 'standard';
+    }
+    return normalizeCardPoolScope(scope);
+}
+
+function getCache(scope) {
+    const resolved = resolveScope(scope);
+    if (!cachesByScope.has(resolved)) {
+        cachesByScope.set(resolved, createScopedCache());
+    }
+    return { scope: resolved, cache: cachesByScope.get(resolved) };
+}
 
 function normalizeId(value) {
     const id = Number(value);
-    return Number.isFinite(id) && id >= 0 ? id : null;
+    return Number.isFinite(id) && id >= -1 ? id : null;
 }
 
 function buildCardIndex(cards) {
@@ -50,14 +84,14 @@ function buildAbilitiesByCard(abilities) {
     return map;
 }
 
-function setAbilityDefinitions(abilities) {
-    abilityDataCache.abilities = abilities;
-    abilityDataCache.abilityIndex = buildAbilityIndex(abilities);
-    abilityDataCache.abilitiesByCard = buildAbilitiesByCard(abilities);
+function setAbilityDefinitions(cache, abilities) {
+    cache.abilities = abilities;
+    cache.abilityIndex = buildAbilityIndex(abilities);
+    cache.abilitiesByCard = buildAbilitiesByCard(abilities);
 }
 
-async function fetchCards() {
-    const response = await fetch('/api/cards', {
+async function fetchCards(scope) {
+    const response = await fetch(`/api/cards?scope=${encodeURIComponent(scope)}`, {
         method: 'GET',
         cache: 'no-store'
     });
@@ -71,8 +105,8 @@ async function fetchCards() {
     return data;
 }
 
-async function fetchAbilities() {
-    const response = await fetch('/api/abilities');
+async function fetchAbilities(scope) {
+    const response = await fetch(`/api/abilities?scope=${encodeURIComponent(scope)}`);
     if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
@@ -83,137 +117,166 @@ async function fetchAbilities() {
     return data;
 }
 
-export async function ensureCardDefinitions() {
-    if (abilityDataCache.cards) {
-        return abilityDataCache.cards;
+export async function ensureCardDefinitions(scope = null) {
+    const { scope: resolvedScope, cache } = getCache(scope);
+    if (cache.cards) {
+        return cache.cards;
     }
-    if (!abilityDataCache.cardsPromise) {
-        const request = fetchCards()
+    if (!cache.cardsPromise) {
+        const request = fetchCards(resolvedScope)
             .then(cards => {
-                // 失效会撤销请求的发布权，旧响应不能覆盖刷新后的目录。
-                if (abilityDataCache.cardsPromise === request) {
-                    abilityDataCache.cards = cards;
-                    abilityDataCache.cardIndex = buildCardIndex(cards);
+                if (cache.cardsPromise === request) {
+                    cache.cards = cards;
+                    cache.cardIndex = buildCardIndex(cards);
                 }
                 return cards;
             })
             .finally(() => {
-                if (abilityDataCache.cardsPromise === request) {
-                    abilityDataCache.cardsPromise = null;
+                if (cache.cardsPromise === request) {
+                    cache.cardsPromise = null;
                 }
             });
-        abilityDataCache.cardsPromise = request;
+        cache.cardsPromise = request;
     }
-    return await abilityDataCache.cardsPromise;
+    return await cache.cardsPromise;
 }
 
-export async function ensureAbilityDefinitions() {
-    if (abilityDataCache.abilities) {
-        return abilityDataCache.abilities;
+export async function ensureAbilityDefinitions(scope = null) {
+    const { scope: resolvedScope, cache } = getCache(scope);
+    if (cache.abilities) {
+        return cache.abilities;
     }
-    if (!abilityDataCache.abilitiesPromise) {
-        const request = fetchAbilities()
+    if (!cache.abilitiesPromise) {
+        const request = fetchAbilities(resolvedScope)
             .then(abilities => {
-                if (abilityDataCache.abilitiesPromise === request) {
-                    setAbilityDefinitions(abilities);
+                if (cache.abilitiesPromise === request) {
+                    setAbilityDefinitions(cache, abilities);
                 }
                 return abilities;
             })
             .finally(() => {
-                if (abilityDataCache.abilitiesPromise === request) {
-                    abilityDataCache.abilitiesPromise = null;
+                if (cache.abilitiesPromise === request) {
+                    cache.abilitiesPromise = null;
                 }
             });
-        abilityDataCache.abilitiesPromise = request;
+        cache.abilitiesPromise = request;
     }
-    return await abilityDataCache.abilitiesPromise;
+    return await cache.abilitiesPromise;
 }
 
-export async function ensureAbilityData() {
-    await Promise.all([ensureCardDefinitions(), ensureAbilityDefinitions()]);
+export async function ensureAbilityData(scope = null) {
+    const { scope: resolvedScope, cache } = getCache(scope);
+    await Promise.all([ensureCardDefinitions(resolvedScope), ensureAbilityDefinitions(resolvedScope)]);
     return {
-        cards: abilityDataCache.cards || [],
-        abilities: abilityDataCache.abilities || [],
-        cardIndex: abilityDataCache.cardIndex,
-        abilityIndex: abilityDataCache.abilityIndex,
-        abilitiesByCard: abilityDataCache.abilitiesByCard
+        scope: resolvedScope,
+        cards: cache.cards || [],
+        abilities: cache.abilities || [],
+        cardIndex: cache.cardIndex,
+        abilityIndex: cache.abilityIndex,
+        abilitiesByCard: cache.abilitiesByCard
     };
 }
 
-export function getAbilityDataSnapshot() {
+export function getAbilityDataSnapshot(scope = null) {
+    const { scope: resolvedScope, cache } = getCache(scope);
     return {
-        cards: abilityDataCache.cards || [],
-        abilities: abilityDataCache.abilities || [],
-        cardIndex: abilityDataCache.cardIndex,
-        abilityIndex: abilityDataCache.abilityIndex,
-        abilitiesByCard: abilityDataCache.abilitiesByCard
+        scope: resolvedScope,
+        cards: cache.cards || [],
+        abilities: cache.abilities || [],
+        cardIndex: cache.cardIndex,
+        abilityIndex: cache.abilityIndex,
+        abilitiesByCard: cache.abilitiesByCard
     };
 }
 
-export function clearAbilityDataCache() {
-    abilityDataCache.cards = null;
-    abilityDataCache.abilities = null;
-    abilityDataCache.cardIndex = new Map();
-    abilityDataCache.abilityIndex = new Map();
-    abilityDataCache.abilitiesByCard = new Map();
-    abilityDataCache.cardsPromise = null;
-    abilityDataCache.abilitiesPromise = null;
+export function clearAbilityDataCache(scope = null) {
+    if (scope === 'all') {
+        for (const entry of cachesByScope.values()) {
+            entry.cards = null;
+            entry.abilities = null;
+            entry.cardIndex = new Map();
+            entry.abilityIndex = new Map();
+            entry.abilitiesByCard = new Map();
+            entry.cardsPromise = null;
+            entry.abilitiesPromise = null;
+        }
+        return;
+    }
+    const { cache } = getCache(scope);
+    cache.cards = null;
+    cache.abilities = null;
+    cache.cardIndex = new Map();
+    cache.abilityIndex = new Map();
+    cache.abilitiesByCard = new Map();
+    cache.cardsPromise = null;
+    cache.abilitiesPromise = null;
 }
 
-export function markAbilityDataCacheDirty() {
-    abilityDataCache.abilities = null;
-    abilityDataCache.abilityIndex = new Map();
-    abilityDataCache.abilitiesByCard = new Map();
-    abilityDataCache.abilitiesPromise = null;
+export function markAbilityDataCacheDirty(scope = null) {
+    const { cache } = getCache(scope);
+    cache.abilities = null;
+    cache.abilityIndex = new Map();
+    cache.abilitiesByCard = new Map();
+    cache.abilitiesPromise = null;
 }
 
-export function upsertAbilityDataCacheEntry(ability) {
+export function upsertAbilityDataCacheEntry(ability, scope = null) {
+    const { cache } = getCache(scope);
     const abilityId = normalizeId(ability?.id ?? ability?.Id);
     if (abilityId == null) {
-        markAbilityDataCacheDirty();
+        markAbilityDataCacheDirty(scope);
         return;
     }
 
-    if (!abilityDataCache.abilities) {
+    if (!cache.abilities) {
         return;
     }
 
-    const nextAbilities = abilityDataCache.abilities.filter(existing => {
+    const nextAbilities = cache.abilities.filter(existing => {
         const existingId = normalizeId(existing?.id ?? existing?.Id);
         return existingId !== abilityId;
     });
     nextAbilities.push(ability);
-    setAbilityDefinitions(nextAbilities);
+    setAbilityDefinitions(cache, nextAbilities);
 }
 
-export function removeAbilityDataCacheEntry(abilityId) {
+export function removeAbilityDataCacheEntry(abilityId, scope = null) {
+    const { cache } = getCache(scope);
     const normalizedId = normalizeId(abilityId);
     if (normalizedId == null) {
-        markAbilityDataCacheDirty();
+        markAbilityDataCacheDirty(scope);
         return;
     }
 
-    if (!abilityDataCache.abilities) {
+    if (!cache.abilities) {
         return;
     }
 
-    const nextAbilities = abilityDataCache.abilities.filter(existing => {
+    const nextAbilities = cache.abilities.filter(existing => {
         const existingId = normalizeId(existing?.id ?? existing?.Id);
         return existingId !== normalizedId;
     });
-    setAbilityDefinitions(nextAbilities);
+    setAbilityDefinitions(cache, nextAbilities);
 }
 
-export async function refreshAbilityDataCache() {
-    clearAbilityDataCache();
-    return await ensureAbilityData();
+export async function refreshAbilityDataCache(scope = null) {
+    clearAbilityDataCache(scope);
+    return await ensureAbilityData(scope);
 }
 
 document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, (event) => {
-    if (isAbilityOnlyInvalidation(event?.detail || {})) {
+    const detail = event?.detail || {};
+    if (isAbilityOnlyInvalidation(detail)) {
         return;
     }
-    abilityDataCache.cards = null;
-    abilityDataCache.cardIndex = new Map();
-    abilityDataCache.cardsPromise = null;
+    const targetScopes = detail.scope
+        ? [normalizeCardPoolScope(detail.scope)]
+        : ['standard', 'mirage'];
+    for (const s of targetScopes) {
+        const entry = cachesByScope.get(s);
+        if (!entry) continue;
+        entry.cards = null;
+        entry.cardIndex = new Map();
+        entry.cardsPromise = null;
+    }
 });

@@ -7,13 +7,15 @@ umask 027
 bundle=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd "$bundle"
 sha256sum --quiet -c SHA256SUMS
+source ./prepare-ocr.sh
+ensure_ocr_python
 release_id=$(python3 -c 'import json; print(json.load(open("bundle.json"))["releaseId"])')
 [[ $release_id =~ ^[a-zA-Z0-9-]+$ ]] || { echo 'Invalid release ID'; exit 1; }
 base=/opt/svnebula-native
 mini=/opt/svnebula
 unit=/etc/systemd/system/svnebula.service
 [[ -f $unit && -d $mini/shared/data ]] || { echo 'The existing Mini installation was not found.'; exit 1; }
-if ! command -v rsync >/dev/null || ! command -v dotnet >/dev/null || ! dotnet --list-runtimes | grep -q '^Microsoft.AspNetCore.App 8\.'; then
+if ! command -v rsync >/dev/null || ! command -v curl >/dev/null || ! command -v dotnet >/dev/null || ! dotnet --list-runtimes | grep -q '^Microsoft.AspNetCore.App 8\.'; then
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y aspnetcore-runtime-8.0 rsync curl python3
 fi
@@ -33,8 +35,11 @@ done
 rsync -a "$bundle/app/assets/" "$base/shared/assets/"
 ln -s "$base/shared/assets" "$release/assets"
 ln -s "$base/shared/logs" "$release/Server/Logs"
-chown -R svnebula:svnebula "$release" "$base/shared/assets"
-chmod -R u=rwX,g=rX,o= "$release" "$base/shared/assets"
+prepare_ocr_environment "$release/tools/ocr-lab" "$base/shared/ocr-lab"
+chown -R svnebula:svnebula "$release" "$base/shared/assets" "$base/shared/ocr-lab"
+chmod -R u=rwX,g=rX,o= "$release" "$base/shared/assets" "$base/shared/ocr-lab"
+python3 verify-native.py --manifest bundle.json --app "$release" --ocr-python "$ocr_venv/bin/python"
+runuser -u svnebula -- test -w "$base/shared/assets"
 check_unit="svnebula-native-check-$$"
 check_db="$base/shared/data/check-$$.db"
 active_db="$base/shared/data/shadowverse.db"
@@ -42,6 +47,8 @@ previous_native=$(readlink -f "$base/current" 2>/dev/null || true)
 backup="$mini/backups/before-native-$release_id-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 switched=false
 was_active=false
+ocr_activated=false
+previous_ocr_venv=''
 systemctl is-active --quiet svnebula && was_active=true
 cleanup_check() {
     systemctl stop "$check_unit" >/dev/null 2>&1 || true
@@ -53,6 +60,7 @@ recover() {
     cleanup_check
     if [[ $switched == true ]]; then
         systemctl stop svnebula || true
+        [[ $ocr_activated != true ]] || restore_ocr_environment "$base/shared/ocr-lab"
         cp -a "$backup/svnebula.service" "$unit"
         if [[ -n $previous_native ]]; then
             ln -s "$previous_native" "$base/restore-$$"
@@ -85,6 +93,7 @@ systemd-run --quiet --unit="$check_unit" --uid=svnebula --gid=svnebula --working
     --property=PrivateTmp=true --property=NoNewPrivileges=true \
     /usr/bin/env ASPNETCORE_ENVIRONMENT=Production ASPNETCORE_URLS=http://127.0.0.1:15175 \
     "ConnectionStrings__DefaultConnection=Data Source=$check_db" \
+    "OCR_LAB_PYTHON=$ocr_venv/bin/python" OCR_LAB_PORT=15176 \
     /usr/bin/dotnet "$release/Server/ShadowverseBeyond.Server.dll"
 ready=false
 for attempt in {1..90}; do
@@ -106,14 +115,17 @@ systemctl stop svnebula
 cp -a "$mini/shared/data" "$backup/mini-data"
 [[ ! -f $mini/shared/server.env ]] || cp -a "$mini/shared/server.env" "$backup/mini-server.env"
 if [[ -f $active_db ]]; then
-    python3 - "$active_db" "$backup/native.db" <<'PY'
+    python3 - "$active_db" "$backup/native.db.pending" <<'PY'
 import sqlite3,sys
 with sqlite3.connect(sys.argv[1]) as source:
     with sqlite3.connect(sys.argv[2]) as target: source.backup(target)
 PY
+    mv -- "$backup/native.db.pending" "$backup/native.db"
 else
     install -o svnebula -g svnebula -m 0640 "$bundle/seed/shadowverse.db" "$active_db"
 fi
+ocr_activated=true
+activate_ocr_environment "$base/shared/ocr-lab"
 install -m 0644 "$bundle/svnebula-native.service" "$unit"
 install -m 0750 "$bundle/rollback-mini.sh" "$base/bin/rollback-mini.sh"
 printf '%s\n' "$backup" > "$base/bin/last-backup.txt"

@@ -4,6 +4,7 @@
 // - 多人联机方案A设计: 内存房间 + JoinCode/Token
 // - 服务层设计: 文档/02-后端架构/01-服务层设计.md
 using System;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Domain.Entities
 {
@@ -51,9 +52,17 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public string HostToken { get; init; } = string.Empty;
         public string? GuestToken { get; set; }
         public MatchStatus Status { get; set; } = MatchStatus.Waiting;
+        public GameMode Mode { get; init; } = GameMode.Standard;
         public bool HostReady { get; set; }
         public bool GuestReady { get; set; }
         public bool UseAiFallback { get; init; }
+        public bool IsPublic { get; set; } = true;
+        public bool IsResumedRoom { get; set; }
+        public int HostWins { get; set; }
+        public int GuestWins { get; set; }
+        public int Draws { get; set; }
+        public Guid? LastWinnerPlayerId { get; set; }
+        public string? LastCompletedGameId { get; set; }
         /// <summary>
         /// 房间活动时长，用于创建后和心跳续期时恢复 ExpiresAt。
         /// </summary>

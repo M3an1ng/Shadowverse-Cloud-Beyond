@@ -28,6 +28,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("融合卡牌", "发动融合能力的卡牌。", DslDisplayTypeName = "事件目标")]
         public CardInstance? FusionCard => Target.FirstOrDefault()?.Card;
 
+        [GameEventParameter("触发能力ID", "玩家明确选择的融合能力运行时ID。")]
         public Guid? TriggeredAbilityRuntimeId { get; }
 
         public FusionInvokedEvent(
@@ -38,9 +39,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
             Guid? triggeredAbilityRuntimeId = null)
             : base(EventType.Fusion, eventId, timestamp)
         {
-            TriggeredAbilityRuntimeId = triggeredAbilityRuntimeId;
             Source = TargetInfo.ForPlayer(requestingPlayer);
             Target.Add(TargetInfo.ForCard(sourceCard));
+            // Keep the selection available to DSL conditions without suppressing other reaction abilities.
+            TriggeredAbilityRuntimeId = triggeredAbilityRuntimeId;
         }
 
         public DomainOperationResult Commit(GameContext context)

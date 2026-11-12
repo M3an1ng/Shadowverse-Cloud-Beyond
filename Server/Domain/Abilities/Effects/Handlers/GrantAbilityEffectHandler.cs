@@ -114,12 +114,20 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                 return false;
             }
 
+            var expectMirage = context.CurrentGameState?.Mode == Dtos.Enums.GameMode.Mirage;
             foreach (var abilityId in parameters.AbilityDefinitionIds)
             {
                 var config = dataProvider.GetAbilityConfig(abilityId);
                 if (config == null)
                 {
                     errorMessage = $"GrantAbility effect could not find ability definition {abilityId}.";
+                    return false;
+                }
+
+                var ownerDef = dataProvider.GetCardDefinition(config.CardId);
+                if (ownerDef == null || ownerDef.IsMirageCard != expectMirage)
+                {
+                    errorMessage = $"GrantAbility effect rejected cross-mode ability definition {abilityId} (owner card {config.CardId}).";
                     return false;
                 }
 

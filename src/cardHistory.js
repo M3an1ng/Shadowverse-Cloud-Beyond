@@ -31,9 +31,11 @@ export async function historyRequest(path, options = {}) {
   }
   return response.status === 204 ? null : response.json();
 }
-export function showCardHistory(card, onRestored) {
+export function showCardHistory(card, onRestored, scope = null) {
   const id = card.id ?? card.Id ?? card.CardId;
-  if (!id) return;
+  if (!id && id !== -1 && id !== 0) return;
+  const resolvedScope = scope || ((card?.isMirageCard ?? card?.IsMirageCard) ? "mirage" : "standard");
+  const scopeQuery = `?scope=${encodeURIComponent(resolvedScope)}`;
   document.getElementById("card-history-overlay")?.remove();
   const overlay = document.createElement("div");
   overlay.id = "card-history-overlay";
@@ -137,7 +139,7 @@ export function showCardHistory(card, onRestored) {
     renderNav();
     detail.textContent = "正在加载版本…";
     const request = ++generation;
-    const data = await historyRequest(`${base}/${field(entry, "id")}`);
+    const data = await historyRequest(`${base}/${field(entry, "id")}${scopeQuery}`);
     if (!overlay.isConnected || request !== generation) return;
     snapshot = data.card ?? data.Card;
     detail.innerHTML =
@@ -153,7 +155,7 @@ export function showCardHistory(card, onRestored) {
     renderButtons();
   }
   async function load() {
-    const data = await historyRequest(base);
+    const data = await historyRequest(`${base}${scopeQuery}`);
     if (!overlay.isConnected) return;
     entries = data.entries ?? data.Entries ?? [];
     revision = data.revision ?? data.Revision;
@@ -178,7 +180,7 @@ export function showCardHistory(card, onRestored) {
       const entryId = field(selected, "id");
       if (type === "note") {
         const value = detail.querySelector("textarea").value;
-        await historyRequest(`${base}/${entryId}`, {
+        await historyRequest(`${base}/${entryId}${scopeQuery}`, {
           method: "PATCH",
           body: JSON.stringify({ note: value }),
         });
@@ -189,7 +191,7 @@ export function showCardHistory(card, onRestored) {
         type === "delete" &&
         (await confirmDialog("确定删除此历史版本？删除后无法再回退到该版本。"))
       ) {
-        await historyRequest(`${base}/${entryId}`, { method: "DELETE" });
+        await historyRequest(`${base}/${entryId}${scopeQuery}`, { method: "DELETE" });
         selected = null;
         await load();
         status.textContent = "历史版本已删除";
@@ -202,7 +204,7 @@ export function showCardHistory(card, onRestored) {
       ) {
         let saved, refreshFailure;
         try {
-          saved = await historyRequest(`${base}/${entryId}/restore`, {
+          saved = await historyRequest(`${base}/${entryId}/restore${scopeQuery}`, {
             method: "POST",
             body: JSON.stringify({ revision }),
           });
@@ -241,17 +243,22 @@ export function installCardHistoryActions(editor) {
       '<button type="button" class="btn-tech" data-export-card>导出卡牌配置</button><button type="button" class="btn-tech" data-card-history>版本历史</button>';
     sidebar.append(host);
     host.querySelector("[data-card-history]").onclick = () =>
-      showCardHistory(editor.currentCard, async (saved) => {
-        editor.clearDataCaches();
-        await editor.loadCardList({ force: true });
-        await editor.selectCard(saved.id ?? saved.Id ?? saved.CardId);
-      });
+      showCardHistory(
+        editor.currentCard,
+        async (saved) => {
+          editor.clearDataCaches();
+          await editor.loadCardList({ force: true });
+          await editor.selectCard(saved.id ?? saved.Id ?? saved.CardId);
+        },
+        editor.cardPoolScope || "standard",
+      );
     host.querySelector("[data-export-card]").onclick = async () => {
       try {
         const cardId = editor.getCurrentCardId();
+        const scopeParam = `?scope=${encodeURIComponent(editor.cardPoolScope || "standard")}`;
         const [definition, abilities] = await Promise.all([
-          historyRequest(`/api/cards/${cardId}`),
-          historyRequest(`/api/cards/${cardId}/abilities`),
+          historyRequest(`/api/cards/${cardId}${scopeParam}`),
+          historyRequest(`/api/cards/${cardId}/abilities${scopeParam}`),
         ]);
         const url = URL.createObjectURL(
           new Blob([JSON.stringify({ card: definition, abilities }, null, 2)], {

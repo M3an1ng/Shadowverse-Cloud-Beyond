@@ -4,6 +4,7 @@ using ShadowverseBeyond.Server.Infrastructure.Data;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Constants;
+using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using System.Text.Json;
 
@@ -90,15 +91,19 @@ namespace ShadowverseBeyond.Server.Controllers
         [HttpGet]
         [ProducesResponseType(typeof(IEnumerable<object>), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-        public async Task<ActionResult<IEnumerable<object>>> GetAllAbilities()
+        public async Task<ActionResult<IEnumerable<object>>> GetAllAbilities([FromQuery] string? scope = "standard")
         {
             try
             {
-                _logger.LogInformation("Attempting to get all abilities");
+                _logger.LogInformation("Attempting to get abilities for scope={Scope}", scope ?? "standard");
 
-                var abilityEntities = await _context.CardAbilities
-                    .AsNoTracking()
-                    .Where(ca => ca.IsActive)
+                var isMirageScope = MirageCardPoolIsolationRules.TryParseEditorScope(scope, out var parsedMirage) && parsedMirage;
+
+                var abilityEntities = await (
+                    from ca in _context.CardAbilities.AsNoTracking()
+                    join cd in _context.CardDefinitions.AsNoTracking() on ca.CardId equals cd.Id
+                    where ca.IsActive && cd.IsMirageCard == isMirageScope
+                    select ca)
                     .ToListAsync();
 
                 var abilities = abilityEntities.Select(ca =>
@@ -138,7 +143,7 @@ namespace ShadowverseBeyond.Server.Controllers
         [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-        public async Task<ActionResult<object>> GetAbilityById(long id)
+        public async Task<ActionResult<object>> GetAbilityById(long id, [FromQuery] string? scope = null)
         {
             try
             {
@@ -152,6 +157,17 @@ namespace ShadowverseBeyond.Server.Controllers
                 {
                     _logger.LogWarning("Ability with ID {AbilityId} not found", id);
                     return NotFound($"Ability with ID {id} not found");
+                }
+
+                if (MirageCardPoolIsolationRules.TryParseEditorScope(scope, out var scopedMirage))
+                {
+                    var ownerCard = await _context.CardDefinitions
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(c => c.Id == cardAbility.CardId);
+                    if (ownerCard != null && ownerCard.IsMirageCard != scopedMirage)
+                    {
+                        return BadRequest(new { error = $"能力 #{id} 不属于当前编辑环境（{scope}）。" });
+                    }
                 }
 
                 // 解析JsonConfig以获取详细的能力配置
@@ -220,7 +236,7 @@ namespace ShadowverseBeyond.Server.Controllers
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-        public async Task<IActionResult> UpdateAbility(long id, [FromBody] JsonElement abilityData)
+        public async Task<IActionResult> UpdateAbility(long id, [FromBody] JsonElement abilityData, [FromQuery] string? scope = null)
         {
             try
             {
@@ -231,6 +247,20 @@ namespace ShadowverseBeyond.Server.Controllers
                 {
                     _logger.LogWarning("Ability with ID {AbilityId} not found", id);
                     return NotFound(new { error = $"Ability {id} not found" });
+                }
+
+                var ownerCard = await _context.CardDefinitions
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Id == cardAbility.CardId);
+                if (ownerCard == null)
+                {
+                    return NotFound(new { error = $"Owner card {cardAbility.CardId} not found" });
+                }
+
+                if (MirageCardPoolIsolationRules.TryParseEditorScope(scope, out var scopedMirage)
+                    && ownerCard.IsMirageCard != scopedMirage)
+                {
+                    return BadRequest(new { error = "当前录卡入口无权修改另一环境的能力。" });
                 }
 
                 var jsonConfig = abilityData.TryGetProperty("jsonConfig", out var jsonConfigProp)
@@ -244,6 +274,12 @@ namespace ShadowverseBeyond.Server.Controllers
                 {
                     _logger.LogWarning(ex, "Invalid ability configuration for update {AbilityId}", id);
                     return BadRequest(new { error = "jsonConfig contains invalid ability configuration" });
+                }
+
+                var scopeValidation = await MirageCardPoolIsolationRules.ValidateAbilityJsonScopeAsync(_context, jsonConfig, ownerCard.IsMirageCard);
+                if (!scopeValidation.Valid)
+                {
+                    return BadRequest(new { error = scopeValidation.ErrorMessage });
                 }
 
                 // 更新常用字段（可选）
@@ -325,7 +361,7 @@ namespace ShadowverseBeyond.Server.Controllers
         [ProducesResponseType(typeof(object), StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status500InternalServerError)]
-        public async Task<ActionResult<object>> CreateAbility([FromBody] JsonElement abilityData)
+        public async Task<ActionResult<object>> CreateAbility([FromBody] JsonElement abilityData, [FromQuery] string? scope = null)
         {
             try
             {
@@ -341,6 +377,12 @@ namespace ShadowverseBeyond.Server.Controllers
                 if (cardDefinition == null)
                 {
                     return NotFound(new { error = $"Card {cardId} not found" });
+                }
+
+                if (MirageCardPoolIsolationRules.TryParseEditorScope(scope, out var scopedMirage)
+                    && cardDefinition.IsMirageCard != scopedMirage)
+                {
+                    return BadRequest(new { error = "当前录卡入口无权为另一环境的卡牌创建能力。" });
                 }
 
                 var name = abilityData.TryGetProperty("name", out var nameProp) ? nameProp.GetString()?.Trim() : null;
@@ -378,6 +420,12 @@ namespace ShadowverseBeyond.Server.Controllers
                 {
                     _logger.LogWarning(ex, "Invalid ability configuration for card {CardId}", cardId);
                     return BadRequest(new { error = "jsonConfig contains invalid ability configuration" });
+                }
+
+                var scopeValidation = await MirageCardPoolIsolationRules.ValidateAbilityJsonScopeAsync(_context, jsonConfig, cardDefinition.IsMirageCard);
+                if (!scopeValidation.Valid)
+                {
+                    return BadRequest(new { error = scopeValidation.ErrorMessage });
                 }
 
                 var entity = new AbilityDefinition
@@ -465,7 +513,7 @@ namespace ShadowverseBeyond.Server.Controllers
             try
             {
                 var cardIds = request?.CardIds?
-                    .Where(id => id > 0)
+                    .Where(id => id >= GameConstants.Cards.MirageLeaderCardId)
                     .Distinct()
                     .ToList() ?? new List<int>();
 

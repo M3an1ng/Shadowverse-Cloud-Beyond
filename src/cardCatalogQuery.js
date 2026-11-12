@@ -23,6 +23,7 @@ export function matchCatalogCard(
   styleIds = new Set(),
   keywordLabels = new Map(),
 ) {
+  if (card?.isMirageCard === true || card?.IsMirageCard === true) return false;
   const get = (k) => cardValue(card, k);
   const type = String(get("type")).toLowerCase();
   if (!["follower", "spell", "amulet"].includes(type)) return false;

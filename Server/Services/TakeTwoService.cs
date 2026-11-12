@@ -72,7 +72,7 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
     public static TakeTwoPool EmptyPool => new([], [], [], new());
     public static List<CardDefinition> PoolCards(List<CardDefinition> all, string environment, TakeTwoPool pool)
     {
-        var valid = all.Where(c => c.IsCollectible && c.Type is CardType.Follower or CardType.Spell or CardType.Amulet).ToList();
+        var valid = all.Where(c => !c.IsMirageCard && c.IsCollectible && CardStyleCatalog.IsCardImplemented(c.Id) && c.Type is CardType.Follower or CardType.Spell or CardType.Amulet).ToList();
         return valid.Where(c => !pool.ExcludedIds.Contains(c.Id) && (pool.IncludedIds.Contains(c.Id) || environment == "as2p" && pool.NeutralByClass.Values.Any(ids => ids.Contains(c.Id)) || ((pool.Packs.Length == 0 ? environment != "as2p" && (environment != "rotation" || c.CardSetDefinition?.Environments.Contains(DeckEnvironment.Rotation) == true) : pool.Packs.Contains(c.CardSet))))).ToList();
     }
     private static int[] Choose(List<CardDefinition> source, int count, HashSet<int>? excluded = null)
@@ -131,6 +131,15 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
         if (seat.Plans.Count == 0) throw new InvalidOperationException("此卡池没有满足双选要求的职业，请补充卡片或减少重抽次数");
         return seat;
     }
+    private string NextUniqueCode()
+    {
+        for (var i = 0; i < 32; i++)
+        {
+            var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+            if (!rooms.Values.Any(r => !r.Closed && r.Code == code)) return code;
+        }
+        return RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+    }
     public TakeTwoRoom Create(Guid owner, string environment, TakeTwoPool pool, List<CardDefinition> all)
     {
         lock (membershipGate)
@@ -139,7 +148,7 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
             // Capture mutable settings so subsequent edits cannot change either player's room.
             var snapshot = JsonSerializer.Deserialize<TakeTwoPool>(JsonSerializer.Serialize(pool))!;
             var catalog = PoolCards(all, environment, snapshot);
-            var room = new TakeTwoRoom { Environment = environment, Pool = snapshot, Catalog = catalog };
+            var room = new TakeTwoRoom { Code = NextUniqueCode(), Environment = environment, Pool = snapshot, Catalog = catalog };
             room.Players.Add(Prepare(owner, catalog, snapshot, environment));
             rooms[room.Id] = room;
             return room;
@@ -150,12 +159,27 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
         CleanupExpired();
         return rooms.TryGetValue(id, out var room) ? room : throw new InvalidOperationException("房间不存在或已过期");
     }
-    public TakeTwoRoom Join(string code, Guid owner)
+    public TakeTwoRoom Join(string code, Guid owner, string? roomId = null)
     {
         lock (membershipGate)
         {
             CleanupExpired();
-            var room = rooms.Values.SingleOrDefault(r => r.Code == code && IsActive(r)) ?? throw new InvalidOperationException("房间不存在");
+            TakeTwoRoom? room = null;
+            if (!string.IsNullOrWhiteSpace(roomId))
+            {
+                var normalizedId = roomId.Trim().Replace("-", "");
+                if (rooms.TryGetValue(normalizedId, out var byId) && IsActive(byId))
+                {
+                    if (!string.Equals(byId.Code, code?.Trim(), StringComparison.Ordinal))
+                        throw new InvalidOperationException("邀请码不正确");
+                    room = byId;
+                }
+            }
+            else
+            {
+                room = rooms.Values.FirstOrDefault(r => r.Code == code?.Trim() && IsActive(r));
+            }
+            if (room == null) throw new InvalidOperationException("房间不存在");
             lock (room)
             {
                 if (!IsActive(room)) throw new InvalidOperationException("房间已结束");
@@ -264,6 +288,5 @@ public sealed class TakeTwoService(IMatchService matches, IGameService? games = 
         }
     }
     public SpectatorRoom[] SpectatorRooms() { CleanupExpired(); return rooms.Values.Where(IsActive).Select(SpectatorView).Where(r => !r.Closed).ToArray(); }
-    public object View(TakeTwoRoom room, TakeTwoSeat seat, bool includePlans = true) { lock (room) { IsActive(room); var enemy = room.Players.FirstOrDefault(p => p != seat); object? handshake = null; if (room.Match != null) { var host = room.Players[0] == seat; handshake = new { gameId = room.Match.RoomId, playerId = seat.PlayerId, token = host ? room.Match.HostToken : room.Match.GuestToken, joinCode = room.Match.JoinCode, role = host ? "host" : "guest", useAiFallback = false }; } return new { room.Id, room.Code, room.Environment, room.Closed, role = room.Players[0] == seat ? "host" : "guest", packs = room.Pool.Packs, player = new { seat.PlayerId, seat.Token, seat.Class, seat.Cards, seat.Round, seat.Redraws, seat.Ready, seat.Sequence, plans = includePlans ? seat.Plans : null }, opponentCount = enemy?.Cards.Count ?? 0, opponentReady = enemy?.Ready ?? false, opponentJoined = enemy != null, handshake }; } }
+    public object View(TakeTwoRoom room, TakeTwoSeat seat, bool includePlans = true) { lock (room) { IsActive(room); var enemy = room.Players.FirstOrDefault(p => p != seat); object? handshake = null; if (room.Match != null) { var host = room.Players[0] == seat; handshake = new { gameId = room.Match.RoomId, playerId = seat.PlayerId, token = host ? room.Match.HostToken : room.Match.GuestToken, joinCode = room.Match.JoinCode, role = host ? "host" : "guest", useAiFallback = false }; } var cardsSnapshot = seat.Cards.ToArray(); var plansSnapshot = includePlans ? seat.Plans.ToDictionary(kv => kv.Key, kv => kv.Value with { Rounds = kv.Value.Rounds.ToList() }) : null; return new { room.Id, room.Code, room.Environment, room.Closed, role = room.Players[0] == seat ? "host" : "guest", packs = room.Pool.Packs, player = new { seat.PlayerId, seat.Token, seat.Class, Cards = cardsSnapshot, seat.Round, seat.Redraws, seat.Ready, seat.Sequence, plans = plansSnapshot }, opponentCount = enemy?.Cards.Count ?? 0, opponentReady = enemy?.Ready ?? false, opponentJoined = enemy != null, handshake }; } }
 }
-

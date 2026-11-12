@@ -1,46 +1,29 @@
-"""Build an application-only update; never include player databases or uploaded media."""
-import hashlib
-import re
-import shutil
-import sys
-import tarfile
-from pathlib import Path
+"""Build an application-only update without player databases or uploaded media."""
 
-root = Path(__file__).resolve().parent.parent
-name = sys.argv[1] if len(sys.argv) > 1 else 'svnebula-native-pool-local-20261030'
-assert re.fullmatch(r'svnebula-native-[a-z0-9-]+', name), 'Invalid update name'
-stage = root / '.local-run' / name
-assert not stage.exists(), 'Update staging directory already exists'
-server = stage / 'app/Server'
-server.mkdir(parents=True)
-published = root / '.local-run/pool-local-publish'
-for path in published.iterdir():
-    if path.is_file() and (path.suffix in ('.dll', '.pdb') or path.name.endswith(('.deps.json', '.runtimeconfig.json'))):
-        shutil.copy2(path, server / path.name)
-for runtime in ('linux-x64', 'win-x64'):
-    shutil.copytree(published / 'runtimes' / runtime, server / 'runtimes' / runtime)
-assert (server / 'runtimes/linux-x64/native/libe_sqlite3.so').is_file()
-shutil.copytree(root / 'dist/assets', stage / 'app/assets')
-shutil.copy2(root / 'dist/index.html', stage / 'app/index.html')
-(stage / 'app/data').mkdir()
-shutil.copy2(root / 'data/about-changelog.json', stage / 'app/data/about-changelog.json')
-entry = re.search(r'<script\b[^>]*\bsrc="([^"]+)"', (stage / 'app/index.html').read_text(encoding='utf-8')).group(1)
-(stage / 'entry-script.txt').write_text(entry + '\n', encoding='utf-8')
-shutil.copy2(root / 'deploy/ubuntu/update-ai-model.sh', stage / 'update-ai-model.sh')
-(stage / 'update.sh').write_text((root / 'deploy/ubuntu/update-native.sh').read_text(encoding='utf-8'), encoding='utf-8', newline='\n')
-def digest(path):
-    sha = hashlib.sha256()
-    with path.open('rb') as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-            sha.update(chunk)
-    return sha.hexdigest()
-files = sorted(p for p in stage.rglob('*') if p.is_file())
-assert not any(p.suffix in ('.db', '.sqlite') or p.name.startswith('appsettings') for p in files)
-(stage / 'SHA256SUMS').write_text(''.join(f'{digest(p)}  {p.relative_to(stage).as_posix()}\n' for p in files), encoding='utf-8')
-archive = root / 'exports' / (name + '.tar.gz')
-assert not archive.exists(), 'Do not overwrite an existing release'
-with tarfile.open(archive, 'w:gz') as tar:
-    tar.add(stage, arcname=name)
-checksum = digest(archive)
-archive.with_suffix(archive.suffix + '.sha256').write_text(f'{checksum}  {archive.name}\n', encoding='utf-8')
-print(f'{archive}\nBytes: {archive.stat().st_size}\nSHA256: {checksum}')
+import argparse
+import json
+from datetime import datetime, timezone
+
+from native_bundle import (add_bundle_arguments, copy_backend, copy_deployment_files,
+                           copy_frontend, copy_ocr, create_stage, write_archive)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_bundle_arguments(parser)
+    args = parser.parse_args()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    name, stage = create_stage(args, "svnebula-native-update-" + stamp.lower())
+    app = stage / "app"
+    copy_backend(args.publish_dir, app / "Server")
+    manifest = copy_frontend(args.dist_dir, app)
+    copy_ocr(args.model_dir, app)
+    manifest.update(format=2, kind="code-update", releaseId=name, builtAt=stamp)
+    (stage / "bundle.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    (stage / "entry-script.txt").write_text(manifest["entryScript"] + "\n", encoding="utf-8")
+    copy_deployment_files(stage, "update-native.sh")
+    write_archive(stage, name, args.output_dir)
+
+
+if __name__ == "__main__":
+    main()

@@ -8,12 +8,14 @@ public sealed class GameContextScope : IDisposable
     private GameContext? _context;
     internal GameContextScope? Previous { get; }
     internal GameContext? Context => Volatile.Read(ref _context);
+    internal bool IsSuspendedBarrier { get; }
 
-    internal GameContextScope(GameContextAccessor accessor, GameContext context, GameContextScope? previous)
+    internal GameContextScope(GameContextAccessor accessor, GameContext? context, GameContextScope? previous, bool isSuspendedBarrier = false)
     {
         _accessor = accessor;
         _context = context;
         Previous = previous;
+        IsSuspendedBarrier = isSuspendedBarrier;
     }
 
     public void Dispose()

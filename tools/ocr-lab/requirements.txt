@@ -1,0 +1,6 @@
+# Python >=3.10; pip selects wheels compatible with the server's Python version.
+rapidocr==3.10.0
+onnxruntime>=1.17,<2
+opencv-python-headless>=4.8,<6
+pillow>=10,<14
+numpy>=1.26,<3

@@ -28,17 +28,19 @@ namespace ShadowverseBeyond.Server.Services
         private readonly IServiceProvider _serviceProvider;
         private readonly IMapper _mapper;
         private readonly IMatchService? _matchService;
+        private readonly ReplayRecorder? _replayRecorder;
 
-        public PendingActionService(IHubContext<GameHub, IGameClient> hubContext, ILogger<PendingActionService> logger, IServiceProvider serviceProvider, IMapper mapper, IMatchService? matchService = null)
+        public PendingActionService(IHubContext<GameHub, IGameClient> hubContext, ILogger<PendingActionService> logger, IServiceProvider serviceProvider, IMapper mapper, IMatchService? matchService = null, ReplayRecorder? replayRecorder = null)
         {
             _hubContext = hubContext;
             _logger = logger;
             _serviceProvider = serviceProvider;
             _mapper = mapper;
             _matchService = matchService;
+            _replayRecorder = replayRecorder;
         }
 
-        public Task<PlayerChoiceResult> WaitForPlayerChoiceAsync(string gameId, PlayerChoiceRequest request, CancellationToken cancellationToken)
+        public async Task<PlayerChoiceResult> WaitForPlayerChoiceAsync(string gameId, PlayerChoiceRequest request, CancellationToken cancellationToken)
         {
             request.GameId = gameId;
             var tcs = new TaskCompletionSource<PlayerChoiceResult>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -54,6 +56,7 @@ namespace ShadowverseBeyond.Server.Services
             {
                 if (_pendingChoices.TryRemove(request.PendingChoiceId, out var removedContext))
                 {
+                    _replayRecorder?.ChoiceResolved(request.PendingChoiceId, "action_cancelled", []);
                     removedContext.Tcs.TrySetCanceled();
                     _logger.LogInformation("Pending choice {ChoiceId} was cancelled due to CancellationToken.", request.PendingChoiceId);
                 }
@@ -64,6 +67,26 @@ namespace ShadowverseBeyond.Server.Services
             var gameServiceForState = initialScope.ServiceProvider.GetRequiredService<IGameService>();
             var game = gameServiceForState.GetGameState(gameId);
             var player = game?.GetPlayerState(request.RequestingPlayerId);
+            if (game != null && _replayRecorder != null)
+                await _replayRecorder.WaitingAsync(game, System.Text.Json.JsonSerializer.SerializeToElement(request, ShadowverseBeyond.Server.Infrastructure.Services.SqliteReplayFrames.Json));
+
+            if (game != null && game.Mode == Dtos.Enums.GameMode.Mirage && game.Mirage != null)
+            {
+                bool isClosingRound;
+                lock (game.Mirage.RoundSyncLock)
+                {
+                    isClosingRound = game.Phase == Dtos.Enums.GamePhase.Recruit
+                        && game.Mirage.ClosingRecruitRoundNumber == game.Mirage.RoundNumber;
+                }
+
+                if (isClosingRound)
+                {
+                    _logger.LogInformation("Pending choice {ChoiceId} created while Mirage round {Round} is closing due to timeout; auto-resolving immediately.",
+                        request.PendingChoiceId, game.Mirage.RoundNumber);
+                    ForceResolveChoice(request.PendingChoiceId, CreateTimeoutChoiceResult(request));
+                    return await tcs.Task;
+                }
+            }
 
             if (player != null && player.IsAI)
             {
@@ -124,7 +147,8 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogInformation("Requesting player choice {ChoiceId} from player {PlayerId}. Sending 'PlayerChoiceRequested' event to client.", request.PendingChoiceId, request.RequestingPlayerId);
 
                 // Create the DTO to send to the client, matching the frontend handler's expectation.
-                var choiceEventDto = new PlayerChoiceRequestedEventDto(request.RequestingPlayerId, request);
+                var choiceEventDto = new PlayerChoiceRequestedEventDto(request.RequestingPlayerId, request,
+                    MatchCommandObservation.CurrentActionId, MatchCommandObservation.CurrentCommandId);
                 var roomScopedId = ResolveRoomScopedId(request.GameId);
                 string groupName = SignalRGroupNames.Player(roomScopedId, request.RequestingPlayerId);
 
@@ -133,7 +157,7 @@ namespace ShadowverseBeyond.Server.Services
                 _ = _hubContext.Clients.Group(groupName).PlayerChoiceRequested(choiceEventDto);
             }
 
-            return tcs.Task;
+            return await tcs.Task;
         }
 
         public void CompletePlayerChoice(Guid choiceId, SubmitTargetChoiceActionDto dto)
@@ -154,6 +178,7 @@ namespace ShadowverseBeyond.Server.Services
 
                     if (_pendingChoices.TryRemove(choiceId, out var removedContext))
                     {
+                        _replayRecorder?.ChoiceResolved(choiceId, "cancelled", []);
                         removedContext.Tcs.TrySetResult(PlayerChoiceResult.Cancelled);
                         _logger.LogInformation("Completed pending choice {ChoiceId} as cancelled.", choiceId);
                     }
@@ -182,6 +207,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 if (_pendingChoices.TryRemove(choiceId, out var finalContext))
                 {
+                    _replayRecorder?.ChoiceResolved(choiceId, "selected", distinctChosen);
                     var result = new PlayerChoiceResult
                     {
                         WasCancelled = false,
@@ -240,9 +266,56 @@ namespace ShadowverseBeyond.Server.Services
         {
             if (_pendingChoices.TryRemove(choiceId, out var context))
             {
+                _replayRecorder?.ChoiceResolved(choiceId, forcedResult.WasCancelled ? "forced_cancelled" : "forced_selected", forcedResult.ChosenTargetIds);
                 context.Tcs.TrySetResult(forcedResult);
                 _logger.LogInformation("Force-resolved pending choice {ChoiceId}.", choiceId);
             }
+        }
+
+        public static PlayerChoiceResult CreateTimeoutChoiceResult(PlayerChoiceRequest request)
+        {
+            if (request.IsCancellable)
+            {
+                return PlayerChoiceResult.Cancelled;
+            }
+
+            var selectable = request.SelectableTargetIds ?? new System.Collections.Generic.List<Guid>();
+            var min = Math.Max(0, request.MinSelectionCount);
+            var count = Math.Min(min, selectable.Count);
+            if (count <= 0 || selectable.Count == 0)
+            {
+                return new PlayerChoiceResult
+                {
+                    WasCancelled = false,
+                    ChosenTargetIds = new System.Collections.Generic.List<Guid>()
+                };
+            }
+
+            if (count >= selectable.Count)
+            {
+                return new PlayerChoiceResult
+                {
+                    WasCancelled = false,
+                    ChosenTargetIds = selectable.ToList()
+                };
+            }
+
+            var chosen = new System.Collections.Generic.List<Guid>(count);
+            var used = new System.Collections.Generic.HashSet<int>();
+            while (chosen.Count < count)
+            {
+                var index = Random.Shared.Next(selectable.Count);
+                if (used.Add(index))
+                {
+                    chosen.Add(selectable[index]);
+                }
+            }
+
+            return new PlayerChoiceResult
+            {
+                WasCancelled = false,
+                ChosenTargetIds = chosen
+            };
         }
     }
 }

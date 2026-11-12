@@ -112,6 +112,7 @@ function fillDeckSelect(selectEl, decks) {
 }
 
 function buildConfig(inputs) {
+    const firstPlayerMode = String(inputs.firstPlayer?.value || "random").trim().toLowerCase();
     return {
         startingPlayPoints: parseNumberInput(inputs.startPp),
         maxPlayPoints: parseNumberInput(inputs.maxPp),
@@ -119,12 +120,14 @@ function buildConfig(inputs) {
         startingHandSize: parseNumberInput(inputs.handSize),
         startingTurn: parseNumberInput(inputs.startTurn),
         ppBoostUses: parseNumberInput(inputs.ppBoost),
-        seed: parseNumberInput(inputs.seed)
+        seed: parseNumberInput(inputs.seed),
+        firstPlayerMode: firstPlayerMode && firstPlayerMode !== "random" ? firstPlayerMode : null
     };
 }
 
 function applyPreset(inputs, preset) {
     if (!inputs) return;
+    if (inputs.firstPlayer) inputs.firstPlayer.value = "random";
     if (preset === "standard") {
         if (inputs.startPp) inputs.startPp.value = "0";
         if (inputs.maxPp) inputs.maxPp.value = "0";
@@ -175,7 +178,8 @@ export async function initializeDevToolsMatchLab({ navigateTo }) {
         handSize: document.getElementById("match-lab-hand-size"),
         startTurn: document.getElementById("match-lab-start-turn"),
         ppBoost: document.getElementById("match-lab-pp-boost"),
-        seed: document.getElementById("match-lab-seed")
+        seed: document.getElementById("match-lab-seed"),
+        firstPlayer: document.getElementById("match-lab-first-player")
     };
 
     // Account IDs alone cannot distinguish an old request after switching away and back.

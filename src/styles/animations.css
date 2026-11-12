@@ -1,3 +1,74 @@
 /* Shared animation styles.
    This file is intentionally kept as a stable include target for index.html/index.prod.html. */
 
+/* ==========================================================================
+   Shared Battle Card Motion Primitives (#game-container & #battle-ui-test)
+   ========================================================================== */
+
+/* Keep cloned field cards in clean-portrait mode when detached into transient carrier/exit shells */
+#game-container .bui-motion-carrier .field-card .cost,
+#game-container .bui-motion-carrier .field-card .name,
+#game-container .bui-exit-clip-shell .field-card .cost,
+#game-container .bui-exit-clip-shell .field-card .name {
+    display: none;
+}
+
+#game-container .bui-motion-carrier .field-card:has(.card-art:not(.has-art)) .name,
+#game-container .bui-exit-clip-shell .field-card:has(.card-art:not(.has-art)) .name {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    top: 20px;
+    bottom: 30px;
+    left: 8px;
+    right: 8px;
+    white-space: normal;
+    line-height: 1.28;
+    font-size: 11px;
+    color: rgba(226, 232, 240, 0.86);
+}
+
+#game-container .bui-motion-carrier .field-card,
+#game-container .bui-exit-clip-shell .field-card {
+    width: 96px;
+    height: 132px;
+}
+
+#game-container .bui-motion-carrier,
+#game-container .bui-exit-clip-shell {
+    position: absolute;
+    pointer-events: none;
+    transform-origin: center center;
+}
+
+#game-container .bui-motion-carrier {
+    z-index: 9620;
+    will-change: translate, scale, opacity;
+}
+
+#game-container .bui-motion-carrier.is-attacker {
+    z-index: 9650;
+    filter: drop-shadow(0 16px 28px rgba(0, 0, 0, 0.88));
+}
+
+#game-container .bui-motion-carrier.is-cast-hover {
+    z-index: 9680;
+}
+
+#game-container .bui-exit-clip-shell {
+    z-index: 9630;
+    will-change: clip-path, translate, scale, opacity;
+}
+
+#game-container .bui-impact-burst {
+    z-index: 9690;
+}
+
+#game-container .bui-float-num {
+    z-index: 9720;
+}
+
+#game-container .bui-evo-burst,
+#game-container .bui-spell-arcane-burst {
+    z-index: 9670;
+}

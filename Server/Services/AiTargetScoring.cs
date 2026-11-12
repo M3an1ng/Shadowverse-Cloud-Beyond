@@ -85,7 +85,7 @@ internal static class AiTargetScoring
                     removed = !leader && !card.Keywords.Contains(CardKeyword.DestroyResist) && !card.Keywords.Contains(CardKeyword.EffectImmune);
                     break;
                 case EffectType.Vanish:
-                    removed = !leader && !card.Keywords.Contains(CardKeyword.EffectImmune);
+                    removed = !leader && !card.Keywords.Contains(CardKeyword.VanishResist) && !card.Keywords.Contains(CardKeyword.EffectImmune);
                     break;
                 case EffectType.Heal:
                     var restored = Math.Min(Math.Max(0, card.MaxHealth - health), effect.Amount ?? 1);

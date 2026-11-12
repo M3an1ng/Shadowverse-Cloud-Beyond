@@ -46,6 +46,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [GameEventParameter("目标索引", "卡牌移动到目标区域时的插入索引。null 表示追加到末尾。")]
         public int? DestinationIndex { get; }
 
+        [GameEventParameter("实际目标区域", "规则处理后的实际移动目的地。", Scope = GameEventParameterScope.Output)]
+        public CardZone? ActualToZone { get; private set; }
+
+        [GameEventParameter("实际移动原因", "包含满手烧牌等规则转换后的移动原因。", Scope = GameEventParameterScope.Output)]
+        public CardMoveReason? ActualMoveReason { get; private set; }
+
         // Set only by effects that explicitly transfer the original card to another player.
         internal Guid? DestinationOwnerPlayerId { get; set; }
 
@@ -135,6 +141,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 result.ErrorMessage = $"Failed to apply card move from {FromZone} to {effectiveToZone} for {card.InstanceId}.";
                 return result;
             }
+
+            ActualToZone = effectiveToZone;
+            ActualMoveReason = effectiveMoveReason;
 
             if (!preserveState)
             {

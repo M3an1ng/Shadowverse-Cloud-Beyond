@@ -261,6 +261,12 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Registered IDebugCommandParser."); // Added Log
     builder.Services.AddSingleton<IMatchService, MatchService>(); // Register in-memory match service for lobby
     Log.Information("Registered IMatchService (in-memory lobby)."); // Added Log
+    builder.Services.AddSingleton<IMirageShopService, MirageShopService>();
+    builder.Services.AddSingleton<IMirageTripleService, MirageTripleService>();
+    builder.Services.AddSingleton<IMirageCombatSnapshotBuilder, MirageCombatSnapshotBuilder>();
+    builder.Services.AddSingleton<IMirageGhostService, MirageGhostService>();
+    builder.Services.AddSingleton<IMirageCombatSimulator, MirageCombatSimulator>();
+    Log.Information("Registered IMirageShopService, IMirageTripleService, IMirageCombatSnapshotBuilder, IMirageGhostService, and IMirageCombatSimulator.");
     builder.Services.AddSingleton<IFirstPlayerSelector, SecureFirstPlayerSelector>();
     Log.Information("Registered IFirstPlayerSelector (secure RNG).");
 
@@ -476,6 +482,10 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     Log.Information("Registered IEventHistoryService as Singleton (InMemoryEventHistoryService).");
 
     builder.Services.Configure<ReplayOptions>(builder.Configuration.GetSection("Replay"));
+    builder.Services.AddScoped<SqliteReplayFrames>();
+    builder.Services.AddScoped<SqliteReplayHistory>();
+    builder.Services.AddScoped<ReplayContinuation>();
+    builder.Services.AddSingleton<ReplayRecorder>();
     Log.Information("Configured ReplayOptions (Replay section).");
 
     builder.Services.AddScoped<ICommittedEventJournal, SqliteReplayJournal>();
@@ -529,7 +539,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
             firstPlayerSelector,
             serviceScopeFactory,
             pendingActionService,
-            statsRuntimeTracker
+            statsRuntimeTracker,
+            provider.GetRequiredService<ReplayRecorder>()
         );
     });
     Log.Information("Registered IGameService as Singleton.");
@@ -573,6 +584,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
             // The frontend root is the publish directory's parent. Do not expose
             // the server's configuration or data files through that file provider.
             if (requestPath.StartsWithSegments("/Server")
+                || requestPath.StartsWithSegments("/tools")
+                || requestPath.StartsWithSegments("/.local")
                 || requestPath.StartsWithSegments("/data")
                    && !string.Equals(requestPath.Value, "/data/about-changelog.json", StringComparison.OrdinalIgnoreCase))
             {
@@ -625,28 +638,14 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         OnPrepareResponse = context =>
         {
             var path = context.Context.Request.Path.Value ?? string.Empty;
-            var extension = Path.GetExtension(path);
-            var isImage = string.Equals(extension, ".png", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(extension, ".jpg", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(extension, ".jpeg", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(extension, ".webp", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(extension, ".gif", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(extension, ".avif", StringComparison.OrdinalIgnoreCase);
+            // Vite emits fingerprinted files directly under /assets; upload and fixed UI directories do not qualify.
+            var isFingerprintedAsset = path.StartsWith("/assets/", StringComparison.OrdinalIgnoreCase)
+                && !path["/assets/".Length..].Contains('/')
+                && System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(path), @"-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+$");
 
             CacheControlHeaderValue cacheControl;
             var appendImmutable = false;
-            if (isImage && path.StartsWith("/assets/cards/", StringComparison.OrdinalIgnoreCase))
-            {
-                cacheControl = new CacheControlHeaderValue
-                {
-                    Public = true,
-                    MaxAge = app.Environment.IsDevelopment()
-                        ? TimeSpan.FromMinutes(10)
-                        : TimeSpan.FromDays(30)
-                };
-                appendImmutable = !app.Environment.IsDevelopment();
-            }
-            else if (!app.Environment.IsDevelopment() && path.StartsWith("/assets/", StringComparison.OrdinalIgnoreCase))
+            if (!app.Environment.IsDevelopment() && isFingerprintedAsset)
             {
                 // Bundled Vite assets are fingerprinted and safe to cache for long periods.
                 cacheControl = new CacheControlHeaderValue
@@ -677,25 +676,6 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     app.UseRateLimiter();
 
     // app.UseHttpsRedirection(); // Temporarily disabled for testing static files
-
-    var summaries = new[]
-    {
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-    app.MapGet("/weatherforecast", () =>
-    {
-        var forecast = Enumerable.Range(1, 5).Select(index =>
-            new WeatherForecast
-            (
-                DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-                Random.Shared.Next(-20, 55),
-                summaries[Random.Shared.Next(summaries.Length)]
-            ))
-            .ToArray();
-        return forecast;
-    })
-    .WithName("GetWeatherForecast");
 
     // --- Card Data API Endpoint ---
     // REMOVED: Duplicate minimal API endpoint for /api/cards
@@ -773,6 +753,11 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     }
 
     // --- Run the Application ---
+    using (var replayScope = app.Services.CreateScope())
+    {
+        await replayScope.ServiceProvider.GetRequiredService<SqliteReplayFrames>().RecoverInterruptedAsync(CancellationToken.None);
+        await replayScope.ServiceProvider.GetRequiredService<SqliteReplayHistory>().RecoverInterruptedAsync(CancellationToken.None);
+    }
     app.Run();
     // --- End Run the Application ---
 } // End of outer try block for Serilog
@@ -793,12 +778,6 @@ finally
 
 // Removed CardEffect and CardDefinition records from here as they conflict with Entities/Definitions
 // and should reside in separate files.
-
-// Represents the weather forecast data
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
 
 // --- M3 API Models ---
 // Removed duplicate PlayCardRequest record definition from here.

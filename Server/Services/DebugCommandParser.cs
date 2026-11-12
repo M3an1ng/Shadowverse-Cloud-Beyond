@@ -32,6 +32,19 @@ namespace ShadowverseBeyond.Server.Services
             if (gameState == null) throw new ArgumentNullException(nameof(gameState));
 
             var cmd = (dto?.Command ?? string.Empty).Trim().ToLowerInvariant();
+            if (cmd == "event.emit")
+            {
+                try
+                {
+                    var request = JsonSerializer.Deserialize<DebugEventRequest>(dto!.Args["json"], new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                        ?? throw new ArgumentException("event request is required");
+                    return DebugCommandParseResult.Ok(new[] { DebugEventInputs.Create(gameState, request) });
+                }
+                catch (Exception ex) when (ex is ArgumentException or JsonException or KeyNotFoundException or InvalidOperationException)
+                {
+                    return DebugCommandParseResult.Fail(ex.Message);
+                }
+            }
             var args = dto?.Args != null
                 ? new Dictionary<string, string>(dto.Args, StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

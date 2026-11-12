@@ -27,7 +27,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     /// This is the core domain entity used for game logic processing.
     /// </summary>
     [DslExposable("游戏状态", Description = "代表整个游戏实例的完整状态")]
-    public class GameState
+    public partial class GameState
     {
         private readonly ConcurrentDictionary<Guid, CardInstance> _allCardInstancesById = new();
 
@@ -56,6 +56,12 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public GameStatus Status { get; set; } = GameStatus.Starting;
 
         public GamePhase Phase { get; set; } = GamePhase.Mulligan;
+
+        public GameMode Mode { get; set; } = GameMode.Standard;
+
+        public bool IsCombatSandbox { get; set; } = false;
+
+        public MirageMatchState? Mirage { get; set; }
 
         public DateTime StartedAtUtc { get; set; } = DateTime.UtcNow;
 

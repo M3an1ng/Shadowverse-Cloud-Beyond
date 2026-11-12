@@ -215,6 +215,16 @@ namespace ShadowverseBeyond.Server.Domain.Constants
             /// Leader card ID used for player leaders
             /// </summary>
             public const int LeaderCardId = 0;
+
+            /// <summary>
+            /// Isolated Leader card ID used exclusively for Mirage mode leaders
+            /// </summary>
+            public const int MirageLeaderCardId = -1;
+
+            /// <summary>
+            /// Dedicated card set name for Mirage mode cards
+            /// </summary>
+            public const string MirageCardSetName = "幻境战棋";
         }
 
         public static class Tribes

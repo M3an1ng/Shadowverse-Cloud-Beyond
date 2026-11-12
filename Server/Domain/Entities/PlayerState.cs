@@ -19,9 +19,12 @@ using ShadowverseBeyond.Server.Domain.Abilities.DSL.Metadata;
 namespace ShadowverseBeyond.Server.Domain.Entities
 {
     [DslExposable("玩家状态", Description = "代表游戏中一个玩家的完整状态信息")]
-    public class PlayerState
+    public partial class PlayerState
     {
         public bool IsTakeTwo { get; set; }
+        public MiragePlayerState? Mirage { get; set; }
+        public bool IsMirageMode => Mirage != null;
+        public int GetMirageGoldCap() => Mirage?.HardGoldCap > 0 ? Mirage.HardGoldCap : MirageRuleConfig.DefaultHardGoldCap;
         public bool ConsumeIntromezzo()
         {
             var active = IsIntromezzoActive;
@@ -210,7 +213,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             var result = new DomainOperationResult();
             // Do not mutate here; just emit an event with the intended target values.
-            int targetCurrent = Math.Max(0, Math.Min(this.CurrentPlayPoints + amount, this.MaxPlayPoints));
+            var cap = IsMirageMode ? GetMirageGoldCap() : this.MaxPlayPoints;
+            int targetCurrent = Math.Max(0, Math.Min(this.CurrentPlayPoints + amount, cap));
             result.GeneratedEvents.Add(new PpUpdateEvent(this, targetCurrent));
             result.Success = true;
             return result;
@@ -275,7 +279,8 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             var result = new DomainOperationResult();
             // Emit target values; Commit will apply state.
-            int targetMax = Math.Max(0, Math.Min(this.MaxPlayPoints + amount, GameConstants.PlayPoints.MaxPlayPoints));
+            var cap = IsMirageMode ? GetMirageGoldCap() : GameConstants.PlayPoints.MaxPlayPoints;
+            int targetMax = Math.Max(0, Math.Min(this.MaxPlayPoints + amount, cap));
             result.GeneratedEvents.Add(new PpMaxUpdateEvent(this, targetMax));
             result.Success = true;
             return result;
@@ -314,6 +319,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 return card.CurrentZone == CardZone.Staging
                     || card.CurrentZone == CardZone.None
                     || card.CurrentZone == CardZone.Removed
+                    || card.CurrentZone == CardZone.Retired
                     || card.CurrentZone == CardZone.Playing;
             }
 
@@ -344,7 +350,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 return false;
 
             var destinationList = GetZoneList(to);
-            if (destinationList == null && to != CardZone.Extra && to != CardZone.None && to != CardZone.Removed && to != CardZone.Playing)
+            if (destinationList == null && to != CardZone.Extra && to != CardZone.None && to != CardZone.Removed && to != CardZone.Retired && to != CardZone.Playing)
             {
                 // Revert to original zone
                 GetZoneList(sourceZone)?.Add(card);
@@ -450,6 +456,15 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         internal void ApplyPlayPointsMaxChange(int maxPp)
         {
             MaxPlayPoints = Math.Max(0, maxPp);
+            if (IsMirageMode)
+            {
+                var cap = GetMirageGoldCap();
+                if (CurrentPlayPoints > cap)
+                {
+                    CurrentPlayPoints = cap;
+                }
+                return;
+            }
             var allowedMax = MaxPlayPoints + GameConstants.PlayPoints.PpBoostOverflowAmount;
             if (CurrentPlayPoints > allowedMax)
             {
@@ -459,6 +474,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
         internal void ApplyPlayPointsCurrentChange(int currentPp, bool allowOverflow = false)
         {
+            if (IsMirageMode)
+            {
+                CurrentPlayPoints = Math.Max(0, Math.Min(currentPp, GetMirageGoldCap()));
+                return;
+            }
             var allowedMax = allowOverflow
                 ? MaxPlayPoints + GameConstants.PlayPoints.PpBoostOverflowAmount
                 : MaxPlayPoints;
@@ -599,15 +619,15 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             var result = new DomainOperationResult();
 
             // Don't do anything if EP is already unlocked.
-            if (this.MaxEvolutionPoints > 0)
+            if (this.MaxEvolutionPoints > 0 || this.IsEvolutionUnlocked)
             {
                 result.Success = true;
                 return result;
             }
 
             bool isEligibleForUnlock =
-                (this.IsFirst && this.TurnNumber == GameConstants.Evolution.FirstPlayerEvolutionStartTurn) ||
-                (!this.IsFirst && this.TurnNumber == GameConstants.Evolution.SecondPlayerEvolutionStartTurn);
+                (this.IsFirst && this.TurnNumber >= GameConstants.Evolution.FirstPlayerEvolutionStartTurn) ||
+                (!this.IsFirst && this.TurnNumber >= GameConstants.Evolution.SecondPlayerEvolutionStartTurn);
 
             if (isEligibleForUnlock)
             {
@@ -615,7 +635,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                     ? GameConstants.Evolution.FirstPlayerEvolutionPoints
                     : GameConstants.Evolution.SecondPlayerEvolutionPoints;
 
-                IsEvolutionUnlocked = true;
+                IsEvolutionUnlocked = newEp > 0;
                 this.MaxEvolutionPoints = newEp;
                 this.CurrentEvolutionPoints = newEp;
                 result.GeneratedEvents.Add(new EpMaxUpdateEvent(this, this.MaxEvolutionPoints));
@@ -662,15 +682,15 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         {
             var result = new DomainOperationResult();
 
-            if (this.MaxSuperEvolutionPoints > 0)
+            if (this.MaxSuperEvolutionPoints > 0 || this.IsSuperEvolutionUnlocked)
             {
                 result.Success = true;
                 return result;
             }
 
             bool isEligibleForUnlock =
-                (this.IsFirst && this.TurnNumber == GameConstants.SuperEvolution.FirstPlayerSuperEvolutionStartTurn) ||
-                (!this.IsFirst && this.TurnNumber == GameConstants.SuperEvolution.SecondPlayerSuperEvolutionStartTurn);
+                (this.IsFirst && this.TurnNumber >= GameConstants.SuperEvolution.FirstPlayerSuperEvolutionStartTurn) ||
+                (!this.IsFirst && this.TurnNumber >= GameConstants.SuperEvolution.SecondPlayerSuperEvolutionStartTurn);
 
             if (isEligibleForUnlock)
             {
@@ -678,7 +698,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                     ? GameConstants.SuperEvolution.FirstPlayerSuperEvolutionPoints
                     : GameConstants.SuperEvolution.SecondPlayerSuperEvolutionPoints;
 
-                IsSuperEvolutionUnlocked = true;
+                IsSuperEvolutionUnlocked = newSep > 0;
                 this.MaxSuperEvolutionPoints = newSep;
                 this.CurrentSuperEvolutionPoints = newSep;
                 result.GeneratedEvents.Add(new SepMaxUpdateEvent(this, this.MaxSuperEvolutionPoints));
@@ -864,6 +884,73 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             result.GeneratedEvents.AddRange(drawResult.GeneratedEvents);
 
             result.Success = true;
+            return result;
+        }
+
+        public DomainOperationResult ResetForMirageRoundStart(GameContext context, int roundGold, bool decrementUpgradeCost = true)
+        {
+            var result = new DomainOperationResult { Success = true };
+            var rules = context?.CurrentGameState.Mirage?.Rules;
+            var goldCap = rules?.HardGoldCap ?? GetMirageGoldCap();
+            var maxTier = rules?.MaxTavernTier ?? MirageRuleConfig.DefaultMaxTavernTier;
+
+            TurnNumber += 1;
+            HasTakenFirstTurn = true;
+            if (Mirage != null)
+            {
+                Mirage.HardGoldCap = goldCap;
+            }
+            MaxPlayPoints = Math.Clamp(roundGold, 0, goldCap);
+            CurrentPlayPoints = MaxPlayPoints;
+
+            if (Mirage != null)
+            {
+                if (Mirage.TavernTier >= maxTier)
+                {
+                    Mirage.UpgradeCost = 0;
+                }
+                else if (decrementUpgradeCost)
+                {
+                    Mirage.UpgradeCost = Math.Max(0, Mirage.UpgradeCost - 1);
+                }
+            }
+
+            var cleanupResult = CleanupEndOfTurnState();
+            result.GeneratedEvents.AddRange(cleanupResult.GeneratedEvents);
+
+            var unitResetResult = ResetCardsForTurnStart();
+            result.GeneratedEvents.AddRange(unitResetResult.GeneratedEvents);
+
+            if (context != null)
+            {
+                ResetAbilitiesForTurnStart(context);
+
+                var cardsToExpire = Field
+                    .Concat(Hand)
+                    .Concat(Emblem)
+                    .Concat(Leader != null ? new[] { Leader } : Array.Empty<CardInstance>())
+                    .Where(c => c != null)
+                    .DistinctBy(c => c.InstanceId)
+                    .ToList();
+
+                foreach (var card in cardsToExpire)
+                {
+                    var expireResult = context.BuffService.RemoveAllBuffs(
+                        card.InstanceId,
+                        context,
+                        buff => buff.DurationType is ShadowverseBeyond.Server.Domain.Abilities.Common.DurationType.EndOfTurn
+                            or ShadowverseBeyond.Server.Domain.Abilities.Common.DurationType.OwnerTurnEnd
+                            or ShadowverseBeyond.Server.Domain.Abilities.Common.DurationType.OpponentTurnEnd
+                            or ShadowverseBeyond.Server.Domain.Abilities.Common.DurationType.StartOfTurn
+                            or ShadowverseBeyond.Server.Domain.Abilities.Common.DurationType.OwnerTurnStart
+                            or ShadowverseBeyond.Server.Domain.Abilities.Common.DurationType.OpponentTurnStart);
+                    if (expireResult.GeneratedEvents.Count > 0)
+                    {
+                        result.GeneratedEvents.AddRange(expireResult.GeneratedEvents);
+                    }
+                }
+            }
+
             return result;
         }
 
@@ -1146,6 +1233,18 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                     result.GeneratedEvents.Add(new FusionStateUpdatedEvent(unit, unit.FusionsThisTurn, unit.MaxFusionsPerTurn));
                 }
             }
+
+            if (Leader != null)
+            {
+                var hadLeaderActUsage = Leader.ActsThisTurn > 0;
+                Leader.ResetActionUsage(CardActionUsageType.Act);
+                Leader.ZoneStayTurn++;
+                if (hadLeaderActUsage)
+                {
+                    result.GeneratedEvents.Add(new ActStateUpdatedEvent(Leader, Leader.ActsThisTurn, Leader.MaxActsPerTurn));
+                }
+            }
+
             result.Success = true;
             return result;
         }

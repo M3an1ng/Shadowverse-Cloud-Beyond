@@ -20,6 +20,8 @@ namespace ShadowverseBeyond.Server.Mappings
                 // Ensure Keywords list is initialized even if source is null
                 .ForMember(dest => dest.Keywords, opt => opt.NullSubstitute(new List<string>()))
                 .ForMember(dest => dest.IsCollectible, opt => opt.MapFrom(src => src.IsCollectible))
+                .ForMember(dest => dest.IsImplemented, opt => opt.MapFrom(src => ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.IsCardImplemented(src.Id)))
+                .ForMember(dest => dest.Presentation, opt => opt.MapFrom((src, dest) => ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.GetMseCardMeta(src.Id)?.Presentation))
                 .ForMember(dest => dest.Rarity, opt => opt.MapFrom(src => src.Rarity.ToString()))
                 .ForMember(dest => dest.Class, opt => opt.MapFrom(src => src.Class.ToString()))
                 .ForMember(dest => dest.CardSet, opt => opt.MapFrom(src => src.CardSetDefinition != null ? src.CardSetDefinition.Name : src.CardSet))
@@ -28,7 +30,9 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.CardSetAbbr, opt => opt.MapFrom(src => src.CardSetDefinition != null ? src.CardSetDefinition.Abbreviation : null))
                 .ForMember(dest => dest.CardSetEnvironment, opt => opt.MapFrom(src => src.CardSetDefinition != null ? src.CardSetDefinition.Environments : null))
                 .ForMember(dest => dest.UpdatedAt, opt => opt.MapFrom(src => src.UpdatedAt))
-                .ForMember(dest => dest.UpdatedBy, opt => opt.MapFrom(src => src.UpdatedBy));
+                .ForMember(dest => dest.UpdatedBy, opt => opt.MapFrom(src => src.UpdatedBy))
+                .ForMember(dest => dest.IsMirageCard, opt => opt.MapFrom(src => src.IsMirageCard))
+                .ForMember(dest => dest.MirageTavernTier, opt => opt.MapFrom(src => src.MirageTavernTier));
 
             // Properties with matching names and types are mapped automatically by convention:
             // Name, Type, Rarity, CardSet, Cost, Attack, Health, Description
@@ -47,7 +51,9 @@ namespace ShadowverseBeyond.Server.Mappings
                 .ForMember(dest => dest.Keywords, opt => opt.MapFrom(src => src.Keywords ?? new List<string>()))
                 .ForMember(dest => dest.Tribe, opt => opt.MapFrom(src => src.Tribe))
                 .ForMember(dest => dest.AbilityIds, opt => opt.MapFrom(src => src.AbilityIds ?? new List<long>()))
-                .ForMember(dest => dest.IsCollectible, opt => opt.MapFrom(src => src.IsCollectible ?? true));
+                .ForMember(dest => dest.IsCollectible, opt => opt.MapFrom(src => src.IsCollectible ?? true))
+                .ForMember(dest => dest.IsMirageCard, opt => opt.MapFrom(src => src.IsMirageCard ?? false))
+                .ForMember(dest => dest.MirageTavernTier, opt => opt.MapFrom(src => src.MirageTavernTier));
         }
 
         private static TEnum ParseEnum<TEnum>(string value, TEnum fallback) where TEnum : struct

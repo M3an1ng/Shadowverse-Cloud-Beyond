@@ -29,6 +29,9 @@ public class CardSetDefinitionDto
     [JsonPropertyName("set_code")]
     public string SetCode { get; set; } = string.Empty;
 
+    [JsonPropertyName("logo_url")]
+    public string? LogoUrl { get; set; }
+
     [JsonPropertyName("environment")]
     public List<DeckEnvironment> Environments { get; set; } = new();
 
@@ -45,6 +48,7 @@ public class CardSetDefinitionDto
             Region = definition.Region,
             Sequence = definition.Sequence,
             SetCode = definition.SetCode,
+            LogoUrl = ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.GetCardSetLogo(definition.Id),
             Environments = definition.Environments ?? new List<DeckEnvironment>(),
             CreatedAt = definition.CreatedAt
         };

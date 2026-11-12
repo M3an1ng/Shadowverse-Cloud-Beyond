@@ -1,4 +1,4 @@
-﻿// src/ui/logPanel.js
+// src/ui/logPanel.js
 import { gameState, findCardInstanceByUid, sendChatMessage, sendEmoteMessage } from '../gameManager.js';
 import { ensureCardDefinitions, getAbilityDataSnapshot } from '../abilityDataCache.js';
 import { getUserSession } from '../userSession.js';
@@ -52,7 +52,7 @@ function resolvePlayerOrderBadge(playerState) {
         ? { text: '先手', className: 'first' }
         : { text: '后手', className: 'second' };
 }
-let isLogExpanded = true; // Default to expanded
+let isLogExpanded = false; // Default to collapsed tactical dock so battlefield stays unobstructed
 const LOG_RENDER_LIMIT = 200; // Keep in sync with GAME_LOG_LIMIT in gameManager.js
 const LOG_AUTO_SCROLL_THRESHOLD_PX = 12;
 const LOG_PANEL_VIEW_LOG = 'log';
@@ -69,8 +69,14 @@ const MATCH_HISTORY_RECORD_DESTROYED = 'destroyed';
 const USED_CARD_HISTORY_STORAGE_PREFIX = 'svcb.used-card-history:';
 const DESTROYED_CARD_HISTORY_STORAGE_PREFIX = 'svcb.destroyed-card-history:';
 const CHAT_BARRAGE_MAX_QUEUE = 30;
-const CHAT_BARRAGE_LANE_TOPS = [7, 35, 63, 91, 119];
+const CHAT_BARRAGE_LANE_TOPS = [4, 92, 180, 268];
+function shouldDefaultChatDockOpen() {
+    if (typeof window === 'undefined') return true;
+    return window.innerHeight > 560 && window.innerWidth > 960;
+}
+
 let logPanelActiveView = LOG_PANEL_VIEW_LOG;
+let isChatDockOpen = shouldDefaultChatDockOpen();
 let shouldScrollLogToLatestOnRender = false;
 let shouldScrollChatToLatestOnRender = false;
 let shouldScrollHistoryToLatestOnRender = false;
@@ -129,7 +135,6 @@ function isActiveHistoryTab() {
 }
 
 function saveCurrentChatDraft() {
-    if (!isActiveChatTab()) return;
     const input = document.getElementById('game-chat-input');
     if (!input) return;
     logPanelChatDraft = input.value || '';
@@ -178,10 +183,11 @@ function getSelectedEmotePack() {
         || null;
 }
 
-function ensureEmoteCatalogLoaded() {
-    if (emoteCatalogLoadState !== 'idle') return;
+function ensureEmoteCatalogLoaded(force = false) {
+    if (emoteCatalogLoadState === 'loading') return;
+    if (!force && emoteCatalogLoadState === 'ready' && hasUsableEmotes(emoteCatalog)) return;
     emoteCatalogLoadState = 'loading';
-    void loadEmoteCatalog().then(result => {
+    void loadEmoteCatalog({ force }).then(result => {
         if (result?.ok) {
             emoteCatalog = result.catalog;
             emoteCatalogLoadState = hasUsableEmotes(emoteCatalog) ? 'ready' : 'empty';
@@ -191,12 +197,12 @@ function ensureEmoteCatalogLoaded() {
             emoteCatalogLoadState = 'failed';
             setChatSendStatus(result?.error || '表情清单加载失败。', 'error');
         }
-        renderGameLog(getLatestGameLogs());
+        renderInMatchChatDock();
     });
 }
 
 function isEmoteChatMessage(message) {
-    return String(message?.messageType || '').toLowerCase() === 'emote';
+    return String(message?.messageType ?? message?.MessageType ?? '').toLowerCase() === 'emote';
 }
 
 function getChatMessageClasses(message) {
@@ -217,17 +223,28 @@ function getChatMessageClasses(message) {
 }
 
 function createEmoteImageView(message, imageClassName, fallbackClassName) {
+    const isBarrage = fallbackClassName.includes('barrage');
     const wrapper = document.createElement('div');
-    wrapper.className = fallbackClassName.includes('barrage')
+    wrapper.className = isBarrage
         ? 'chat-barrage-emote'
         : 'chat-message-emote';
 
-    const label = String(message?.emoteName || message?.content || message?.emoteId || '表情').trim();
+    const label = String(
+        message?.emoteName
+        ?? message?.EmoteName
+        ?? message?.content
+        ?? message?.Content
+        ?? message?.emoteId
+        ?? message?.EmoteId
+        ?? '表情'
+    ).trim();
     const image = document.createElement('img');
     image.className = imageClassName;
-    image.src = String(message?.emoteUrl || '').trim();
+    image.src = String(message?.emoteUrl ?? message?.EmoteUrl ?? '').trim();
     image.alt = label;
-    image.loading = 'lazy';
+    image.title = label;
+    image.loading = isBarrage ? 'eager' : 'lazy';
+    image.decoding = 'async';
     image.onerror = () => {
         wrapper.innerHTML = '';
         const fallback = document.createElement('span');
@@ -239,11 +256,50 @@ function createEmoteImageView(message, imageClassName, fallbackClassName) {
     return wrapper;
 }
 
+function buildEmotePanelRenderKey(packs) {
+    if (emoteCatalogLoadState === 'idle' || emoteCatalogLoadState === 'loading') {
+        return 'state:loading';
+    }
+    if (emoteCatalogLoadState === 'failed') {
+        return 'state:failed';
+    }
+    if (emoteCatalogLoadState === 'empty' || !Array.isArray(packs) || packs.length === 0) {
+        return 'state:empty';
+    }
+    const packSignature = packs
+        .map(pack => `${pack.id}(${Array.isArray(pack.items) ? pack.items.length : 0})`)
+        .join('|');
+    return `ready:${selectedEmotePackId}:${packSignature}`;
+}
+
+function syncEmotePanelSendingState(panel) {
+    if (!panel) return;
+    panel.querySelectorAll('.chat-emote-item').forEach(button => {
+        button.disabled = isEmoteSending;
+    });
+}
+
 function renderEmotePanel(panel) {
     if (!panel) return;
     panel.hidden = !isEmotePanelOpen;
-    panel.innerHTML = '';
     if (!isEmotePanelOpen) return;
+
+    const usablePacks = hasUsableEmotes(emoteCatalog)
+        ? emoteCatalog.packs.filter(pack => Array.isArray(pack?.items) && pack.items.length > 0)
+        : [];
+    if (usablePacks.length > 0 && !usablePacks.some(pack => pack.id === selectedEmotePackId)) {
+        selectedEmotePackId = getFirstEmotePackId(emoteCatalog);
+    }
+
+    const nextRenderKey = buildEmotePanelRenderKey(usablePacks);
+    if (panel.dataset.renderKey === nextRenderKey && panel.childElementCount > 0) {
+        syncEmotePanelSendingState(panel);
+        return;
+    }
+
+    const previousTabsScrollLeft = panel.querySelector('.chat-emote-tabs')?.scrollLeft ?? 0;
+    panel.innerHTML = '';
+    panel.dataset.renderKey = nextRenderKey;
 
     if (emoteCatalogLoadState === 'idle' || emoteCatalogLoadState === 'loading') {
         const state = document.createElement('div');
@@ -256,12 +312,24 @@ function renderEmotePanel(panel) {
     if (emoteCatalogLoadState === 'failed') {
         const state = document.createElement('div');
         state.className = 'chat-emote-state is-error';
-        state.textContent = '表情加载失败';
+        const text = document.createElement('span');
+        text.textContent = '表情加载失败';
+        const retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.className = 'chat-emote-retry-btn';
+        retryBtn.textContent = '重试';
+        retryBtn.onclick = () => {
+            clearChatSendStatus();
+            ensureEmoteCatalogLoaded(true);
+            renderInMatchChatDock();
+        };
+        state.appendChild(text);
+        state.appendChild(retryBtn);
         panel.appendChild(state);
         return;
     }
 
-    if (emoteCatalogLoadState === 'empty' || !hasUsableEmotes(emoteCatalog)) {
+    if (emoteCatalogLoadState === 'empty' || usablePacks.length === 0) {
         const state = document.createElement('div');
         state.className = 'chat-emote-state';
         state.textContent = '暂无表情';
@@ -269,22 +337,18 @@ function renderEmotePanel(panel) {
         return;
     }
 
-    const packs = emoteCatalog.packs.filter(pack => Array.isArray(pack?.items) && pack.items.length > 0);
-    if (!packs.some(pack => pack.id === selectedEmotePackId)) {
-        selectedEmotePackId = getFirstEmotePackId(emoteCatalog);
-    }
-
     const tabs = document.createElement('div');
     tabs.className = 'chat-emote-tabs';
-    packs.forEach(pack => {
+    usablePacks.forEach(pack => {
         const tab = document.createElement('button');
         tab.type = 'button';
         tab.className = 'chat-emote-tab';
         tab.classList.toggle('is-active', pack.id === selectedEmotePackId);
         tab.textContent = pack.name || pack.id;
         tab.onclick = () => {
+            if (selectedEmotePackId === pack.id) return;
             selectedEmotePackId = pack.id;
-            renderGameLog(getLatestGameLogs());
+            renderInMatchChatDock();
         };
         tabs.appendChild(tab);
     });
@@ -302,28 +366,31 @@ function renderEmotePanel(panel) {
             if (isEmoteSending) return;
             isEmoteSending = true;
             setChatSendStatus('发送中...', 'neutral');
-            renderGameLog(getLatestGameLogs());
+            renderInMatchChatDock();
 
             const result = await sendEmoteMessage(item.id);
             isEmoteSending = false;
             if (!result?.ok) {
                 setChatSendStatus(result?.error || '表情发送失败。', 'error');
             } else {
+                isEmotePanelOpen = false;
+                shouldScrollChatToLatestOnRender = true;
                 setChatSendStatus('已发送', 'success');
                 window.setTimeout(() => {
                     if (chatSendStatusTone === 'success') {
                         clearChatSendStatus();
-                        renderGameLog(getLatestGameLogs());
+                        renderInMatchChatDock();
                     }
                 }, 1400);
             }
-            renderGameLog(getLatestGameLogs());
+            renderInMatchChatDock();
         };
 
         const image = document.createElement('img');
         image.src = item.url;
         image.alt = item.name || item.id;
         image.loading = 'lazy';
+        image.decoding = 'async';
         image.onerror = () => {
             button.classList.add('is-broken');
             button.textContent = item.name || '表情';
@@ -334,6 +401,9 @@ function renderEmotePanel(panel) {
 
     panel.appendChild(tabs);
     panel.appendChild(grid);
+    if (previousTabsScrollLeft > 0) {
+        tabs.scrollLeft = previousTabsScrollLeft;
+    }
 }
 
 function isGenericChatPlayerName(name) {
@@ -508,37 +578,52 @@ function resolveChatPlayerOrderBadge(message) {
 
 function syncLogPanelChatToggleState(logContainer) {
     if (!logContainer) return;
-    const logToggleBtn = logContainer.querySelector('#game-log-toggle');
-    const chatToggleBtn = logContainer.querySelector('#game-chat-toggle');
+    const mainToggleBtn = logContainer.querySelector('#game-log-toggle');
     const historyToggleBtn = logContainer.querySelector('#game-history-toggle');
     const destroyedHistoryToggleBtn = logContainer.querySelector('#game-destroy-history-toggle');
-    if (logToggleBtn) {
-        logToggleBtn.classList.toggle('is-active', logPanelActiveView === LOG_PANEL_VIEW_LOG);
-    }
-    if (chatToggleBtn) {
-        chatToggleBtn.classList.toggle('is-active', logPanelActiveView === LOG_PANEL_VIEW_CHAT);
+    if (mainToggleBtn) {
+        mainToggleBtn.classList.toggle('is-active', isLogExpanded && logPanelActiveView === LOG_PANEL_VIEW_LOG);
     }
     if (historyToggleBtn) {
-        historyToggleBtn.classList.toggle('is-active', isActiveUsedHistoryTab());
+        historyToggleBtn.classList.toggle('is-active', isLogExpanded && isActiveUsedHistoryTab());
     }
     if (destroyedHistoryToggleBtn) {
-        destroyedHistoryToggleBtn.classList.toggle('is-active', isActiveDestroyedHistoryTab());
+        destroyedHistoryToggleBtn.classList.toggle('is-active', isLogExpanded && isActiveDestroyedHistoryTab());
     }
 }
 
 function bindLogPanelToggleHandlers(logContainer, fallbackLogs) {
     if (!logContainer) return;
-    const logToggleBtn = logContainer.querySelector('#game-log-toggle');
-    const chatToggleBtn = logContainer.querySelector('#game-chat-toggle');
+    const mainToggleBtn = logContainer.querySelector('#game-log-toggle');
     const historyToggleBtn = logContainer.querySelector('#game-history-toggle');
     const destroyedHistoryToggleBtn = logContainer.querySelector('#game-destroy-history-toggle');
 
-    if (logToggleBtn) {
-        logToggleBtn.onclick = () => {
+    logContainer.onclick = event => {
+        if (!isLogExpanded && !event.target.closest('button')) {
+            saveCurrentChatDraft();
+            isLogExpanded = true;
+            if (logPanelActiveView === LOG_PANEL_VIEW_CHAT) {
+                logPanelActiveView = LOG_PANEL_VIEW_LOG;
+            }
+            if (logPanelActiveView === LOG_PANEL_VIEW_LOG) {
+                shouldScrollLogToLatestOnRender = true;
+            } else {
+                shouldScrollHistoryToLatestOnRender = true;
+            }
+            renderGameLog(getLatestGameLogs(fallbackLogs));
+        }
+    };
+
+    if (mainToggleBtn) {
+        mainToggleBtn.onclick = event => {
+            event.stopPropagation();
             const switchingToLog = logPanelActiveView !== LOG_PANEL_VIEW_LOG;
             saveCurrentChatDraft();
             if (logPanelActiveView === LOG_PANEL_VIEW_LOG) {
                 isLogExpanded = !isLogExpanded;
+                if (isLogExpanded) {
+                    shouldScrollLogToLatestOnRender = true;
+                }
             } else {
                 logPanelActiveView = LOG_PANEL_VIEW_LOG;
                 isLogExpanded = true;
@@ -550,25 +635,9 @@ function bindLogPanelToggleHandlers(logContainer, fallbackLogs) {
         };
     }
 
-    if (chatToggleBtn) {
-        chatToggleBtn.onclick = () => {
-            const switchingToChat = logPanelActiveView !== LOG_PANEL_VIEW_CHAT;
-            saveCurrentChatDraft();
-            if (logPanelActiveView === LOG_PANEL_VIEW_CHAT && isLogExpanded) {
-                isLogExpanded = false;
-            } else {
-                logPanelActiveView = LOG_PANEL_VIEW_CHAT;
-                isLogExpanded = true;
-                if (switchingToChat) {
-                    shouldScrollChatToLatestOnRender = true;
-                }
-            }
-            renderGameLog(getLatestGameLogs(fallbackLogs));
-        };
-    }
-
     if (historyToggleBtn) {
-        historyToggleBtn.onclick = () => {
+        historyToggleBtn.onclick = event => {
+            event.stopPropagation();
             const switchingToHistory = !isActiveUsedHistoryTab();
             saveCurrentChatDraft();
             if (isActiveUsedHistoryTab() && isLogExpanded) {
@@ -586,7 +655,8 @@ function bindLogPanelToggleHandlers(logContainer, fallbackLogs) {
     }
 
     if (destroyedHistoryToggleBtn) {
-        destroyedHistoryToggleBtn.onclick = () => {
+        destroyedHistoryToggleBtn.onclick = event => {
+            event.stopPropagation();
             const switchingToDestroyedHistory = !isActiveDestroyedHistoryTab();
             saveCurrentChatDraft();
             if (isActiveDestroyedHistoryTab() && isLogExpanded) {
@@ -644,14 +714,13 @@ function ensureChatPanelStructure(chatContent) {
         input.className = 'chat-input';
         input.type = 'text';
         input.maxLength = 200;
-        input.placeholder = '输入聊天消息';
+        input.placeholder = '按 Enter 发送对战消息…';
         input.autocomplete = 'off';
         input.addEventListener('input', () => {
-            if (!isActiveChatTab()) return;
             logPanelChatDraft = input.value || '';
             if (chatSendStatusTone === 'error') {
                 clearChatSendStatus();
-                renderGameLog(getLatestGameLogs());
+                renderInMatchChatDock();
             }
         });
 
@@ -667,21 +736,24 @@ function ensureChatPanelStructure(chatContent) {
         emoteButton.title = '表情';
         emoteButton.setAttribute('aria-label', '表情');
         emoteButton.addEventListener('click', () => {
-            if (!isActiveChatTab()) return;
+            const currentMessageList = chatContent.querySelector('.chat-message-list');
+            const wasNearBottomBeforeToggle = isLogNearBottom(currentMessageList);
             isEmotePanelOpen = !isEmotePanelOpen;
             if (isEmotePanelOpen) {
+                if (wasNearBottomBeforeToggle) {
+                    shouldScrollChatToLatestOnRender = true;
+                }
                 ensureEmoteCatalogLoaded();
             }
-            renderGameLog(getLatestGameLogs());
+            renderInMatchChatDock();
         });
 
         form.addEventListener('submit', async event => {
             event.preventDefault();
-            if (!isActiveChatTab()) return;
             const normalized = normalizeChatText(input.value);
             if (!normalized) {
                 setChatSendStatus('消息不能为空。', 'error');
-                renderGameLog(getLatestGameLogs());
+                renderInMatchChatDock();
                 return;
             }
 
@@ -689,14 +761,14 @@ function ensureChatPanelStructure(chatContent) {
             setChatSendStatus('发送中...', 'neutral');
             isChatSending = true;
             sendButton.disabled = true;
-            renderGameLog(getLatestGameLogs());
+            renderInMatchChatDock();
 
             const result = await sendChatMessage(normalized);
             if (!result?.ok) {
                 setChatSendStatus(result?.error || '发送失败，请稍后重试。', 'error');
                 isChatSending = false;
                 sendButton.disabled = false;
-                renderGameLog(getLatestGameLogs());
+                renderInMatchChatDock();
                 return;
             }
 
@@ -704,11 +776,12 @@ function ensureChatPanelStructure(chatContent) {
             setChatSendStatus('已发送', 'success');
             isChatSending = false;
             sendButton.disabled = false;
-            renderGameLog(getLatestGameLogs());
+            shouldScrollChatToLatestOnRender = true;
+            renderInMatchChatDock();
             window.setTimeout(() => {
                 if (chatSendStatusTone === 'success') {
                     clearChatSendStatus();
-                    renderGameLog(getLatestGameLogs());
+                    renderInMatchChatDock();
                 }
             }, 1400);
         });
@@ -722,23 +795,105 @@ function ensureChatPanelStructure(chatContent) {
     return { messageList, status, emotePanel, input, emoteButton, sendButton };
 }
 
+function ensureInMatchChatDock() {
+    let chatDock = document.getElementById('game-chat-dock');
+    const gameContainer = document.getElementById('game-container');
+    if (!chatDock) {
+        chatDock = document.createElement('aside');
+        chatDock.id = 'game-chat-dock';
+        chatDock.className = 'battle-chat-dock is-expanded';
+        chatDock.setAttribute('aria-label', '右下角沉浸式对话窗口');
+
+        const minBtn = document.createElement('button');
+        minBtn.type = 'button';
+        minBtn.id = 'game-chat-min-btn';
+        minBtn.className = 'battle-chat-min-btn';
+        minBtn.title = '收起对话流';
+        minBtn.setAttribute('aria-label', '收起对话流');
+        minBtn.textContent = '—';
+        minBtn.addEventListener('click', () => {
+            saveCurrentChatDraft();
+            closeEmotePanel();
+            isChatDockOpen = false;
+            renderInMatchChatDock();
+        });
+
+        const pillBtn = document.createElement('button');
+        pillBtn.type = 'button';
+        pillBtn.id = 'game-chat-pill-btn';
+        pillBtn.className = 'battle-chat-pill-btn';
+        pillBtn.title = '展开对话窗口';
+        pillBtn.innerHTML = `
+            <span class="battle-chat-pill-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+            </span>
+            <span class="battle-chat-pill-preview">展开对话</span>
+        `;
+        pillBtn.addEventListener('click', () => {
+            isChatDockOpen = true;
+            shouldScrollChatToLatestOnRender = true;
+            renderInMatchChatDock();
+        });
+
+        const chatContent = document.createElement('div');
+        chatContent.id = 'game-chat-content';
+        chatContent.className = 'battle-chat-content';
+
+        chatDock.appendChild(minBtn);
+        chatDock.appendChild(pillBtn);
+        chatDock.appendChild(chatContent);
+
+        if (gameContainer) {
+            gameContainer.appendChild(chatDock);
+        } else {
+            document.body.appendChild(chatDock);
+        }
+    } else if (gameContainer && chatDock.parentElement !== gameContainer) {
+        gameContainer.appendChild(chatDock);
+    }
+
+    return chatDock;
+}
+
+function renderInMatchChatDock() {
+    const chatDock = ensureInMatchChatDock();
+    if (!chatDock) return;
+
+    chatDock.classList.toggle('is-expanded', isChatDockOpen);
+    chatDock.classList.toggle('is-collapsed', !isChatDockOpen);
+
+    const pillPreview = chatDock.querySelector('.battle-chat-pill-preview');
+    if (pillPreview) {
+        const latestMsg = roomChatMessages.length > 0 ? roomChatMessages[roomChatMessages.length - 1] : null;
+        if (latestMsg) {
+            const author = resolveChatAuthorLabel(latestMsg);
+            const snippet = isEmoteChatMessage(latestMsg)
+                ? `[${latestMsg.emoteName || '表情'}]`
+                : (latestMsg.content || '');
+            pillPreview.textContent = `${author}: ${snippet}`;
+        } else {
+            pillPreview.textContent = '展开对话';
+        }
+    }
+
+    const chatContent = chatDock.querySelector('#game-chat-content');
+    if (!chatContent) return;
+
+    if (!isChatDockOpen) {
+        return;
+    }
+
+    renderActiveChatPanel(chatContent);
+}
+
 function renderActiveChatPanel(chatContent) {
     const structure = ensureChatPanelStructure(chatContent);
     if (!structure) return;
     bindTopShadowMask(structure.messageList, chatContent);
 
-    if (!isActiveChatTab()) {
-        structure.messageList.innerHTML = '';
-        structure.messageList.scrollTop = 0;
-        structure.status.textContent = '';
-        closeEmotePanel();
-        structure.input.value = '';
-        renderEmotePanel(structure.emotePanel);
-        syncTopShadowMask(structure.messageList, chatContent);
-        return;
+    if (document.activeElement !== structure.input && structure.input.value !== logPanelChatDraft) {
+        structure.input.value = logPanelChatDraft;
     }
-
-    structure.input.value = logPanelChatDraft;
     structure.status.textContent = chatSendStatus || '';
     structure.status.dataset.tone = chatSendStatusTone;
     if (structure.sendButton) {
@@ -1541,6 +1696,11 @@ function renderActiveUsedCardPanel(historyContent) {
         activeGroups.forEach(group => {
             renderMatchHistoryCostGroup(structure.list, group);
         });
+    } else {
+        const empty = document.createElement('div');
+        empty.className = 'match-history-empty';
+        empty.textContent = '当前暂无对应记录';
+        structure.list.appendChild(empty);
     }
 
     let nextScrollTop = 0;
@@ -1561,29 +1721,28 @@ function renderActiveUsedCardPanel(historyContent) {
     syncTopShadowMask(structure.list, historyContent);
 }
 
-function syncLogPanelView(logContent, chatContent, historyContent) {
-    if (!logContent || !chatContent || !historyContent) return;
-    const showChat = isActiveChatTab();
+function syncLogPanelView(logContent, historyContent) {
+    if (!logContent || !historyContent) return;
     const showHistory = isActiveHistoryTab();
-    logContent.classList.toggle('is-active', !showChat && !showHistory);
-    chatContent.classList.toggle('is-active', showChat);
+    logContent.classList.toggle('is-active', !showHistory);
     historyContent.classList.toggle('is-active', showHistory);
 }
 
 function normalizeInMatchChatMessage(message) {
     if (!message || typeof message !== 'object') return null;
-    const messageTypeRaw = String(message.messageType || '').trim().toLowerCase();
+    const messageTypeRaw = String(message.messageType ?? message.MessageType ?? '').trim().toLowerCase();
     const messageType = messageTypeRaw === 'emote' ? 'emote' : 'text';
-    const emoteId = String(message.emoteId || '').trim();
-    const emoteName = String(message.emoteName || '').trim();
-    const emoteUrl = String(message.emoteUrl || '').trim();
+    const emoteId = String(message.emoteId ?? message.EmoteId ?? '').trim();
+    const emoteName = String(message.emoteName ?? message.EmoteName ?? '').trim();
+    const emoteUrl = String(message.emoteUrl ?? message.EmoteUrl ?? '').trim();
+    const rawContent = String(message.content ?? message.Content ?? '').trim();
     const content = messageType === 'emote'
-        ? (String(message.content || '').trim() || emoteName || emoteId)
-        : String(message.content || '').trim();
+        ? (rawContent || emoteName || emoteId)
+        : rawContent;
     if (messageType === 'text' && !content) return null;
     if (messageType === 'emote' && (!emoteId || !emoteUrl)) return null;
 
-    const senderTypeRaw = String(message.senderType || '').trim().toLowerCase();
+    const senderTypeRaw = String(message.senderType ?? message.SenderType ?? '').trim().toLowerCase();
     const senderType = senderTypeRaw === 'spectator'
         ? 'spectator'
         : senderTypeRaw === 'system'
@@ -1591,28 +1750,28 @@ function normalizeInMatchChatMessage(message) {
             : 'player';
 
     return {
-        messageId: String(message.messageId || '').trim(),
+        messageId: String(message.messageId ?? message.MessageId ?? '').trim(),
         senderType,
-        senderId: String(message.senderId || '').trim(),
-        senderName: String(message.senderName || '').trim(),
-        senderAvatarUrl: String(message.senderAvatarUrl || message.SenderAvatarUrl || '').trim(),
+        senderId: String(message.senderId ?? message.SenderId ?? '').trim(),
+        senderName: String(message.senderName ?? message.SenderName ?? '').trim(),
+        senderAvatarUrl: String(message.senderAvatarUrl ?? message.SenderAvatarUrl ?? '').trim(),
         messageType,
         content,
         emoteId: messageType === 'emote' ? emoteId : '',
         emoteName: messageType === 'emote' ? (emoteName || content) : '',
         emoteUrl: messageType === 'emote' ? emoteUrl : '',
-        sentAtUtc: String(message.sentAtUtc || '').trim(),
-        clientMessageId: String(message.clientMessageId || '').trim(),
-        isSelf: Boolean(message.isSelf)
+        sentAtUtc: String(message.sentAtUtc ?? message.SentAtUtc ?? '').trim(),
+        clientMessageId: String(message.clientMessageId ?? message.ClientMessageId ?? '').trim(),
+        isSelf: Boolean(message.isSelf ?? message.IsSelf)
     };
 }
 
 function pushRoomChatMessage(message) {
     const normalized = normalizeInMatchChatMessage(message);
-    if (!normalized) return false;
+    if (!normalized) return null;
 
     if (normalized.messageId && roomChatMessageIdSet.has(normalized.messageId)) {
-        return false;
+        return null;
     }
 
     roomChatMessages.push(normalized);
@@ -1629,7 +1788,7 @@ function pushRoomChatMessage(message) {
         });
     }
 
-    return true;
+    return normalized;
 }
 
 function ensureChatBarrageRoot() {
@@ -1749,6 +1908,7 @@ function playSingleChatBarrage(message, laneIndex = 0) {
 
         item.style.transform = `translateX(${startX}px)`;
         item.style.opacity = '0.96';
+        void item.offsetWidth;
 
         const cleanup = () => {
             if (item.isConnected) {
@@ -1767,10 +1927,8 @@ function playSingleChatBarrage(message, laneIndex = 0) {
             cleanup();
         }, { once: true });
 
-        requestAnimationFrame(() => {
-            item.style.transition = `transform ${durationMs}ms linear, opacity 180ms ease`;
-            item.style.transform = `translateX(${endX}px)`;
-        });
+        item.style.transition = `transform ${durationMs}ms linear, opacity 180ms ease`;
+        item.style.transform = `translateX(${endX}px)`;
     });
 }
 
@@ -1782,21 +1940,22 @@ export function replaceInMatchChatHistory(messages) {
         pushRoomChatMessage(message);
     });
 
-    if (isActiveChatTab()) {
-        renderGameLog(getLatestGameLogs());
-    }
+    shouldScrollChatToLatestOnRender = true;
+    renderInMatchChatDock();
 }
 
 export function appendInMatchChatMessage(message, playBarrage = false) {
-    const appended = pushRoomChatMessage(message);
-    if (!appended) return;
+    const normalized = pushRoomChatMessage(message);
+    if (!normalized) return;
 
-    if (isActiveChatTab()) {
-        renderGameLog(getLatestGameLogs());
+    if (normalized.isSelf) {
+        shouldScrollChatToLatestOnRender = true;
     }
 
+    renderInMatchChatDock();
+
     if (playBarrage) {
-        enqueueChatBarrage(message);
+        enqueueChatBarrage(normalized);
     }
 }
 
@@ -1922,6 +2081,7 @@ export function clearInMatchChatUiState() {
     roomChatMessageIdSet.clear();
     spectatorAliasBySenderKey.clear();
     logPanelActiveView = LOG_PANEL_VIEW_LOG;
+    isChatDockOpen = shouldDefaultChatDockOpen();
     shouldScrollLogToLatestOnRender = false;
     shouldScrollChatToLatestOnRender = false;
     shouldScrollHistoryToLatestOnRender = false;
@@ -1931,6 +2091,9 @@ export function clearInMatchChatUiState() {
     logPanelChatDraft = '';
     clearChatSendStatus();
     isChatSending = false;
+    if (emoteCatalogLoadState === 'failed' || emoteCatalogLoadState === 'empty') {
+        emoteCatalogLoadState = 'idle';
+    }
     closeEmotePanel();
     clearChatBarrageUi();
     const chatContainer = document.getElementById('game-chat-content');
@@ -2173,34 +2336,35 @@ function resolveLogToken(rawToken) {
 }
 
 export function renderGameLog(logs) {
+    const gameContainer = document.getElementById('game-container');
+    document.getElementById('game-log-edge-zone')?.remove();
     let logContainer = document.getElementById('game-log-container');
     let logContent = document.getElementById('game-log-content');
-    let chatContent = document.getElementById('game-chat-content');
     let historyContent = document.getElementById('game-match-history-content');
 
-    // Create container structure if it doesn't exist
+    const docIconSvg = `
+        <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+            <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+        </svg>
+    `;
+
+    // Create original-structured left glass drawer if missing
     if (!logContainer) {
         logContainer = document.createElement('div');
         logContainer.id = 'game-log-container';
-        logContainer.className = isLogExpanded ? 'expanded' : 'collapsed'; // Set initial state
+        logContainer.className = isLogExpanded ? 'expanded' : 'collapsed';
 
-        // Create Header Container
         const header = document.createElement('div');
         header.className = 'log-header';
 
-        // Create Log Toggle Button (keep existing style/behavior semantics)
         const toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
         toggleBtn.id = 'game-log-toggle';
         toggleBtn.className = 'log-toggle-btn';
-        toggleBtn.title = 'Toggle Log';
+        toggleBtn.title = '战斗日志';
         toggleBtn.setAttribute('aria-label', '战斗日志');
-        toggleBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
-                <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
-            </svg>
-        `;
+        toggleBtn.innerHTML = docIconSvg;
 
-        // Create left title group
         const headerMarker = document.createElement('span');
         headerMarker.className = 'log-header-marker';
         headerMarker.setAttribute('aria-hidden', 'true');
@@ -2222,35 +2386,24 @@ export function renderGameLog(logs) {
         header.appendChild(headerMarker);
         header.appendChild(titleGroup);
 
-        // Create Chat Toggle Button (new, below original game-log-toggle)
-        const chatToggleBtn = document.createElement('button');
-        chatToggleBtn.id = 'game-chat-toggle';
-        chatToggleBtn.className = 'log-chat-toggle-btn';
-        chatToggleBtn.title = '聊天日志';
-        chatToggleBtn.setAttribute('aria-label', '聊天日志');
-        chatToggleBtn.innerHTML = `
-            <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
-                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
-            </svg>
-        `;
-
-        const historyToggleBtn = document.createElement('button');
-        historyToggleBtn.id = 'game-history-toggle';
-        historyToggleBtn.className = 'log-history-toggle-btn';
-        historyToggleBtn.title = '使用记录';
-        historyToggleBtn.setAttribute('aria-label', '使用记录');
-        historyToggleBtn.textContent = '≡';
-
         const destroyedHistoryToggleBtn = document.createElement('button');
+        destroyedHistoryToggleBtn.type = 'button';
         destroyedHistoryToggleBtn.id = 'game-destroy-history-toggle';
         destroyedHistoryToggleBtn.className = 'log-destroy-history-toggle-btn';
         destroyedHistoryToggleBtn.title = '破坏记录';
         destroyedHistoryToggleBtn.setAttribute('aria-label', '破坏记录');
         destroyedHistoryToggleBtn.textContent = '✝';
 
+        const historyToggleBtn = document.createElement('button');
+        historyToggleBtn.type = 'button';
+        historyToggleBtn.id = 'game-history-toggle';
+        historyToggleBtn.className = 'log-history-toggle-btn';
+        historyToggleBtn.title = '使用记录';
+        historyToggleBtn.setAttribute('aria-label', '使用记录');
+        historyToggleBtn.textContent = '≡';
+
         header.appendChild(destroyedHistoryToggleBtn);
         header.appendChild(historyToggleBtn);
-        header.appendChild(chatToggleBtn);
         header.appendChild(toggleBtn);
 
         const panelContent = document.createElement('div');
@@ -2261,55 +2414,46 @@ export function renderGameLog(logs) {
         logContent.id = 'game-log-content';
         logContent.className = 'log-panel-view is-active';
 
-        chatContent = document.createElement('div');
-        chatContent.id = 'game-chat-content';
-        chatContent.className = 'log-panel-view';
-
         historyContent = document.createElement('div');
         historyContent.id = 'game-match-history-content';
         historyContent.className = 'log-panel-view';
 
         logContainer.appendChild(header);
         panelContent.appendChild(logContent);
-        panelContent.appendChild(chatContent);
         panelContent.appendChild(historyContent);
         logContainer.appendChild(panelContent);
 
-        // Append to game-container
-        const gameContainer = document.getElementById('game-container');
         if (gameContainer) {
             gameContainer.appendChild(logContainer);
         } else {
-            document.body.appendChild(logContainer); // Fallback
+            document.body.appendChild(logContainer);
         }
     } else {
-        // Ensure content element exists if container was found but might be malformed (legacy support)
-        const header = document.querySelector('#game-log-container .log-header');
-        const logToggle = document.getElementById('game-log-toggle');
-        const chatToggle = document.getElementById('game-chat-toggle');
+        const header = logContainer.querySelector('.log-header');
+        const mainToggle = document.getElementById('game-log-toggle');
+        const legacySubToggles = logContainer.querySelector('.log-sub-toggles');
         const historyToggle = document.getElementById('game-history-toggle');
         const destroyedHistoryToggle = document.getElementById('game-destroy-history-toggle');
         logContent = document.getElementById('game-log-content');
-        chatContent = document.getElementById('game-chat-content');
         historyContent = document.getElementById('game-match-history-content');
-        if (!header || !logToggle || !chatToggle || !historyToggle || !destroyedHistoryToggle || !logContent || !chatContent || !historyContent) {
-            logContainer.remove(); // Reset malformed legacy structure
+        if (!header || !mainToggle || legacySubToggles || !historyToggle || !destroyedHistoryToggle || !logContent || !historyContent) {
+            logContainer.remove();
             renderGameLog(logs);
             return;
         }
-        const legacyToggleStack = document.getElementById('game-log-toggle-stack');
-        if (legacyToggleStack) {
-            logContainer.remove(); // Reset legacy stacked toggle structure
-            renderGameLog(logs);
-            return;
+        if (gameContainer && logContainer.parentElement !== gameContainer) {
+            gameContainer.appendChild(logContainer);
         }
-        // Sync class with state
         logContainer.className = isLogExpanded ? 'expanded' : 'collapsed';
+    }
+
+    if (logPanelActiveView === LOG_PANEL_VIEW_CHAT) {
+        logPanelActiveView = LOG_PANEL_VIEW_LOG;
     }
 
     bindLogPanelToggleHandlers(logContainer, logs);
     syncLogPanelChatToggleState(logContainer);
-    syncLogPanelView(logContent, chatContent, historyContent);
+    syncLogPanelView(logContent, historyContent);
     bindTopShadowMask(logContent, logContent);
     const titleMain = logContainer.querySelector('.log-title-main');
     const titleSub = logContainer.querySelector('.log-title-sub');
@@ -2318,8 +2462,6 @@ export function renderGameLog(logs) {
             titleMain.textContent = '对战历史';
         } else if (isActiveDestroyedHistoryTab()) {
             titleMain.textContent = '破坏记录';
-        } else if (isActiveChatTab()) {
-            titleMain.textContent = '聊天记录';
         } else {
             titleMain.textContent = '战斗记录';
         }
@@ -2329,18 +2471,16 @@ export function renderGameLog(logs) {
             titleSub.textContent = 'USED CARDS';
         } else if (isActiveDestroyedHistoryTab()) {
             titleSub.textContent = 'DESTROYED CARDS';
-        } else if (isActiveChatTab()) {
-            titleSub.textContent = 'MATCH CHAT';
         } else {
             titleSub.textContent = 'BATTLE TIMELINE';
         }
     }
-    if (isActiveChatTab()) {
-        renderActiveChatPanel(chatContent);
-    }
     if (isActiveHistoryTab()) {
         renderActiveUsedCardPanel(historyContent);
     }
+
+    // Ensure bottom-right immersive chat dock is mounted & synced
+    renderInMatchChatDock();
 
     const previousScrollTop = logContent?.scrollTop ?? 0;
     const wasNearBottom = isLogExpanded ? isLogNearBottom(logContent) : true;

@@ -43,7 +43,7 @@ namespace ShadowverseBeyond.Server.Hubs
     /// SignalR Hub for handling real-time game interactions.
     /// Uses strong typing with IGameClient for client-side methods.
     /// </summary>
-    public class GameHub : Hub<IGameClient>
+    public partial class GameHub : Hub<IGameClient>
     {
         private readonly IGameService _gameService;
         private readonly ILogger<GameHub> _logger;
@@ -144,7 +144,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, actionDto.CardUid);
 
                 // Call the new GameService method to enqueue the action
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                await EnqueueHubActionAsync(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued PlayCard action for Card {CardUid} in Game {GameId}.",
                     playerId, actionDto.CardUid, gameId);
@@ -227,6 +227,242 @@ namespace ShadowverseBeyond.Server.Hubs
             {
                 _logger.LogError(ex, "Unexpected error processing EndTurn for Player {PlayerId} in Game {GameId}", playerId, gameId);
                 await Clients.Caller.ReceiveError("An unexpected server error occurred while ending the turn.");
+            }
+        }
+
+        public async Task MirageSetReady(string? requestId = null)
+        {
+            var effectiveRequestId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId.Trim();
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId))
+            {
+                return;
+            }
+
+            try
+            {
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "MirageSetReady",
+                    PlayerId = Guid.Parse(playerId),
+                    ActionData = new { RequestId = effectiveRequestId }
+                };
+
+                await TryEnqueueClientRequestAsync(gameId, effectiveRequestId, wrapper);
+            }
+            catch (GameLogicException ex)
+            {
+                await Clients.Caller.ReceiveError($"Mirage Ready Error: {ex.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error processing MirageSetReady for Player {PlayerId} in Game {GameId}", playerId, gameId);
+                await Clients.Caller.ReceiveError("An unexpected server error occurred while locking lineup.");
+            }
+        }
+
+        public async Task MirageRefreshShop(string? requestId = null)
+        {
+            var effectiveRequestId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId.Trim();
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId)) return;
+
+            try
+            {
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "MirageRefreshShop",
+                    PlayerId = Guid.Parse(playerId),
+                    ActionData = new { RequestId = effectiveRequestId }
+                };
+                await TryEnqueueClientRequestAsync(gameId, effectiveRequestId, wrapper);
+            }
+            catch (GameLogicException ex)
+            {
+                await Clients.Caller.ReceiveError($"Mirage Refresh Shop Error: {ex.Message}");
+            }
+        }
+
+        public async Task MirageUpgradeTier(string? requestId = null)
+        {
+            var effectiveRequestId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId.Trim();
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId)) return;
+
+            try
+            {
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "MirageUpgradeTier",
+                    PlayerId = Guid.Parse(playerId),
+                    ActionData = new { RequestId = effectiveRequestId }
+                };
+                await TryEnqueueClientRequestAsync(gameId, effectiveRequestId, wrapper);
+            }
+            catch (GameLogicException ex)
+            {
+                await Clients.Caller.ReceiveError($"Mirage Upgrade Tier Error: {ex.Message}");
+            }
+        }
+
+        public async Task MirageToggleFreeze(string? requestId = null)
+        {
+            var effectiveRequestId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId.Trim();
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId)) return;
+
+            try
+            {
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "MirageToggleFreeze",
+                    PlayerId = Guid.Parse(playerId),
+                    ActionData = new { RequestId = effectiveRequestId }
+                };
+                await TryEnqueueClientRequestAsync(gameId, effectiveRequestId, wrapper);
+            }
+            catch (GameLogicException ex)
+            {
+                await Clients.Caller.ReceiveError($"Mirage Toggle Freeze Error: {ex.Message}");
+            }
+        }
+
+        public async Task MirageBuyOffer(Guid offerId, string? requestId = null)
+        {
+            if (offerId == Guid.Empty) throw new ArgumentException("offerId is required");
+            var effectiveRequestId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId.Trim();
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId)) return;
+
+            try
+            {
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "MirageBuyOffer",
+                    PlayerId = Guid.Parse(playerId),
+                    ActionData = offerId
+                };
+                await TryEnqueueClientRequestAsync(gameId, effectiveRequestId, wrapper);
+            }
+            catch (GameLogicException ex)
+            {
+                await Clients.Caller.ReceiveError($"Mirage Buy Offer Error: {ex.Message}");
+            }
+        }
+
+        public async Task MirageSellCard(Guid cardUid, string? requestId = null)
+        {
+            if (cardUid == Guid.Empty) throw new ArgumentException("cardUid is required");
+            var effectiveRequestId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId.Trim();
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId)) return;
+
+            try
+            {
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "MirageSellCard",
+                    PlayerId = Guid.Parse(playerId),
+                    ActionData = cardUid
+                };
+                await TryEnqueueClientRequestAsync(gameId, effectiveRequestId, wrapper);
+            }
+            catch (GameLogicException ex)
+            {
+                await Clients.Caller.ReceiveError($"Mirage Sell Card Error: {ex.Message}");
+            }
+        }
+
+        public async Task MirageReorderField(List<Guid> orderedCardUids, string? requestId = null)
+        {
+            if (orderedCardUids == null) throw new ArgumentException("orderedCardUids is required");
+            var effectiveRequestId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId.Trim();
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId)) return;
+
+            try
+            {
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "MirageReorderField",
+                    PlayerId = Guid.Parse(playerId),
+                    ActionData = orderedCardUids
+                };
+                await TryEnqueueClientRequestAsync(gameId, effectiveRequestId, wrapper);
+            }
+            catch (GameLogicException ex)
+            {
+                await Clients.Caller.ReceiveError($"Mirage Reorder Field Error: {ex.Message}");
+            }
+        }
+
+        public async Task MirageRedeemTicket(Guid ticketId, int chosenCardDefinitionId, string? requestId = null)
+        {
+            if (ticketId == Guid.Empty) throw new ArgumentException("ticketId is required");
+            if (chosenCardDefinitionId <= 0) throw new ArgumentException("chosenCardDefinitionId must be positive");
+            var effectiveRequestId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId.Trim();
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId)) return;
+
+            try
+            {
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "MirageRedeemTicket",
+                    PlayerId = Guid.Parse(playerId),
+                    ActionData = new MirageRedeemTicketActionDto(ticketId, chosenCardDefinitionId)
+                };
+                await TryEnqueueClientRequestAsync(gameId, effectiveRequestId, wrapper);
+            }
+            catch (GameLogicException ex)
+            {
+                await Clients.Caller.ReceiveError($"Mirage Redeem Ticket Error: {ex.Message}");
+            }
+        }
+
+        public async Task MirageSelectLeader(int leaderCardDefinitionId, string? requestId = null)
+        {
+            if (leaderCardDefinitionId <= 0) throw new ArgumentException("leaderCardDefinitionId must be positive");
+            var effectiveRequestId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId.Trim();
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId)) return;
+
+            try
+            {
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "MirageSelectLeader",
+                    PlayerId = Guid.Parse(playerId),
+                    ActionData = leaderCardDefinitionId
+                };
+                await TryEnqueueClientRequestAsync(gameId, effectiveRequestId, wrapper);
+            }
+            catch (GameLogicException ex)
+            {
+                await Clients.Caller.ReceiveError($"Mirage Select Leader Error: {ex.Message}");
+            }
+        }
+
+        public async Task MirageCommitCombatResult(MirageCommitCombatActionDto dto, string? requestId = null)
+        {
+            if (dto == null) throw new ArgumentException("dto is required");
+            var effectiveRequestId = string.IsNullOrWhiteSpace(requestId) ? Guid.NewGuid().ToString("N") : requestId.Trim();
+            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
+            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId)) return;
+
+            try
+            {
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "MirageCommitCombatResult",
+                    PlayerId = Guid.Parse(playerId),
+                    ActionData = dto
+                };
+                await TryEnqueueClientRequestAsync(gameId, effectiveRequestId, wrapper);
+            }
+            catch (GameLogicException ex)
+            {
+                await Clients.Caller.ReceiveError($"Mirage Commit Combat Error: {ex.Message}");
             }
         }
 
@@ -404,19 +640,21 @@ namespace ShadowverseBeyond.Server.Hubs
             await _requestAdmissionLock.WaitAsync();
             try
             {
-                if (_memoryCache.TryGetValue(cacheKey, out _))
+                if (_memoryCache.TryGetValue(cacheKey, out PlayerActionWrapper? previousAction))
                 {
+                    _submittedAction = previousAction;
+                    _duplicateActionId = previousAction!.ActionId;
                     return false;
                 }
 
-                if (!await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), action))
+                if (!await EnqueueHubActionAsync(gameId.ToString(), action))
                 {
                     _logger.LogWarning("Action {ActionType} rejected before admission for Player {PlayerId} in Game {GameId}.",
                         action.ActionType, action.PlayerId, gameId);
                     return false;
                 }
 
-                _memoryCache.Set(cacheKey, true, TimeSpan.FromMinutes(1));
+                _memoryCache.Set(cacheKey, action, TimeSpan.FromMinutes(1));
                 return true;
             }
             finally
@@ -457,7 +695,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, actionDto.AttackerUid, actionDto.TargetUid);
 
                 // Call the new GameService method to enqueue the action
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                await EnqueueHubActionAsync(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued Attack action in Game {GameId}.",
                     playerId, gameId);
@@ -510,7 +748,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, actionDto.UnitUid);
 
                 // Call the new GameService method to enqueue the action
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                await EnqueueHubActionAsync(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued Evolve action for unit {UnitUid} in Game {GameId}.",
                    playerId, gameId, actionDto.UnitUid);
@@ -560,7 +798,7 @@ namespace ShadowverseBeyond.Server.Hubs
                 _logger.LogInformation("Player {PlayerId} in Game {GameId} enqueuing SuperEvolve action for unit {UnitUid}.",
                     playerId, gameId, actionDto.UnitUid);
 
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                await EnqueueHubActionAsync(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued SuperEvolve action for unit {UnitUid} in Game {GameId}.",
                     playerId, gameId, actionDto.UnitUid);
@@ -602,7 +840,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     ActionData = new { }
                 };
 
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                await EnqueueHubActionAsync(gameId.ToString(), wrapper);
             }
             catch (GameLogicException ex)
             {
@@ -642,7 +880,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     ActionData = actionDto
                 };
 
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                await EnqueueHubActionAsync(gameId.ToString(), wrapper);
             }
             catch (GameLogicException ex)
             {
@@ -682,7 +920,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     ActionData = actionDto
                 };
 
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                await EnqueueHubActionAsync(gameId.ToString(), wrapper);
             }
             catch (GameLogicException ex)
             {
@@ -725,7 +963,7 @@ namespace ShadowverseBeyond.Server.Hubs
                 };
 
                 _logger.LogInformation("Player {PlayerId} in Game {GameId} enqueuing DebugCommand: {Command}", playerId, gameId, commandDto?.Command);
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                await EnqueueHubActionAsync(gameId.ToString(), wrapper);
             }
             catch (HubException)
             {
@@ -793,7 +1031,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     playerId, gameId, parsedUids.Count);
 
                 // Call the new GameService method to enqueue the action
-                await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                await EnqueueHubActionAsync(gameId.ToString(), wrapper);
 
                 _logger.LogInformation("Player {PlayerId} successfully enqueued SubmitMulligan action in Game {GameId}.",
                     playerId, gameId);
@@ -1035,7 +1273,11 @@ namespace ShadowverseBeyond.Server.Hubs
                     }
                 }
 
-                if (roomResult.Room.Status != MatchStatus.Started || string.IsNullOrWhiteSpace(roomResult.Room.ActiveGameId))
+                var activeGameIdStr = roomResult.Room.ActiveGameId;
+                var existingSpectatorState = !string.IsNullOrWhiteSpace(activeGameIdStr)
+                    ? _gameService.GetGameState(activeGameIdStr)
+                    : null;
+                if ((roomResult.Room.Status != MatchStatus.Started && existingSpectatorState == null) || string.IsNullOrWhiteSpace(activeGameIdStr))
                 {
                     _logger.LogInformation("Spectator attempted to join room not started yet. ConnectionId={ConnectionId}, RoomId={RoomId}, Status={Status}",
                         Context.ConnectionId, roomIdStr, roomResult.Room.Status);
@@ -1043,8 +1285,6 @@ namespace ShadowverseBeyond.Server.Hubs
                     Context.Abort();
                     return;
                 }
-
-                var activeGameIdStr = roomResult.Room.ActiveGameId!;
                 if (!Guid.TryParse(activeGameIdStr, out var activeGameId))
                 {
                     _logger.LogWarning("Spectator join denied due to invalid activeGameId. ConnectionId={ConnectionId}, RoomId={RoomId}, ActiveGameId={ActiveGameId}",
@@ -1200,7 +1440,8 @@ namespace ShadowverseBeyond.Server.Hubs
             }
 
             // Only create game state when match is started, to avoid "ghost seats" or hanging initialization.
-            if (!room.UseAiFallback && room.Status != MatchStatus.Started)
+            var existingGameState = hasActiveGameId ? _gameService.GetGameState(activeGameIdStrForPlayer!) : null;
+            if (!room.UseAiFallback && room.Status != MatchStatus.Started && existingGameState == null)
             {
                 _logger.LogInformation("Room {RoomId} not started yet (Status={Status}). Skipping GameState creation.", roomIdStr, room.Status);
                 await Clients.Caller.ReceiveError("房间未开始，请等待双方准备完成后再进入对战。");
@@ -1250,6 +1491,12 @@ namespace ShadowverseBeyond.Server.Hubs
                     await Clients.Caller.ReceiveGameState(currentState);
                     await SendRecentChatHistoryToCallerAsync(activeGameIdStrForPlayer!);
                     await SendMatchHistoryToCallerAsync(activeGameIdStrForPlayer!);
+                    if (currentStateEntity.Mode == Dtos.Enums.GameMode.Mirage && currentStateEntity.Phase == Dtos.Enums.GamePhase.Recruit)
+                    {
+                        await _gameService.RefreshHandPlayabilityAsync(activeGameIdStrForPlayer!, playerGuid, Context.ConnectionAborted);
+                        await _gameService.RefreshActPlayabilityAsync(activeGameIdStrForPlayer!, playerGuid, Context.ConnectionAborted);
+                        _gameService.TriggerMirageAiRecruitIfNeeded(activeGameIdStrForPlayer!, currentStateEntity.Mirage!.RoundNumber);
+                    }
                 }
                 else
                 {
@@ -1317,6 +1564,7 @@ namespace ShadowverseBeyond.Server.Hubs
         /// </summary>
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
+            MatchCommandObservation.Unsubscribe(Context.ConnectionId);
             // Attempt to identify the game/player again for logging/cleanup purposes
             var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync(); // Use helper
             var roomId = GetRoomIdFromContext();
@@ -1474,11 +1722,12 @@ namespace ShadowverseBeyond.Server.Hubs
                     var wrapper = new PlayerActionWrapper
                     {
                         ActionType = "Disconnect",
+                        Origin = "disconnect_timeout",
                         PlayerId = playerId,
                         ActionData = new { Reason = "Timeout" }
                     };
 
-                    await _gameService.EnqueuePlayerActionAsync(gameId.ToString(), wrapper);
+                    await EnqueueHubActionAsync(gameId.ToString(), wrapper);
                 }
                 catch (Exception ex)
                 {
@@ -1539,231 +1788,11 @@ namespace ShadowverseBeyond.Server.Hubs
         /// Replays recorded client events from the persistent journal to the caller.
         /// Useful for reconnect/catch-up and debug replay.
         /// </summary>
-        public async Task CatchUp(long fromSeq = 1, int limit = 5000)
-        {
-            var gameId = GetGameIdForReplay();
-            if (string.IsNullOrWhiteSpace(gameId))
-            {
-                await Clients.Caller.ReceiveError("无法确定 GameId，补流失败。");
-                return;
-            }
+        public Task CatchUp(long fromSeq = 1, int limit = 5000)
+            => throw new HubException("Replay uses independent frame endpoints. Live CatchUp is disabled.");
 
-            if (fromSeq < 1) fromSeq = 1;
-            if (limit < 1) limit = 1;
-            limit = Math.Min(limit, 20000);
-
-            var records = await _eventJournal.ReadRangeAsync(gameId, fromSeq, limit, Context.ConnectionAborted);
-            var seenSeq = new HashSet<long>();
-            var seenEventIds = new HashSet<Guid>();
-            foreach (var record in records)
-            {
-                if (!seenSeq.Add(record.Seq) || !seenEventIds.Add(record.EventId))
-                {
-                    continue;
-                }
-
-                var replayDtos = await BuildReplayDtosAsync(gameId, record);
-                foreach (var dto in replayDtos)
-                {
-                    await _clientMethodMapper.BroadcastEventToClientAsync(Context.ConnectionId, dto);
-                }
-            }
-        }
-
-        /// <summary>
-        /// Seeks to a specific sequence by sending an appropriate snapshot, then replaying events up to targetSeq.
-        /// </summary>
-        public async Task Seek(long targetSeq)
-        {
-            var gameId = GetGameIdForReplay();
-            if (string.IsNullOrWhiteSpace(gameId))
-            {
-                await Clients.Caller.ReceiveError("无法确定 GameId，跳转失败。");
-                return;
-            }
-
-            if (targetSeq < 1) targetSeq = 1;
-
-            var snapshot = await _snapshotStore.GetAtOrBeforeAsync(gameId, targetSeq, Context.ConnectionAborted);
-            if (snapshot == null)
-            {
-                await Clients.Caller.ReceiveError("没有可用快照，跳转失败。");
-                return;
-            }
-
-            await Clients.Caller.ReceiveGameState(snapshot.Snapshot);
-
-            var fromSeq = snapshot.AtSeq + 1;
-            const int PageSize = 5000;
-            var seenSeq = new HashSet<long>();
-            var seenEventIds = new HashSet<Guid>();
-            while (fromSeq <= targetSeq)
-            {
-                var page = await _eventJournal.ReadRangeAsync(gameId, fromSeq, PageSize, Context.ConnectionAborted);
-                if (page.Count == 0) break;
-
-                foreach (var record in page)
-                {
-                    if (record.Seq > targetSeq) return;
-                    if (!seenSeq.Add(record.Seq) || !seenEventIds.Add(record.EventId))
-                    {
-                        continue;
-                    }
-
-                    var replayDtos = await BuildReplayDtosAsync(gameId, record);
-                    foreach (var dto in replayDtos)
-                    {
-                        await _clientMethodMapper.BroadcastEventToClientAsync(Context.ConnectionId, dto);
-                    }
-                }
-
-                fromSeq = page[^1].Seq + 1;
-            }
-        }
-
-        private async Task<IReadOnlyList<GameEventDto>> BuildReplayDtosAsync(string gameId, RecordedCommittedEventDto record)
-        {
-            var replayDtos = new List<GameEventDto>();
-            foreach (var env in record.ClientDtos)
-            {
-                var dto = _recordedEventMapper.TryDeserializeClientDto(env);
-                if (dto != null)
-                {
-                    replayDtos.Add(dto);
-                }
-            }
-
-            if (replayDtos.Count > 0)
-            {
-                return replayDtos;
-            }
-
-            var projectedDtos = await TryProjectDtosFromRawAsync(gameId, record);
-            if (projectedDtos.Count > 0)
-            {
-                return projectedDtos;
-            }
-
-            var fallbackLog = BuildFallbackReplayLogDto(record);
-            if (fallbackLog != null)
-            {
-                replayDtos.Add(fallbackLog);
-            }
-
-            return replayDtos;
-        }
-
-        private async Task<IReadOnlyList<GameEventDto>> TryProjectDtosFromRawAsync(string gameId, RecordedCommittedEventDto record)
-        {
-            if (string.IsNullOrWhiteSpace(record.RawEventJson))
-            {
-                return Array.Empty<GameEventDto>();
-            }
-
-            RawEventEnvelopeDto? rawEvent;
-            try
-            {
-                rawEvent = JsonSerializer.Deserialize<RawEventEnvelopeDto>(record.RawEventJson);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Replay raw event JSON parse failed for GameId={GameId} Seq={Seq}.", gameId, record.Seq);
-                return Array.Empty<GameEventDto>();
-            }
-
-            if (rawEvent == null)
-            {
-                return Array.Empty<GameEventDto>();
-            }
-
-            var httpContext = Context.GetHttpContext();
-            var requestServices = httpContext?.RequestServices;
-            if (requestServices == null)
-            {
-                return Array.Empty<GameEventDto>();
-            }
-
-            var gameState = _gameService.GetGameState(gameId);
-            if (gameState == null)
-            {
-                return Array.Empty<GameEventDto>();
-            }
-
-            var requestingPlayerId = ResolveReplayRequestingPlayerId(gameState, record);
-            var rawEventRegistry = requestServices.GetRequiredService<IRawEventGameEventRegistry>();
-            if (!rawEventRegistry.TryCreateGameEvent(rawEvent, gameState, requestingPlayerId, out var gameEvent, out var errorMessage) || gameEvent == null)
-            {
-                _logger.LogDebug(
-                    "Replay raw projection skipped for GameId={GameId} Seq={Seq} EventType={EventType}. Reason={Reason}",
-                    gameId,
-                    record.Seq,
-                    record.EventType,
-                    errorMessage ?? "raw event type is not yet supported.");
-                return Array.Empty<GameEventDto>();
-            }
-
-            var eventProcessor = requestServices.GetRequiredService<IEventProcessor>();
-            var gameContextAccessor = requestServices.GetRequiredService<IGameContextAccessor>();
-
-            try
-            {
-                // Apply-only replay projection: do not execute event Commit here.
-                using var replayContext = new GameContext(
-                    requestServices,
-                    _mapper,
-                    gameContextAccessor,
-                    gameState,
-                    requestingPlayerId,
-                    Context.ConnectionAborted);
-
-                var processorResult = await eventProcessor.ProcessEventAsync(gameEvent, replayContext);
-                return processorResult.ResultingDtos;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Replay raw projection failed for GameId={GameId} Seq={Seq}.", gameId, record.Seq);
-                return Array.Empty<GameEventDto>();
-            }
-        }
-
-        private static Guid ResolveReplayRequestingPlayerId(GameState gameState, RecordedCommittedEventDto record)
-        {
-            if (record.SourceId.HasValue && record.SourceId.Value != Guid.Empty)
-            {
-                var sourceId = record.SourceId.Value;
-                if (sourceId == gameState.Player1.PlayerId || sourceId == gameState.Player2.PlayerId)
-                {
-                    return sourceId;
-                }
-
-                var sourceCard = gameState.FindCardInstance(sourceId);
-                if (sourceCard != null)
-                {
-                    return sourceCard.OwnerPlayerId;
-                }
-            }
-
-            if (gameState.CurrentPlayerId.HasValue && gameState.CurrentPlayerId.Value != Guid.Empty)
-            {
-                return gameState.CurrentPlayerId.Value;
-            }
-
-            return gameState.Player1.PlayerId;
-        }
-
-        private static LogEventDto? BuildFallbackReplayLogDto(RecordedCommittedEventDto record)
-        {
-            if (string.IsNullOrWhiteSpace(record.Announcement))
-            {
-                return null;
-            }
-
-            return new LogEventDto(
-                record.EventId,
-                record.EventType,
-                record.Announcement,
-                record.SourceId ?? Guid.Empty);
-        }
+        public Task Seek(long targetSeq)
+            => throw new HubException("Use an independent replay session and an exact frame number.");
 
         private async Task SendRecentChatHistoryToCallerAsync(string gameId)
         {

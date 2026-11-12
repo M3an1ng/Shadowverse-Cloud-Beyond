@@ -129,7 +129,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             var result = new DomainOperationResult { Success = true };
-            if (selectedCardsByCount.Count < Count)
+            if (selectedCardsByCount.Count < Count
+                && context.CurrentGameState.Mode != ShadowverseBeyond.Server.Dtos.Enums.GameMode.Mirage
+                && !context.CurrentGameState.IsCombatSandbox)
             {
                 result.GeneratedEvents.Add(new DeckEmptyOnDrawEvent(player));
             }

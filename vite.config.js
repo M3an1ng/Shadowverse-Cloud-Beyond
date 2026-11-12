@@ -29,7 +29,9 @@ export default defineConfig({
       ignored: [
         // Uploaded media is served directly; it must never participate in HMR.
         '**/assets/cards/**',
+        '**/assets/emotes/**',
         '**/assets/catalog-media/**',
+        '**/.local/ocr-lab/**',
         '**/*.log',
         '**/Server/**',
         '**/tests/**',

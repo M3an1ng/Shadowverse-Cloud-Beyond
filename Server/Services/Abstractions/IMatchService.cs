@@ -5,24 +5,28 @@
 using System;
 using System.Collections.Generic;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Services.Abstractions
 {
     public interface IMatchService
     {
         event Action<string>? GameDetached;
-        MatchOperationResult Create(Guid? hostPlayerId = null, bool useAiFallback = false, TimeSpan? ttl = null, DevMatchConfig? devMatchConfig = null);
-        MatchOperationResult TryJoin(string roomId, string joinCode, Guid? guestPlayerId = null);
-        MatchOperationResult MarkReady(string roomId, Guid playerId);
-        MatchOperationResult SubmitDeckSelection(string roomId, Guid playerId, MatchDeckSelection selection, MatchDeckSelection? aiSelection = null);
-        MatchOperationResult Start(string roomId, Guid playerId);
+        MatchOperationResult Create(Guid? hostPlayerId = null, bool useAiFallback = false, TimeSpan? ttl = null, DevMatchConfig? devMatchConfig = null, bool isPublic = true, GameMode mode = GameMode.Standard);
+        MatchOperationResult TryJoin(string roomId, string? joinCode, Guid? guestPlayerId = null, string? existingGuestToken = null, bool allowPublicWithoutCode = false);
+        MatchOperationResult TryJoinByCode(string joinCode, Guid? guestPlayerId = null, string? existingGuestToken = null);
+        MatchOperationResult MarkReady(string roomId, Guid playerId, bool ready = true, string? token = null);
+        MatchOperationResult SubmitDeckSelection(string roomId, Guid playerId, MatchDeckSelection selection, MatchDeckSelection? aiSelection = null, string? token = null);
+        MatchOperationResult Start(string roomId, Guid playerId, string? token = null);
         MatchOperationResult Get(string roomId);
         IReadOnlyList<MatchRoom> ListCurrentRooms();
         MatchOperationResult ValidateConnection(string roomId, Guid playerId, string token);
         MatchOperationResult RefreshExpiration(string roomId, Guid playerId);
         MatchOperationResult GetByGameId(string gameId);
         bool TryGetRoomIdByGameId(string gameId, out string roomId);
-        MatchOperationResult Leave(string roomId, Guid playerId, string? hostLeaveReason = null);
+        MatchOperationResult Leave(string roomId, Guid playerId, string? hostLeaveReason = null, string? token = null);
+        MatchOperationResult KickGuest(string roomId, Guid hostPlayerId, string hostToken, Guid? targetGuestPlayerId = null);
+        MatchOperationResult CompleteGame(string gameId, Guid? winnerPlayerId);
         void Close(string roomId, string reason);
         void CleanupExpired();
     }

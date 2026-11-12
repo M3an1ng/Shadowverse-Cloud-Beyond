@@ -22,6 +22,8 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public Guid CurrentPlayerId { get; set; } = Guid.Empty; // Whose turn it is
         // 【架构重构】删除全局TurnNumber，前端应从当前玩家的PlayerStateDto.TurnNumber获取回合数
         public GamePhase Phase { get; set; } = GamePhase.Initialization; // Changed type to GamePhase Enum and updated default
+        public GameMode Mode { get; set; } = GameMode.Standard;
+        public MirageMatchStateDto? Mirage { get; set; }
 
         public Guid FirstPlayerId { get; set; } = Guid.Empty; // ID of the player who went first
         public GameStatus GameStatus { get; set; } = GameStatus.Starting; // Current status of the game (e.g., Starting, InProgress, Finished)

@@ -71,7 +71,16 @@ coverage/
 /design-system/
 /info/
 /openspec/
-/tools/
+/tools/*
+!/tools/ocr-lab/
+/tools/ocr-lab/*
+!/tools/ocr-lab/*.py
+!/tools/ocr-lab/*.json
+!/tools/ocr-lab/*.txt
+!/tools/ocr-lab/*.html
+!/tools/ocr-lab/*.ps1
+/tools/ocr-lab/__pycache__/
+/tools/ocr-lab/models/
 /data/scrape/
 /data/scrape-playwright/
 /scripts/check-docs.py
@@ -153,7 +162,10 @@ coverage/
 # Native application is launched by the deployment scripts, not machine-specific profiles.
 /Server/Properties/launchSettings.local.json
 
+# MSE runtime resources and their source attribution ship with the frontend.
+!/public/mse-beyond/
+!/public/mse-beyond/**
+
 # AI artifacts are uploaded independently of code and player data.
 /data/ai-model/
 /data/ai-strategy/
-/exports/

@@ -229,6 +229,92 @@ Test("AI reads complete recursive card references and reports missing context", 
 if (Environment.GetEnvironmentVariable("AI_RULE_PROBE_SOURCE") is { Length: >0 } ruleSource
     && Environment.GetEnvironmentVariable("AI_RULE_PROBE_OUTPUT") is { Length: >0 } ruleOutput)
     Test("AI resolves current catalog reference chains", () => AiRuleContextTests.Probe(ruleSource, ruleOutput));
+Test("review fixes preserve reveal order, redraw recovery and escaped preview URLs",()=>{
+ var script="""
+ import assert from 'node:assert/strict';
+ import {readFileSync} from 'node:fs';
+ const read=path=>readFileSync(path,'utf8');
+ const {createRevealPresentationGate}=await import('data:text/javascript;base64,'+Buffer.from(read('src/revealPresentationGate.js')).toString('base64'));
+ const gate=createRevealPresentationGate(), order=[];
+ let finishFirst,finishBatch,finishQueued;
+ gate.dispatch('CardRevealed',()=>{order.push('first');return new Promise(r=>finishFirst=r)});
+ gate.dispatch('CardRevealed',()=>{order.push('batch');return new Promise(r=>finishBatch=r)});
+ gate.dispatch('BoardUpdated',()=>order.push('board'));
+ gate.dispatch('CardRevealed',()=>{order.push('queued');return new Promise(r=>finishQueued=r)});
+ gate.dispatch('HandUpdated',()=>order.push('hand'));
+ gate.dispatch('ChatMessage',()=>order.push('chat'));
+ assert.deepEqual(order,['first','chat']);
+ finishFirst();await new Promise(setImmediate);assert.deepEqual(order,['first','chat','batch']);
+ finishBatch();await new Promise(setImmediate);assert.deepEqual(order,['first','chat','batch','board','queued']);
+ finishQueued();await new Promise(setImmediate);assert.equal(order.at(-1),'hand');
+ const reentrant=createRevealPresentationGate(), nested=[];let release;
+ reentrant.dispatch('CardRevealed',()=>new Promise(r=>release=r));
+ reentrant.dispatch('BoardUpdated',()=>{nested.push('board');reentrant.dispatch('CardRevealed',()=>nested.push('reveal'))});
+ reentrant.dispatch('HandUpdated',()=>nested.push('hand'));release();await new Promise(setImmediate);
+ assert.deepEqual(nested,['board','hand','reveal']);
+ const normalize=new Function(read('src/previewDescriptionReferences.js').match(/function normalizePreviewUrl\(value\) \{[\s\S]*?\n\}/)[0]+';return normalizePreviewUrl')();
+ assert.equal(normalize(`/assets/a'"()\\.png`),'/assets/a%27%22%28%29%5C.png');
+ const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+ const take=read('src/takeTwo.js'),start=take.indexOf('      } catch (e) {',take.indexOf('const send ='));
+ assert.ok(start>=0);const recovery=take.slice(start+'      } catch (e) {'.length,take.indexOf('        reportDraftError(e);',start));
+ const server={player:{plans:{offer:['server']}}};let fetched;
+ const restored=await new AsyncFunction('api','room','headers','player','checkState','render',
+   'let queueGeneration=0,pending=1,queue;'+recovery+';return player;')(
+   async path=>{fetched=path;return structuredClone(server)}, {id:'room'}, {}, {plans:{offer:['local-redraw']}},async()=>{},()=>{});
+ assert.equal(fetched,'/rooms/room');assert.deepEqual(restored,server.player);
+ const {pathToFileURL}=await import('node:url'),{resolve}=await import('node:path');
+ const {createCardStylePresentation}=await import(pathToFileURL(resolve('src/cardStylePresentation.js')));
+ const doc=new EventTarget(), prefs={42:'night'}, old={cardId:42,styles:[{id:'night',appearance:{name:'old'},bindings:[]}]};
+ let catalog=[old],fetches=0;
+ const historyRequest=async(path,options)=>{if(options?.method==='PUT'){catalog=[JSON.parse(options.body)];return catalog[0]}if(path.endsWith('/preferences'))return prefs;fetches++;return catalog};
+ const domSource=read('src/cardStyleDom.js').replace(/^import .*;\r?\n/gm,'').replace(/export /g,'');
+ const dom=new Function('document','historyRequest','getUserSession','createCardStylePresentation',domSource+';return {getCardStylePresenter,bindCardStyle}')(doc,historyRequest,()=>({userId:'review'}),createCardStylePresentation);
+ const node={isConnected:true};let shown;
+ dom.bindCardStyle(node,present=>shown=present({id:42,name:'base'}).name);await new Promise(setImmediate);assert.equal(shown,'old');
+ const saveBody=read('src/cardStyles.js').match(/save.onclick = async \(\) => \{([\s\S]*?)\n      \};/)[1];
+ await new AsyncFunction('save','historyRequest','id','editorScope','config','editor','loadStyles','document','CustomEvent','showAlert','render','let dirty=true;'+saveBody)(
+   {disabled:false},historyRequest,42,'standard',{...old,styles:[{...old.styles[0],appearance:{name:'new'}}]}, {_styleDrafts:new Map()},async()=>catalog,doc,CustomEvent,()=>{},()=>{});
+ await new Promise(setImmediate);assert.equal(shown,'new');assert.equal(fetches,2);assert.equal((await dom.getCardStylePresenter())({id:42}).name,'new');
+ const gallery=read('src/cardGallery.js'),listenerStart=gallery.indexOf('async (event) => {',gallery.indexOf('"svb:card-style-changed"'));
+ assert.ok(listenerStart>=0);const listenerBody=gallery.slice(listenerStart+'async (event) => {'.length,gallery.indexOf('\n      },',listenerStart));
+ const displayed=await new AsyncFunction('event','page','styles','preferences','loadStyles','cards','originalCards','createCardStylePresentation','search','let preservePage=false;'+listenerBody+';return cards;')(
+   {detail:{cardId:42}},{isConnected:true},[old],prefs,async()=>catalog,[],[{id:42,name:'base'}],createCardStylePresentation,{apply(){}});
+ assert.equal(prefs[42],'night');assert.equal(displayed[0].name,'new');
+ """;
+ var start=new System.Diagnostics.ProcessStartInfo("node"){RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};start.ArgumentList.Add("--input-type=module");
+ using var node=System.Diagnostics.Process.Start(start)!;node.StandardInput.Write(script);node.StandardInput.Close();var output=node.StandardOutput.ReadToEnd();var error=node.StandardError.ReadToEnd();node.WaitForExit();Check(node.ExitCode==0,output+error);
+});
+Test("history batches queries and SaveChanges(false) preserves pending states",()=>{
+ using var connection=new SqliteConnection("Data Source=:memory:");connection.Open();var queries=new HistoryQueryCounter();
+ using var db=new ApplicationDbContext(new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(connection).AddInterceptors(queries).Options);db.Database.EnsureCreated();
+ for(var i=0;i<16;i++){db.CardDefinitions.Add(new(){Id=99500+i,Name="批量历史"});db.CardAbilities.Add(new(){Id=995000+i,CardId=99500+i,Name="批量能力",JsonConfig="{}"});}
+ queries.Selects=0;db.SaveChangesAsync().GetAwaiter().GetResult();Check(queries.Selects<=5,$"batch issued {queries.Selects} selects");Check(db.CardRevisions.Count()==16,"batch snapshots missing");
+ var card=db.CardDefinitions.First();card.Description="未接受变更";db.SaveChangesAsync(false,default).GetAwaiter().GetResult();
+ Check(db.Entry(card).State==EntityState.Modified&&db.Entry(card).OriginalValues.GetValue<string>(nameof(CardDefinition.Description))!="未接受变更","Save(false) accepted original card changes");
+ Check(db.ChangeTracker.Entries<CardRevisionRecord>().Any(e=>e.State==EntityState.Added),"Save(false) accepted history changes");
+ db.ChangeTracker.AcceptAllChanges();var added=new CardDefinition{Id=99599,Name="未接受新增"};db.Add(added);db.SaveChangesAsync(false,default).GetAwaiter().GetResult();Check(db.Entry(added).State==EntityState.Added,"Save(false) accepted insert");
+ Check(db.CardRevisions.AsNoTracking().Count(h=>h.CardId==99599)==1,"insert/history written twice");
+});
+Test("parallel style saves, bindings, preferences, pools and history remain consistent",()=>{
+ var connectionString=$"Data Source=review-{Guid.NewGuid():N};Mode=Memory;Cache=Shared;Default Timeout=10";
+ using var connection=new SqliteConnection(connectionString);connection.Open();var options=new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(connectionString).Options;
+ using var seed=new ApplicationDbContext(options);seed.Database.EnsureCreated();var actor=new User{Id=Guid.NewGuid(),Username="并发审查",Email="review@example.invalid",PasswordHash="test",Role=UserRole.Admin,IsActive=true};seed.Add(actor);
+ foreach(var id in new[]{99411,99412,99413,99414})seed.CardDefinitions.Add(new(){Id=id,Name="并发风格"});seed.SaveChangesAsync().GetAwaiter().GetResult();
+ var games=Proxy<IGameService>.Make((m,a)=>m.ReturnType==typeof(Task)?Task.CompletedTask:null);var env=Proxy<Microsoft.AspNetCore.Hosting.IWebHostEnvironment>.Make((m,a)=>null);
+ T Controller<T>(T controller) where T:Microsoft.AspNetCore.Mvc.ControllerBase {controller.ControllerContext=new(){HttpContext=new Microsoft.AspNetCore.Http.DefaultHttpContext()};controller.Request.Headers["X-Editor-UserId"]=actor.Id.ToString();return controller;}
+ StyleConfiguration Config(int id,int revision,int? bound=null)=>new(id,revision,new(){new("review","审查",new("风格","描述",null,null),bound.HasValue?new(){new(bound.Value,new("衍生","描述",null,null))}:new())});
+ Task<Microsoft.AspNetCore.Mvc.IActionResult> Save(StyleConfiguration config)=>Task.Run(async()=>{using var db=new ApplicationDbContext(options);return await Controller(new ShadowverseBeyond.Server.Controllers.CardStylesController(db,games,env)).Save(config.CardId,config);});
+ var binding=Task.WhenAll(Save(Config(99411,0,99413)),Save(Config(99412,0,99413))).GetAwaiter().GetResult();Check(binding.Count(r=>r is Microsoft.AspNetCore.Mvc.OkObjectResult)==1&&binding.Count(r=>r is Microsoft.AspNetCore.Mvc.BadRequestObjectResult)==1,"derived card bound to two parents");
+ var parent=CardStyleCatalog.Parent(99413)!.Value;var versions=Task.WhenAll(Save(Config(parent,1,99413)),Save(Config(parent,1,99413))).GetAwaiter().GetResult();Check(versions.Count(r=>r is Microsoft.AspNetCore.Mvc.OkObjectResult)==1&&versions.Count(r=>r is Microsoft.AspNetCore.Mvc.ConflictObjectResult)==1,"parallel style revision overwritten");
+ Save(Config(99414,0)).GetAwaiter().GetResult();
+ Task Choose(int id)=>Task.Run(async()=>{using var db=new ApplicationDbContext(options);Check(await Controller(new ShadowverseBeyond.Server.Controllers.CardStylesController(db,games,env)).Choose(new(id,"review"),default) is Microsoft.AspNetCore.Mvc.OkObjectResult,"choice failed");});
+ Task.WhenAll(Choose(parent),Choose(99414)).GetAwaiter().GetResult();Check(CardStyleCatalog.Preferences(actor.Id).Count==2,"parallel preferences lost a choice");
+ Task<Microsoft.AspNetCore.Mvc.IActionResult> Pool()=>Task.Run(async()=>{using var db=new ApplicationDbContext(options);return await Controller(new ShadowverseBeyond.Server.Controllers.TakeTwoController(db,new TakeTwoService(new MatchService(NullLogger<MatchService>.Instance)))).SaveSettings("rotation",new(0,TakeTwoService.EmptyPool),default);});
+ var pools=Task.WhenAll(Pool(),Pool()).GetAwaiter().GetResult();Check(pools.Count(r=>r is Microsoft.AspNetCore.Mvc.OkObjectResult)==1&&pools.Count(r=>r is Microsoft.AspNetCore.Mvc.ConflictObjectResult)==1,"parallel pool revision overwritten");
+ seed.CardRevisions.Where(h=>h.CardId==99414).ExecuteDelete();
+ Task<Microsoft.AspNetCore.Mvc.IActionResult> History()=>Task.Run(async()=>{using var db=new ApplicationDbContext(options);return await Controller(new ShadowverseBeyond.Server.Controllers.CardHistoryController(db,Proxy<IGameDataProvider>.Make((m,a)=>null),games,Proxy<IMapper>.Make((m,a)=>null))).List(99414);});
+ var histories=Task.WhenAll(History(),History()).GetAwaiter().GetResult();Check(histories.All(r=>r is Microsoft.AspNetCore.Mvc.OkObjectResult)&&seed.CardRevisions.Count(h=>h.CardId==99414)==1,"parallel baseline creation failed");
+});
 Test("startup preserves shared original card art and explicit remote art", () => {
  var root=Path.Combine(Path.GetTempPath(),"sv-art-"+Guid.NewGuid());
  var source=Path.Combine(root,"assets","cards","1");var target=Path.Combine(root,"assets","cards","2");
@@ -539,6 +625,63 @@ var p1=new PlayerState(Guid.NewGuid());var p2=new PlayerState(Guid.NewGuid());
 var game=new GameState("migration-tests",p1,p2,p1.PlayerId){AbilityManager=abilityManager,BuffManager=buffs};
 p1.Leader=factory.CreateAndRegisterNewCard(game,1,p1.PlayerId,CardZone.Staging);p2.Leader=factory.CreateAndRegisterNewCard(game,1,p2.PlayerId,CardZone.Staging);
 using var context=new GameContext(services,new MapperConfiguration(cfg=>{}).CreateMapper(),accessor,game,p1.PlayerId,sourceCard:p1.Leader);
+Test("discover requires selection, honors automatic selection and resolves the owning player",()=>{
+ Check(AbilitySelectionPolicy.RequiresPlayerSelection(new(){Effects=new(){new(){Type=EffectType.Discover}}}),"discover selection was not detected");
+ var handler=new DiscoverEffectHandler(NullLogger<DiscoverEffectHandler>.Instance);
+ using var noSource=context with{SourceCard=null};
+ var ability=Proxy<IAbility>.Make((m,a)=>m.Name=="get_SourceCard"?p2.Leader:null);
+ foreach(var effect in new[]{new Effect(p1.PlayerId){SourceAbility=ability},new Effect(p2.PlayerId)}) {
+  var request=handler.Apply(effect,noSource,new(){CardDefinitionIds=new(){2,3,4}}).GeneratedEvents.OfType<DiscoverRequestEvent>().Single();
+  Check(request.Source?.Player==p2,"discover used the current turn's player");
+  using var automatic=noSource with{InvocationOptions=new(){AutoRandomTargetSelection=true}};request.ResolveAsync(automatic).GetAwaiter().GetResult();Check(request.Selected!=null&&new[]{2,3,4}.Contains(request.Selected.CurrentDefinitionId),"automatic discover requested manual input");
+ }
+});
+var reviewManager=new AbilityManager(NullLogger<AbilityManager>.Instance,Proxy<IAbilityFactory>.Make((m,a)=>null),Array.Empty<IAbility>());
+IAbility ReviewAbility(long id,Func<TargetResolutionResult> resolve){var runtimeId=Guid.NewGuid();return Proxy<IAbility>.Make((m,a)=>m.Name switch{
+ "get_RuntimeId"=>runtimeId,"get_DefinitionId"=>id,"get_SourceCard"=>p1.Leader,"get_Keywords"=>new List<AbilityKeyword>{AbilityKeyword.Intromezzo},"get_Targets"=>new List<ShadowverseBeyond.Server.Domain.Abilities.Runtime.Target>(),
+ "get_TriggerConfig"=>new ShadowverseBeyond.Server.Domain.Abilities.Triggers.TriggerConfig{LimitSameNameOncePerTransaction=true},"CheckConditions"=>true,
+ "ResolveTargetsAsync"=>Task.FromResult(resolve()),"CreateEffectsAsync"=>Task.FromResult(new List<Effect>{new(p1.PlayerId){EffectConfig=new(){Type=EffectType.None}}}),_=>null});}
+Test("Intromezzo ignores skipped and cancelled targets even when target resolution is deferred",()=>{
+ foreach(var active in new[]{true,false})foreach(var cancelled in new[]{false,true}) {
+  p1.IsIntromezzoActive=active;var ability=ReviewAbility(99601,()=>new(){Status=cancelled?ResolutionStatus.Failed:ResolutionStatus.Skipped,WasCancelled=cancelled});
+  var outcome=reviewManager.ProcessSingleAbilityAsync(ability,context,true,true).GetAwaiter().GetResult();
+  Check(p1.IsIntromezzoActive==active&&outcome.Effects.Count==0&&outcome.IsCancelled==cancelled,"target failure changed Intromezzo");
+ }
+ p1.IsIntromezzoActive=false;var ready=ReviewAbility(99602,()=>new(){Status=ResolutionStatus.Completed});
+ Check(reviewManager.ProcessSingleAbilityAsync(ready,context,false,true).Result.Effects.Count==0&&p1.IsIntromezzoActive,"inactive Intromezzo did not advance");
+ Check(reviewManager.ProcessSingleAbilityAsync(ready,context,false,true).Result.Effects.Count==1&&!p1.IsIntromezzoActive,"active Intromezzo did not execute");
+});
+Test("inactive Intromezzo does not take the transaction's same-name slot",()=>{
+ p1.IsIntromezzoActive=false;var abilities=new List<IAbility>{ReviewAbility(99603,()=>new(){Status=ResolutionStatus.Completed}),ReviewAbility(99603,()=>new(){Status=ResolutionStatus.Completed}),ReviewAbility(99603,()=>new(){Status=ResolutionStatus.Completed})};
+ var manager=Proxy<IAbilityManager>.Make((m,a)=>m.Name switch{"GetTriggeredAbilitiesAsync"=>Task.FromResult(abilities),"ProcessSingleAbilityAsync"=>reviewManager.ProcessSingleAbilityAsync((IAbility)a![0]!, (GameContext)a[1]!, (bool)a[2]!, (bool)a[3]!, (bool)a[4]!),_=>null});
+ var transaction=new GameActionTransactionService(NullLogger<GameActionTransactionService>.Instance,manager,null!,null!,null!,null!,null!,null!);
+ game.AbilityManager=manager;using var triggerContext=new GameContext(services,new MapperConfiguration(cfg=>{}).CreateMapper(),accessor,game,p1.PlayerId,sourceCard:p1.Leader);
+ try {
+  var method=typeof(GameActionTransactionService).GetMethod("GetTriggerAbilityEffectsAsync",BindingFlags.NonPublic|BindingFlags.Instance)!;
+  var task=(Task)method.Invoke(transaction,new object[]{triggerContext,new DiscoverEvent(p1,p1.Leader),TriggerTiming.On})!;task.GetAwaiter().GetResult();
+  var tuple=task.GetType().GetProperty("Result")!.GetValue(task)!;var effects=(List<Effect>)tuple.GetType().GetField("Item2")!.GetValue(tuple)!;
+  Check(effects.Count==1&&!p1.IsIntromezzoActive,"skipped same-name ability blocked the next actual activation");
+ } finally {game.AbilityManager=abilityManager;p1.IsIntromezzoActive=false;}
+});
+Test("Before intercepts advance inactive Intromezzo once and prevent discover before player choice",()=>{
+ var query=Proxy<ShadowverseBeyond.Server.Domain.Query.IQueryExecutor>.Make((m,a)=>null);var pending=Proxy<IPendingActionService>.Make((m,a)=>throw new Exception("prevented discover asked for a choice"));
+ using var provider=new ServiceCollection().AddSingleton(query).AddSingleton<IBuffService>(buffService).AddSingleton(services.GetRequiredService<IEventHistoryService>()).BuildServiceProvider();
+ var selection=new TargetSelectionService(NullLogger<TargetSelectionService>.Instance,query,pending);
+ Ability Make(bool intermezzo,EffectType effect)=>new(new(){Id=99604,AbilityKeywords=intermezzo?new(){new(){Keyword=AbilityKeyword.Intromezzo}}:new(),Trigger=new(){Timing=TriggerTiming.Before},Effects=new(){new(){Type=effect}}},Proxy<IConditionFactory>.Make((m,a)=>null),Proxy<ITargetFactory>.Make((m,a)=>null),selection,p1.Leader);
+ var intercept=Make(true,EffectType.PreventEvent);var ordinary=Make(false,EffectType.None);var ordinaryProbes=0;
+ var manager=Proxy<IAbilityManager>.Make((m,a)=>m.Name switch{
+  "GetTriggeredAbilitiesAsync"=>Task.FromResult((TriggerTiming)a![2]! ==TriggerTiming.Before&&((IGameEvent)a[0]!).EventType==EventType.DiscoverRequest?new List<IAbility>{ordinary,intercept}:new()),
+  "ProcessSingleAbilityAsync"=>Process((IAbility)a![0]!,(GameContext)a[1]!, (bool)a[2]!, (bool)a[3]!, (bool)a[4]!),_=>null});
+ Task<AbilityProcessResult> Process(IAbility ability,GameContext c,bool cancellable,bool defer,bool record){if(ability==ordinary)ordinaryProbes++;return reviewManager.ProcessSingleAbilityAsync(ability,c,cancellable,defer,record);}
+ var executor=Proxy<IEffectExecutor>.Make((m,a)=>new PreventEventEffectHandler(NullLogger<PreventEventEffectHandler>.Instance).Apply((Effect)a![0]!, (GameContext)a[1]!,new()));
+ var transaction=new GameActionTransactionService(NullLogger<GameActionTransactionService>.Instance,manager,null!,pending,executor,null!,null!,null!);game.AbilityManager=manager;
+ using var c=new GameContext(provider,new MapperConfiguration(cfg=>{}).CreateMapper(),accessor,game,p1.PlayerId,sourceCard:p1.Leader);
+ object Run(string methodName,IGameEvent ev){var method=typeof(GameActionTransactionService).GetMethod(methodName,BindingFlags.Instance|BindingFlags.NonPublic)!;var args=method.GetParameters().Select(p=>p.ParameterType==typeof(GameContext)?(object)c:p.ParameterType==typeof(IGameEvent)?ev:p.HasDefaultValue?p.DefaultValue:Activator.CreateInstance(p.ParameterType)).ToArray();var task=(Task)method.Invoke(transaction,args)!;task.GetAwaiter().GetResult();return task.GetType().GetProperty("Result")!.GetValue(task)!;}
+ try {
+  p1.IsIntromezzoActive=false;var ev=new DiscoverRequestEvent(p1,new(){p1.Leader},false,Guid.Empty);Run("ApplyBeforeInterceptsAsync",ev);Check(p1.IsIntromezzoActive&&ordinaryProbes==0&&intercept.TriggerCountThisGame==0,"inactive intercept was not advanced or probed an ordinary Before ability");
+  var result=(PausableTransactionResult)Run("ProcessEventRecursivelyAsync",ev);Check(result.IsSuccess&&ev.Selected==null&&!p1.IsIntromezzoActive,"discover resolved before prevention");
+ } finally {game.AbilityManager=abilityManager;p1.IsIntromezzoActive=false;}
+});
 Test("AI reads actual automatic end-turn conditions without mutating runtime targets", () => {
  var own = new PlayerState(Guid.NewGuid()); var enemy = new PlayerState(Guid.NewGuid());
  var runtime = new List<IAbility>();
@@ -1023,6 +1166,78 @@ Test("starlight Savior sword activation selects its own amulet",()=>{
  var target=StarlightAfter(1474098)["targets"]!.AsArray().Single()!;var expression=target["query"]!["sourcePoolExpression"]!.GetValue<string>();Check(expression=="context.SourceCard","sword self target missing");
  var getter=compiler.CompileGetter<object>(expression);Check(ReferenceEquals(getter(new object(),context),p1.Leader),"self reference not resolved");
 });
+Test("match room isolates seat tokens, blocks unauthenticated rejoin, and enforces in-lock token checks",()=>{
+ var matches=new MatchService(NullLogger<MatchService>.Instance);
+ var hub=Proxy<Microsoft.AspNetCore.SignalR.IHubContext<ShadowverseBeyond.Server.Hubs.GameHub,ShadowverseBeyond.Server.Hubs.ClientInterfaces.IGameClient>>.Make((m,a)=>null);
+ var games=Proxy<IGameService>.Make((m,a)=>m.ReturnType==typeof(Task)?Task.CompletedTask:null);
+ var decks=Proxy<IDeckService>.Make((m,a)=>null);
+ var deckVal=Proxy<IDeckValidationService>.Make((m,a)=>null);
+ var deckCode=Proxy<IDeckCodeService>.Make((m,a)=>null);
+ var ctrl=new ShadowverseBeyond.Server.Controllers.MatchController(matches,NullLogger<ShadowverseBeyond.Server.Controllers.MatchController>.Instance,hub,games,decks,deckVal,deckCode){ControllerContext=new Microsoft.AspNetCore.Mvc.ControllerContext{HttpContext=new Microsoft.AspNetCore.Http.DefaultHttpContext()}};
+ var hostId=Guid.NewGuid();var guestId=Guid.NewGuid();
+ var createdRes=(ctrl.Create(new(){HostPlayerId=hostId,IsPublic=false}).Result as Microsoft.AspNetCore.Mvc.CreatedAtActionResult)!.Value as ShadowverseBeyond.Server.Controllers.MatchController.MatchResponse;
+ Check(createdRes!=null&&!string.IsNullOrEmpty(createdRes.HostToken)&&createdRes.GuestToken==null&&!string.IsNullOrEmpty(createdRes.JoinCode),"create token scope wrong");
+ var joinRes=(ctrl.Join(createdRes!.RoomId,new(){JoinCode=createdRes.JoinCode,PlayerId=guestId}).Result as Microsoft.AspNetCore.Mvc.OkObjectResult)!.Value as ShadowverseBeyond.Server.Controllers.MatchController.MatchResponse;
+ Check(joinRes!=null&&joinRes.HostToken==null&&!string.IsNullOrEmpty(joinRes.GuestToken),"join leaked host token");
+ var publicGet=(ctrl.Get(createdRes.RoomId).Result as Microsoft.AspNetCore.Mvc.OkObjectResult)!.Value as ShadowverseBeyond.Server.Controllers.MatchController.MatchResponse;
+ Check(publicGet!=null&&publicGet.HostToken==null&&publicGet.GuestToken==null&&string.IsNullOrEmpty(publicGet.JoinCode),"unauthenticated GET leaked tokens or private joinCode");
+ var spoofRejoin=matches.TryJoin(createdRes.RoomId,createdRes.JoinCode,guestId);
+ Check(!spoofRejoin.Success&&spoofRejoin.Error==MatchOperationError.AlreadyFull,"spoofed guestPlayerId stole occupied seat token");
+ var validRejoin=matches.TryJoin(createdRes.RoomId,createdRes.JoinCode,guestId,joinRes!.GuestToken);
+ Check(validRejoin.Success&&validRejoin.Room!.GuestToken==joinRes.GuestToken,"valid token rejoin failed");
+ var wrongTokenSubmit=matches.SubmitDeckSelection(createdRes.RoomId,guestId,new(){DeckId=Guid.NewGuid(),DeckClass=CardClass.Forestcraft},token:"wrong-token");
+ Check(!wrongTokenSubmit.Success&&wrongTokenSubmit.Error==MatchOperationError.Forbidden,"in-lock token check bypassed");
+});
+Test("match room requires self deck before ready, supports cancel ready, kick guest, and join by code",()=>{
+ var matches=new MatchService(NullLogger<MatchService>.Instance);
+ var hostId=Guid.NewGuid();var guestId=Guid.NewGuid();
+ var created=matches.Create(hostId,isPublic:true).Room!;
+ Check(!matches.MarkReady(created.RoomId,hostId,true,created.HostToken).Success,"ready allowed before deck selection");
+ Check(matches.SubmitDeckSelection(created.RoomId,hostId,new(){DeckId=Guid.NewGuid(),DeckClass=CardClass.Forestcraft,Environment=DeckEnvironment.Rotation,Rule=DeckRule.Standard},token:created.HostToken).Success,"host deck select failed");
+ Check(matches.MarkReady(created.RoomId,hostId,true,created.HostToken).Success,"host ready after deck failed");
+ var joinedByCode=matches.TryJoinByCode(created.JoinCode,guestId);
+ Check(joinedByCode.Success&&joinedByCode.Room!.RoomId==created.RoomId,"join by 6-char code failed");
+ var guestToken=joinedByCode.Room.GuestToken!;
+ Check(matches.SubmitDeckSelection(created.RoomId,guestId,new(){DeckId=Guid.NewGuid(),DeckClass=CardClass.Swordcraft,Environment=DeckEnvironment.Rotation,Rule=DeckRule.Standard},token:guestToken).Success,"guest deck select failed");
+ Check(matches.MarkReady(created.RoomId,guestId,true,guestToken).Room!.Status==MatchStatus.Ready,"both ready did not set Ready status");
+ Check(matches.MarkReady(created.RoomId,guestId,false,guestToken).Room!.Status==MatchStatus.Waiting,"cancel ready did not revert to Waiting");
+ Check(matches.MarkReady(created.RoomId,guestId,true,guestToken).Room!.Status==MatchStatus.Ready,"re-ready failed");
+ var conflictDeck=matches.SubmitDeckSelection(created.RoomId,hostId,new(){DeckId=Guid.NewGuid(),DeckClass=CardClass.Forestcraft,Environment=DeckEnvironment.Unlimited,Rule=DeckRule.Standard},token:created.HostToken).Room!;
+ Check(!conflictDeck.GuestReady&&conflictDeck.Status==MatchStatus.Waiting,"format conflict did not reset opponent ready");
+ var kicked=matches.KickGuest(created.RoomId,hostId,created.HostToken,guestId);
+ Check(kicked.Success&&!kicked.Room!.GuestPlayerId.HasValue,"kick guest failed");
+ var publicRejoin=matches.TryJoin(created.RoomId,null,Guid.NewGuid(),allowPublicWithoutCode:true);
+ Check(publicRejoin.Success,"public room direct join without code failed");
+});
+Test("match room completes game idempotently, enables multi-round rematch, and preserves Match Lab first-player config",()=>{
+ object?[] configArgs={new ShadowverseBeyond.Server.Controllers.DevToolsMatchesController.DevMatchConfigRequest{FirstPlayerMode="guest"},null,null};typeof(ShadowverseBeyond.Server.Controllers.DevToolsMatchesController).GetMethod("TryBuildConfig",BindingFlags.NonPublic|BindingFlags.Static)!.Invoke(null,configArgs);var cfg=(DevMatchConfig?)configArgs[1];var err=(string?)configArgs[2];
+ Check(cfg!=null&&cfg.FirstPlayerMode=="guest"&&err==null,"firstPlayerMode validation failed");
+ var matches=new MatchService(NullLogger<MatchService>.Instance);
+ var hostId=Guid.NewGuid();var guestId=Guid.NewGuid();
+ var room=matches.Create(hostId,devMatchConfig:cfg).Room!;
+ Check(room.DevMatchConfig?.FirstPlayerMode=="guest","CloneConfig lost FirstPlayerMode");
+ var joined=matches.TryJoin(room.RoomId,room.JoinCode,guestId).Room!;
+ matches.SubmitDeckSelection(room.RoomId,hostId,new(){DeckId=Guid.NewGuid(),DeckClass=CardClass.Forestcraft},token:room.HostToken);
+ matches.SubmitDeckSelection(room.RoomId,guestId,new(){DeckId=Guid.NewGuid(),DeckClass=CardClass.Swordcraft},token:joined.GuestToken);
+ matches.MarkReady(room.RoomId,hostId,true,room.HostToken);
+ matches.MarkReady(room.RoomId,guestId,true,joined.GuestToken);
+ var started1=matches.Start(room.RoomId,hostId,room.HostToken).Room!;
+ var game1=started1.ActiveGameId!;
+ Check(started1.Round==1&&started1.Status==MatchStatus.Started,"round 1 start failed");
+ var completed1=matches.CompleteGame(game1,hostId).Room!;
+ var completedDup=matches.CompleteGame(game1,hostId).Room!;
+ Check(completed1.HostWins==1&&completedDup.HostWins==1&&completedDup.Status==MatchStatus.Waiting&&!completedDup.HostReady&&!completedDup.GuestReady&&completedDup.ActiveGameId==game1,"CompleteGame not idempotent or did not reset to Waiting while preserving ActiveGameId");
+ matches.MarkReady(room.RoomId,hostId,true,room.HostToken);
+ matches.MarkReady(room.RoomId,guestId,true,joined.GuestToken);
+ var started2=matches.Start(room.RoomId,hostId,room.HostToken).Room!;
+ Check(started2.Round==2&&started2.Status==MatchStatus.Started&&started2.ActiveGameId!=game1,"round 2 rematch start failed");
+ var mirageRoom=matches.Create(hostId,mode:GameMode.Mirage).Room!;
+ Check(mirageRoom.Mode==GameMode.Mirage,"Mirage room mode not preserved");
+ var mirageGuest=matches.TryJoin(mirageRoom.RoomId,mirageRoom.JoinCode,guestId).Room!;
+ Check(matches.MarkReady(mirageRoom.RoomId,hostId,true,mirageRoom.HostToken).Success,"Mirage host ready without deck failed");
+ Check(matches.MarkReady(mirageRoom.RoomId,guestId,true,mirageGuest.GuestToken).Room!.Status==MatchStatus.Ready,"Mirage guest ready without deck failed");
+ Check(matches.Start(mirageRoom.RoomId,hostId,mirageRoom.HostToken).Success,"Mirage room start without deck failed");
+});
 if (Environment.GetEnvironmentVariable("AI_RULE_REASONING_OUTPUT") is { Length: >0 } reasoningOutput)
     Test("real provider reads class, maximum health and late mode rules", () => AiRuleReasoningProbe.Run(reasoningOutput));
 if (Environment.GetEnvironmentVariable("AI_PLAY_BINDING_OUTPUT") is { Length: >0 } bindingOutput)
@@ -1034,4 +1249,10 @@ public class Proxy<T> : DispatchProxy where T:class {
  public Func<MethodInfo,object?[]?,object?> Handler = null!;
  public static T Make(Func<MethodInfo,object?[]?,object?> handler){var p=Create<T,Proxy<T>>();((Proxy<T>)(object)p).Handler=handler;return p;}
  protected override object? Invoke(MethodInfo? method,object?[]? args){var value=Handler(method!,args);if(value!=null)return value;var type=method!.ReturnType;if(type==typeof(void))return null;if(type==typeof(bool))return false;if(type.IsValueType)return Activator.CreateInstance(type);return null;}
+}
+public sealed class HistoryQueryCounter : Microsoft.EntityFrameworkCore.Diagnostics.DbCommandInterceptor {
+ public int Selects;
+ private void Count(System.Data.Common.DbCommand command){if(command.CommandText.TrimStart().StartsWith("SELECT",StringComparison.OrdinalIgnoreCase))Interlocked.Increment(ref Selects);}
+ public override System.Data.Common.DbDataReader ReaderExecuted(System.Data.Common.DbCommand command,Microsoft.EntityFrameworkCore.Diagnostics.CommandExecutedEventData eventData,System.Data.Common.DbDataReader result){Count(command);return result;}
+ public override ValueTask<System.Data.Common.DbDataReader> ReaderExecutedAsync(System.Data.Common.DbCommand command,Microsoft.EntityFrameworkCore.Diagnostics.CommandExecutedEventData eventData,System.Data.Common.DbDataReader result,CancellationToken cancellationToken=default){Count(command);return ValueTask.FromResult(result);}
 }

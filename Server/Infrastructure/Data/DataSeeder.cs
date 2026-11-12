@@ -827,6 +827,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                         // --- END UPDATE CARD ABILITY ASSOCIATIONS ---
                     }
 
+                    await EnsureMirageCardSetAndBaselineCardsAsync(context, logger);
                     await EnsureTribeDefinitionsAsync(context, tribeRegistry, logger);
                     await EnsureQuestDefinitionsAsync(context, logger);
                     await NormalizeCardArtPathsAsync(context, workspaceRoot, logger);
@@ -910,6 +911,580 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
                 detailUpdates);
         }
 
+        private static async Task EnsureMirageCardSetAndBaselineCardsAsync(
+            ApplicationDbContext context,
+            ILogger logger)
+        {
+            var mirageSet = await context.CardSetDefinitions
+                .FirstOrDefaultAsync(set => set.Name == GameConstants.Cards.MirageCardSetName);
+
+            if (mirageSet == null)
+            {
+                var usedSequences = await context.CardSetDefinitions
+                    .Where(set => set.Region == 9)
+                    .Select(set => set.Sequence)
+                    .ToListAsync();
+                var sequence = 99;
+                while (usedSequences.Contains(sequence) && sequence > 0)
+                {
+                    sequence--;
+                }
+
+                mirageSet = new CardSetDefinition
+                {
+                    Name = GameConstants.Cards.MirageCardSetName,
+                    Abbreviation = "MRG",
+                    Region = 9,
+                    Sequence = sequence,
+                    Environments = new List<DeckEnvironment>(),
+                    CreatedAt = DateTime.UtcNow
+                };
+                context.CardSetDefinitions.Add(mirageSet);
+                await context.SaveChangesAsync();
+                logger.LogInformation("Created dedicated Mirage CardSetDefinition '{Name}' (Id={Id}).", mirageSet.Name, mirageSet.Id);
+            }
+            else if (mirageSet.Environments != null && mirageSet.Environments.Count > 0)
+            {
+                mirageSet.Environments = new List<DeckEnvironment>();
+                await context.SaveChangesAsync();
+            }
+
+            var mirageLeader = await context.CardDefinitions
+                .FirstOrDefaultAsync(card => card.Id == GameConstants.Cards.MirageLeaderCardId);
+            if (mirageLeader == null)
+            {
+                mirageLeader = new CardDefinition
+                {
+                    Id = GameConstants.Cards.MirageLeaderCardId,
+                    Name = "幻境主战者",
+                    Type = CardType.Leader,
+                    Rarity = CardRarity.Special,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Cost = 0,
+                    Attack = 0,
+                    Health = GameConstants.Health.PlayerMaxHealth,
+                    Description = string.Empty,
+                    IsCollectible = false,
+                    IsMirageCard = true,
+                    MirageTavernTier = null,
+                    Class = CardClass.Neutral,
+                    AbilityIds = new List<long>()
+                };
+                context.CardDefinitions.Add(mirageLeader);
+                await context.SaveChangesAsync();
+                logger.LogInformation("Seeded dedicated Mirage Leader card definition (Id={Id}).", mirageLeader.Id);
+            }
+            else if (!mirageLeader.IsMirageCard || mirageLeader.CardSetDefinitionId != mirageSet.Id)
+            {
+                mirageLeader.IsMirageCard = true;
+                mirageLeader.CardSet = GameConstants.Cards.MirageCardSetName;
+                mirageLeader.CardSetDefinitionId = mirageSet.Id;
+                await context.SaveChangesAsync();
+            }
+
+            var existingMirageIds = (await context.CardDefinitions
+                .Where(card => card.Id >= 900001 && card.Id <= 900200)
+                .Select(card => card.Id)
+                .ToListAsync())
+                .ToHashSet();
+
+            var growerAbilityId = 90000801L;
+            var leaderSmithAbilityId = 90010101L;
+            var leaderMageAbilityId = 90010201L;
+            var leaderWarGodAbilityId = 90010301L;
+            var baselineMirageCards = new List<CardDefinition>
+            {
+                new()
+                {
+                    Id = 900101,
+                    Name = "铁匠宗师·巴尔托",
+                    Type = CardType.Leader,
+                    Rarity = CardRarity.Legend,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Swordcraft,
+                    Cost = 0,
+                    MirageTavernTier = null,
+                    Attack = 0,
+                    Health = GameConstants.Health.PlayerMaxHealth,
+                    Description = "【启动】消费1；随机使1个自己的从者获得+1/+1。",
+                    ArtPreview = "/assets/cards/1471592/preview.png",
+                    ArtDetail = "/assets/cards/1471592/detail.png",
+                    IsCollectible = true,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long> { leaderSmithAbilityId }
+                },
+                new()
+                {
+                    Id = 900102,
+                    Name = "星界导师·艾莉亚",
+                    Type = CardType.Leader,
+                    Rarity = CardRarity.Legend,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Runecraft,
+                    Cost = 0,
+                    MirageTavernTier = null,
+                    Attack = 0,
+                    Health = GameConstants.Health.PlayerMaxHealth,
+                    Description = "【启动】消费2；指定1个自己的从者，使其获得+2/+2。",
+                    ArtPreview = "/assets/cards/2306196/preview.png",
+                    ArtDetail = "/assets/cards/2306196/detail.png",
+                    IsCollectible = true,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long> { leaderMageAbilityId }
+                },
+                new()
+                {
+                    Id = 900103,
+                    Name = "苍穹战神·雷恩",
+                    Type = CardType.Leader,
+                    Rarity = CardRarity.Legend,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Dragoncraft,
+                    Cost = 0,
+                    MirageTavernTier = null,
+                    Attack = 0,
+                    Health = GameConstants.Health.PlayerMaxHealth,
+                    Description = "自己的从者全体获得+1/+0。",
+                    ArtPreview = "/assets/cards/7210489/preview.png",
+                    ArtDetail = "/assets/cards/7210489/detail.png",
+                    IsCollectible = true,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long> { leaderWarGodAbilityId }
+                },
+                new()
+                {
+                    Id = 900001,
+                    Name = "幻境新兵",
+                    Type = CardType.Follower,
+                    Rarity = CardRarity.Bronze,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Neutral,
+                    Cost = 1,
+                    MirageTavernTier = 1,
+                    Attack = 2,
+                    Health = 4,
+                    Description = string.Empty,
+                    IsCollectible = true,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long>()
+                },
+                new()
+                {
+                    Id = 900002,
+                    Name = "幻境斥候",
+                    Type = CardType.Follower,
+                    Rarity = CardRarity.Bronze,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Neutral,
+                    Cost = 2,
+                    MirageTavernTier = 2,
+                    Attack = 3,
+                    Health = 4,
+                    Description = string.Empty,
+                    IsCollectible = true,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long>()
+                },
+                new()
+                {
+                    Id = 900003,
+                    Name = "幻境剑士",
+                    Type = CardType.Follower,
+                    Rarity = CardRarity.Silver,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Swordcraft,
+                    Cost = 3,
+                    MirageTavernTier = 3,
+                    Attack = 4,
+                    Health = 4,
+                    Description = string.Empty,
+                    IsCollectible = true,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long>()
+                },
+                new()
+                {
+                    Id = 900004,
+                    Name = "幻境魔导",
+                    Type = CardType.Follower,
+                    Rarity = CardRarity.Silver,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Runecraft,
+                    Cost = 4,
+                    MirageTavernTier = 4,
+                    Attack = 5,
+                    Health = 5,
+                    Description = string.Empty,
+                    IsCollectible = true,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long>()
+                },
+                new()
+                {
+                    Id = 900005,
+                    Name = "幻境巨龙",
+                    Type = CardType.Follower,
+                    Rarity = CardRarity.Gold,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Dragoncraft,
+                    Cost = 5,
+                    MirageTavernTier = 5,
+                    Attack = 6,
+                    Health = 6,
+                    Description = string.Empty,
+                    IsCollectible = true,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long>()
+                },
+                new()
+                {
+                    Id = 900006,
+                    Name = "幻境主宰",
+                    Type = CardType.Follower,
+                    Rarity = CardRarity.Legend,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Neutral,
+                    Cost = 6,
+                    MirageTavernTier = 6,
+                    Attack = 8,
+                    Health = 8,
+                    Description = string.Empty,
+                    IsCollectible = true,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long>()
+                },
+                new()
+                {
+                    Id = 900007,
+                    Name = "幻境使魔",
+                    Type = CardType.Follower,
+                    Rarity = CardRarity.Bronze,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Abysscraft,
+                    Cost = 1,
+                    MirageTavernTier = 1,
+                    Attack = 1,
+                    Health = 1,
+                    Description = string.Empty,
+                    IsCollectible = true,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long>()
+                },
+                new()
+                {
+                    Id = 900008,
+                    Name = "幻境成长剑士",
+                    Type = CardType.Follower,
+                    Rarity = CardRarity.Silver,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Swordcraft,
+                    Cost = 3,
+                    MirageTavernTier = 3,
+                    Attack = 1,
+                    Health = 3,
+                    Description = "【攻击时】获得+1/+1。",
+                    IsCollectible = true,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long> { growerAbilityId }
+                },
+                new()
+                {
+                    Id = 900009,
+                    Name = "幻境圣坛",
+                    Type = CardType.Amulet,
+                    Rarity = CardRarity.Bronze,
+                    CardSet = GameConstants.Cards.MirageCardSetName,
+                    CardSetDefinitionId = mirageSet.Id,
+                    Class = CardClass.Havencraft,
+                    Cost = 1,
+                    MirageTavernTier = 1,
+                    Attack = 0,
+                    Health = 0,
+                    Description = string.Empty,
+                    IsCollectible = false,
+                    IsMirageCard = true,
+                    Keywords = new List<string>(),
+                    AbilityIds = new List<long>()
+                }
+            };
+
+            var missingCards = baselineMirageCards
+                .Where(card => !existingMirageIds.Contains(card.Id))
+                .ToList();
+            if (missingCards.Count > 0)
+            {
+                await context.CardDefinitions.AddRangeAsync(missingCards);
+                await context.SaveChangesAsync();
+                logger.LogInformation("Seeded {Count} baseline Mirage cards.", missingCards.Count);
+            }
+
+            if (!await context.CardAbilities.AnyAsync(ability => ability.Id == growerAbilityId))
+            {
+                var templateAbility = await context.CardAbilities
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(ability => ability.CardId == 1471592);
+
+                var growerJsonConfig = templateAbility?.JsonConfig ?? """
+                    {
+                      "name": "幻境成长剑士1",
+                      "description": "攻击时获得+1/+1",
+                      "abilityKeywords": [{ "keyword": "AttackEffect" }],
+                      "type": "Triggered",
+                      "trigger": {
+                        "eventTypes": ["AttackDeclared"],
+                        "relationType": "Self",
+                        "timing": "On",
+                        "validZones": ["Field"]
+                      },
+                      "conditions": [],
+                      "targets": [],
+                      "effects": [
+                        {
+                          "type": "ApplyBuff",
+                          "target": "Self",
+                          "parameters": {
+                            "Attack": { "type": "Constant", "value": 1 },
+                            "Health": { "type": "Constant", "value": 1 },
+                            "Duration": { "type": "Constant", "value": "Permanent" }
+                          }
+                        }
+                      ]
+                    }
+                    """;
+
+                context.CardAbilities.Add(new AbilityDefinition
+                {
+                    Id = growerAbilityId,
+                    CardId = 900008,
+                    Name = "幻境成长剑士1",
+                    Description = "【攻击时】获得+1/+1。",
+                    AbilityType = templateAbility?.AbilityType ?? (int)AbilityType.Triggered,
+                    Priority = templateAbility?.Priority ?? 0,
+                    IsActive = true,
+                    JsonConfig = growerJsonConfig,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+                await context.SaveChangesAsync();
+            }
+
+            var leaderAbilitiesToEnsure = new List<AbilityDefinition>
+            {
+                new()
+                {
+                    Id = leaderSmithAbilityId,
+                    CardId = 900101,
+                    Name = "幻境锻造",
+                    Description = "【启动】消费1；随机使1个自己的从者获得+1/+1。",
+                    AbilityType = (int)AbilityType.Activated,
+                    Priority = 0,
+                    IsActive = true,
+                    JsonConfig = """
+                    {
+                      "name": "幻境锻造",
+                      "description": "【启动】消费1；随机使1个自己的从者获得+1/+1。",
+                      "abilityKeywords": [{ "keyword": "Act", "value": 1 }],
+                      "type": "Activated",
+                      "trigger": {
+                        "eventTypes": ["Act"],
+                        "relationType": "TargetSelf",
+                        "timing": "On",
+                        "validZones": ["Field"],
+                        "isEnabled": true
+                      },
+                      "conditions": [],
+                      "targets": [
+                        {
+                          "targetHandlingStrategy": "BlockPlayerOperation",
+                          "query": {
+                            "sourcePoolExpression": "context.owner.field.query((self.Type) == (\"Follower\")).take(random 1)"
+                          }
+                        }
+                      ],
+                      "effects": [
+                        {
+                          "type": "ModifyStatus",
+                          "parameters": {
+                            "attackModifier": { "value": 1 },
+                            "healthModifier": { "value": 1 },
+                            "durationType": { "value": "Permanent" },
+                            "modifierLayer": { "value": "Additive" },
+                            "canStack": { "value": true }
+                          }
+                        }
+                      ]
+                    }
+                    """,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                },
+                new()
+                {
+                    Id = leaderMageAbilityId,
+                    CardId = 900102,
+                    Name = "星界赐福",
+                    Description = "【启动】消费2；指定1个自己的从者，使其获得+2/+2。",
+                    AbilityType = (int)AbilityType.Activated,
+                    Priority = 0,
+                    IsActive = true,
+                    JsonConfig = """
+                    {
+                      "name": "星界赐福",
+                      "description": "【启动】消费2；指定1个自己的从者，使其获得+2/+2。",
+                      "abilityKeywords": [{ "keyword": "Act", "value": 2 }],
+                      "type": "Activated",
+                      "trigger": {
+                        "eventTypes": ["Act"],
+                        "relationType": "TargetSelf",
+                        "timing": "On",
+                        "validZones": ["Field"],
+                        "isEnabled": true
+                      },
+                      "conditions": [],
+                      "targets": [
+                        {
+                          "playerChoiceOptions": {
+                            "isRequired": true,
+                            "canCancel": true,
+                            "minCount": 1,
+                            "maxCount": 1
+                          },
+                          "targetHandlingStrategy": "BlockPlayerOperation",
+                          "query": {
+                            "sourcePoolExpression": "context.owner.field.query((self.Type) == (\"Follower\"))"
+                          }
+                        }
+                      ],
+                      "effects": [
+                        {
+                          "type": "ModifyStatus",
+                          "parameters": {
+                            "attackModifier": { "value": 2 },
+                            "healthModifier": { "value": 2 },
+                            "durationType": { "value": "Permanent" },
+                            "modifierLayer": { "value": "Additive" },
+                            "canStack": { "value": true }
+                          }
+                        }
+                      ]
+                    }
+                    """,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                },
+                new()
+                {
+                    Id = leaderWarGodAbilityId,
+                    CardId = 900103,
+                    Name = "战神威压",
+                    Description = "自己的从者全体获得+1/+0。",
+                    AbilityType = (int)AbilityType.Continuous,
+                    Priority = 0,
+                    IsActive = true,
+                    JsonConfig = """
+                    {
+                      "name": "战神威压",
+                      "description": "自己的从者全体获得+1/+0。",
+                      "abilityKeywords": [],
+                      "type": "Continuous",
+                      "trigger": {
+                        "eventTypes": [
+                          "Summon",
+                          "PlayCard",
+                          "Destroy",
+                          "Vanish",
+                          "Transform",
+                          "CardSold",
+                          "CardSoldCompleted",
+                          "MirageRoundStarted",
+                          "MirageSelectLeaderRequested",
+                          "TurnStart",
+                          "SilenceApplied",
+                          "SilenceRemoved"
+                        ],
+                        "relationType": "Any",
+                        "timing": "After",
+                        "validZones": ["Field"],
+                        "isEnabled": true
+                      },
+                      "conditions": [],
+                      "targets": [
+                        {
+                          "targetHandlingStrategy": "DoNotIntercept",
+                          "query": {
+                            "sourcePoolExpression": "context.owner.field.query((self.Type) == (\"Follower\"))"
+                          }
+                        }
+                      ],
+                      "effects": [],
+                      "auras": [
+                        {
+                          "name": "ReinhardAttackAura",
+                          "isEnabled": true,
+                          "buffConfigs": [
+                            {
+                              "key": "MirageLeader900103Aura",
+                              "durationType": "Permanent",
+                              "canStack": false,
+                              "statModifiers": [
+                                {
+                                  "stat": "Attack",
+                                  "layer": "Additive",
+                                  "value": { "value": 1 }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                    """,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                }
+            };
+
+            var addedLeaderAbility = false;
+            foreach (var seedAbility in leaderAbilitiesToEnsure)
+            {
+                var exists = await context.CardAbilities
+                    .AsNoTracking()
+                    .AnyAsync(ability => ability.Id == seedAbility.Id);
+                if (!exists)
+                {
+                    context.CardAbilities.Add(seedAbility);
+                    addedLeaderAbility = true;
+                }
+            }
+            if (addedLeaderAbility)
+            {
+                await context.SaveChangesAsync();
+            }
+        }
+
         private static async Task EnsureTribeDefinitionsAsync(
             ApplicationDbContext context,
             ITribeRegistry tribeRegistry,
@@ -917,6 +1492,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Data // Added ShadowverseBeyon
         {
             var allTribes = await context.CardDefinitions
                 .AsNoTracking()
+                .Where(card => !card.IsMirageCard)
                 .Select(card => card.Tribe)
                 .ToListAsync();
 

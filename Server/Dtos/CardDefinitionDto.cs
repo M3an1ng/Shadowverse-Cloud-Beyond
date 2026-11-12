@@ -67,6 +67,18 @@ namespace ShadowverseBeyond.Server.Dtos
         [JsonPropertyName("isCollectible")]
         public bool IsCollectible { get; init; } = true;
 
+        [JsonPropertyName("isImplemented")]
+        public bool IsImplemented { get; init; } = true;
+
+        [JsonPropertyName("presentation")]
+        public System.Text.Json.JsonElement? Presentation { get; init; }
+
+        [JsonPropertyName("isMirageCard")]
+        public bool IsMirageCard { get; init; } = false;
+
+        [JsonPropertyName("mirageTavernTier")]
+        public int? MirageTavernTier { get; init; }
+
         [JsonPropertyName("keywords")]
         public List<string> Keywords { get; init; } = new List<string>();
 

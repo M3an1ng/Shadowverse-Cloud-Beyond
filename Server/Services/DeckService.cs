@@ -1,4 +1,4 @@
-﻿using System.Linq;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
@@ -775,7 +775,7 @@ public class DeckService : IDeckService
     {
         var cards = await _db.CardDefinitions
             .AsNoTracking()
-            .Where(card => card.Id > 0 && card.Type != CardType.Leader && card.IsCollectible)
+            .Where(card => card.Id > 0 && !card.IsMirageCard && card.Type != CardType.Leader && card.IsCollectible)
             .Select(card => new { card.Id, card.Class })
             .ToListAsync(cancellationToken);
 

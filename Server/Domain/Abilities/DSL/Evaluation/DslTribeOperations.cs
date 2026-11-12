@@ -16,7 +16,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             var semantics = context?.ServiceProvider.GetService<ITribeSemantics>();
             if (semantics != null)
             {
-                return semantics.Contains(source, expected);
+                return semantics.Contains(source, expected, context?.CurrentGameState?.Mode);
             }
 
             return source.Any(item => string.Equals(item?.Trim(), expected.Trim(), StringComparison.OrdinalIgnoreCase));

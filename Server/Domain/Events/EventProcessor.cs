@@ -82,9 +82,21 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
                 // Event history persistence is handled in the transaction phase.
                 // Keep only GameEnd cleanup here to avoid stale history across matches.
-                if (processingContext.CurrentGameState != null && initialEvent.EventType == EventType.GameEnd)
+                if (processingContext.CurrentGameState != null
+                    && (initialEvent.EventType == EventType.GameEnd
+                        || (initialEvent is MirageCombatResultCommittedEvent committedEnd && !committedEnd.WasNoOpIdempotent && committedEnd.IsGameOverResult)))
                 {
-                    await _eventHistoryService.ClearHistoryForGameAsync(processingContext.CurrentGameState.GameId);
+                    if (initialEvent is MirageCombatResultCommittedEvent mirageEndEvent)
+                    {
+                        result.ResultingDtos.Add(new GameOverEventDto(
+                            mirageEndEvent.WinnerPlayerId,
+                            mirageEndEvent.WinnerPlayerId,
+                            mirageEndEvent.LoserPlayerId,
+                            mirageEndEvent.EndReason));
+                    }
+
+                    var historyService = processingContext.EventHistoryService ?? _eventHistoryService;
+                    await historyService.ClearHistoryForGameAsync(processingContext.CurrentGameState.GameId);
                     _logger.LogInformation("[EventProcessor] Cleared event history for ended game {GameId}.", processingContext.CurrentGameState.GameId);
                 }
             }
@@ -117,6 +129,18 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.Evolve => ConvertEvolveEvent(gameEvent, context),
                     EventType.Draw => ConvertDrawEvent(gameEvent),
                     EventType.TurnStart => ConvertTurnStartEvent(gameEvent, context),
+                    EventType.MirageRoundStarted => ConvertMirageStateSyncEvent(gameEvent, context),
+                    EventType.MirageSetReadyRequested => ConvertMirageSetReadyEvent(gameEvent, context),
+                    EventType.MirageRefreshShopRequested => ConvertMirageStateSyncEvent(gameEvent, context),
+                    EventType.MirageUpgradeTierRequested => ConvertMirageStateSyncEvent(gameEvent, context),
+                    EventType.MirageToggleFreezeRequested => ConvertMirageStateSyncEvent(gameEvent, context),
+                    EventType.MirageBuyOfferRequested => ConvertMirageStateSyncEvent(gameEvent, context),
+                    EventType.MirageRedeemTicketRequested => ConvertMirageStateSyncEvent(gameEvent, context),
+                    EventType.MirageSelectLeaderRequested => ConvertMirageStateSyncEvent(gameEvent, context),
+                    EventType.MirageTripleSynthesized => ConvertMirageStateSyncEvent(gameEvent, context),
+                    EventType.CardSold => ConvertMirageStateSyncEvent(gameEvent, context),
+                    EventType.FieldReordered => ConvertMirageStateSyncEvent(gameEvent, context),
+                    EventType.MirageCombatResultCommitted => ConvertMirageCombatResultCommittedEvent(gameEvent, context),
                     EventType.TurnEnd => ConvertTurnEndEvent(gameEvent, context),
                     EventType.AbilityTriggered => ConvertAbilityTriggeredEvent(gameEvent),
                     EventType.BuffApplied => ConvertBuffAppliedEvent(gameEvent, context),
@@ -166,6 +190,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                     EventType.SuperEvolveStateUpdated => ConvertSuperEvolveStateUpdatedEvent(gameEvent),
                     EventType.CardRevealed => ConvertCardRevealedEvent(gameEvent, context),
                     EventType.CardFused => ConvertFusionEvent(gameEvent),
+                    EventType.Attack => ConvertAttackEvent(gameEvent),
                     _ => null
                 };
             }
@@ -179,6 +204,15 @@ namespace ShadowverseBeyond.Server.Domain.Events
         }
 
         // DTO转换方法（简化实现）
+        private static GameEventDto? ConvertAttackEvent(IGameEvent gameEvent)
+        {
+            if (gameEvent is not AttackEvent e || e.Attacker == null || e.TargetCard == null) return null;
+            return new AttackDeclaredEventDto(
+                e.Attacker.OwnerPlayerId,
+                e.Attacker.InstanceId.ToString(),
+                e.TargetCard.InstanceId.ToString());
+        }
+
         private GameEventDto? ConvertPlayCardEvent(IGameEvent gameEvent, GameContext context)
         {
             if (gameEvent is not PlayCardEvent e || e.Source?.Player == null || e.Target.FirstOrDefault()?.Card == null) return null;
@@ -313,8 +347,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 playerId: card.OwnerPlayerId,
                 cardUid: card.InstanceId,
                 fromZone: e.FromZone,
-                toZone: e.ToZone,
-                moveReason: e.MoveReason.ToString(),
+                toZone: e.ActualToZone ?? throw new InvalidOperationException("CardMoved projection requires an applied move."),
+                moveReason: e.ActualMoveReason?.ToString() ?? throw new InvalidOperationException("CardMoved result reason is missing."),
                 movedCard: cardDto
             );
         }
@@ -358,6 +392,36 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 gameStateSnapshot,
                 turnStartEvent.Source.Player.PlayerId
             );
+        }
+
+        private GameEventDto? ConvertMirageStateSyncEvent(IGameEvent gameEvent, GameContext context)
+        {
+            var gameStateSnapshot = GameStateProjection.Create(context.CurrentGameState, context);
+            var activePlayerId = gameEvent.Source?.Player?.PlayerId
+                ?? context.CurrentGameState.CurrentPlayerId
+                ?? context.CurrentGameState.Player1.PlayerId;
+            return new TurnStartedEventDto(gameStateSnapshot, activePlayerId);
+        }
+
+        private GameEventDto? ConvertMirageSetReadyEvent(IGameEvent gameEvent, GameContext context)
+        {
+            if (gameEvent is MirageSetReadyRequestedEvent readyEvent && readyEvent.TriggeredRoundAdvance)
+            {
+                // When both players are ready, ReceiveMirageCombatReplay followed by MirageCombatResultCommittedEvent will emit the state sync DTO.
+                return null;
+            }
+
+            return ConvertMirageStateSyncEvent(gameEvent, context);
+        }
+
+        private GameEventDto? ConvertMirageCombatResultCommittedEvent(IGameEvent gameEvent, GameContext context)
+        {
+            if (gameEvent is MirageCombatResultCommittedEvent commitEvent && commitEvent.WasNoOpIdempotent)
+            {
+                return null;
+            }
+
+            return ConvertMirageStateSyncEvent(gameEvent, context);
         }
 
         private GameEventDto? ConvertTurnEndEvent(IGameEvent gameEvent, GameContext context)

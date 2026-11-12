@@ -12,6 +12,8 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using ShadowverseBeyond.Server.Infrastructure.Services;
+using System.IO.Compression;
 
 namespace ShadowverseBeyond.Server.Controllers
 {
@@ -25,19 +27,23 @@ namespace ShadowverseBeyond.Server.Controllers
         private readonly IMatchService _matchService;
         private readonly ReplayOptions _options;
         private readonly IRecordedEventMapper _recordedEventMapper;
+        private readonly SqliteReplayFrames? _frames;
+        private readonly SqliteReplayHistory? _history;
 
         public ReplayController(
             ICommittedEventJournal journal,
             ISnapshotStore snapshots,
             IMatchService matchService,
             IRecordedEventMapper recordedEventMapper,
-            IOptions<ReplayOptions> options)
+            IOptions<ReplayOptions> options, SqliteReplayFrames? frames = null, SqliteReplayHistory? history = null)
         {
             _journal = journal;
             _snapshots = snapshots;
             _matchService = matchService;
             _recordedEventMapper = recordedEventMapper;
             _options = options.Value;
+            _frames = frames;
+            _history = history;
         }
 
         [HttpGet("{gameId}/events")]
@@ -49,6 +55,10 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             if (string.IsNullOrWhiteSpace(gameId)) return BadRequest("gameId is required");
             if (!HasReplayReadAccess(gameId)) return Forbid();
+            if (_history != null && await _history.IsCurrentFormatAsync(gameId,cancellationToken))
+                return Conflict(new { Code = "event_history_use_history_events_endpoint" });
+            if (_frames != null && await _frames.IsCurrentFormatAsync(gameId, cancellationToken))
+                return Conflict(new { Code = "frame_recording_use_frames_endpoint" });
             var events = await _journal.ReadRangeAsync(gameId, fromSeq, limit, cancellationToken);
             return Ok(events);
         }
@@ -60,6 +70,24 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             if (string.IsNullOrWhiteSpace(gameId)) return BadRequest("gameId is required");
             if (!HasReplayReadAccess(gameId)) return Forbid();
+
+            if (_history != null && await _history.IsCurrentFormatAsync(gameId,cancellationToken))
+            {
+                var eventArchive = await _history.ArchiveAsync(gameId,cancellationToken);
+                using var eventBytes = new MemoryStream();
+                using (var gzip = new GZipStream(eventBytes,CompressionLevel.Optimal,leaveOpen:true))
+                    await JsonSerializer.SerializeAsync(gzip,eventArchive,SqliteReplayFrames.Json,cancellationToken);
+                return File(eventBytes.ToArray(),"application/gzip",$"replay-events-{gameId}.json.gz");
+            }
+
+            if (_frames != null && await _frames.IsCurrentFormatAsync(gameId, cancellationToken))
+            {
+                var archive = await _frames.ReadAsync(gameId, cancellationToken);
+                using var archiveBytes = new MemoryStream();
+                using (var gzip = new GZipStream(archiveBytes, CompressionLevel.Optimal, leaveOpen: true))
+                    await JsonSerializer.SerializeAsync(gzip, archive, SqliteReplayFrames.Json, cancellationToken);
+                return File(archiveBytes.ToArray(), "application/gzip", $"replay-{gameId}.json.gz");
+            }
 
             var headSeq = await _journal.GetHeadSeqAsync(gameId, cancellationToken);
             var all = new List<RecordedCommittedEventDto>();
@@ -96,6 +124,10 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             if (string.IsNullOrWhiteSpace(gameId)) return BadRequest("gameId is required");
             if (!HasReplayReadAccess(gameId)) return Forbid();
+            if (_history != null && await _history.IsCurrentFormatAsync(gameId,cancellationToken))
+                return Ok(await _history.ManifestAsync(gameId,cancellationToken));
+            if (_frames != null && await _frames.IsCurrentFormatAsync(gameId, cancellationToken))
+                return Ok((await _frames.ReadAsync(gameId, cancellationToken)).Manifest);
             var headSeq = await _journal.GetHeadSeqAsync(gameId, cancellationToken);
             var snapshot = await _snapshots.GetLatestAsync(gameId, cancellationToken);
             return Ok(new
@@ -114,6 +146,10 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             if (string.IsNullOrWhiteSpace(gameId)) return BadRequest("gameId is required");
             if (!HasReplayReadAccess(gameId)) return Forbid();
+            if (_history != null && await _history.IsCurrentFormatAsync(gameId,cancellationToken))
+                return Conflict(new { Code = "use_history_restore_at_event_sequence" });
+            if (_frames != null && await _frames.IsCurrentFormatAsync(gameId, cancellationToken))
+                return Conflict(new { Code = "event_sequence_not_supported_use_frame_number" });
             var snapshot = await _snapshots.GetAtOrBeforeAsync(gameId, atSeq, cancellationToken);
             if (snapshot == null) return NotFound();
             return Ok(snapshot);
@@ -127,6 +163,10 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             if (string.IsNullOrWhiteSpace(gameId)) return BadRequest("gameId is required");
             if (!HasReplayReadAccess(gameId)) return Forbid();
+            if (_history != null && await _history.IsCurrentFormatAsync(gameId,cancellationToken))
+                return Ok(await _history.RestoreAsync(gameId,atSeq == long.MaxValue ? (await _history.ManifestAsync(gameId,cancellationToken)).HeadSeq : atSeq,cancellationToken));
+            if (_frames != null && await _frames.IsCurrentFormatAsync(gameId, cancellationToken))
+                return Ok(await _frames.ReadAsync(gameId, cancellationToken));
 
             var headSeq = await _journal.GetHeadSeqAsync(gameId, cancellationToken);
             var effectiveSeq = atSeq == long.MaxValue ? headSeq : Math.Min(atSeq, headSeq);
@@ -160,6 +200,17 @@ namespace ShadowverseBeyond.Server.Controllers
         {
             if (string.IsNullOrWhiteSpace(gameId)) return BadRequest("gameId is required");
             if (!HasReplayReadAccess(gameId)) return Forbid();
+            if (_history != null && await _history.IsCurrentFormatAsync(gameId,cancellationToken))
+            {
+                var eventArchive = await _history.ArchiveAsync(gameId,cancellationToken);
+                await _history.RestoreAsync(gameId,eventArchive.Manifest.HeadSeq,cancellationToken);
+                return Ok(new { FormatVersion = 3, Status = "valid", eventArchive.Manifest });
+            }
+            if (_frames != null && await _frames.IsCurrentFormatAsync(gameId, cancellationToken))
+            {
+                var archive = await _frames.ReadAsync(gameId, cancellationToken);
+                return Ok(new { FormatVersion = 2, Status = "valid", archive.Manifest, MessageCount = archive.Frames.Sum(f => f.Messages.Count) });
+            }
 
             var headSeq = await _journal.GetHeadSeqAsync(gameId, cancellationToken);
             var expectedSeq = 1L;

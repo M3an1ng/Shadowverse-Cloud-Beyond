@@ -285,6 +285,11 @@ public partial class ApplicationDbContext : DbContext
       entity.Property(e => e.UpdatedBy)
         .HasMaxLength(50);
 
+      entity.Property(e => e.IsMirageCard)
+        .HasDefaultValue(false);
+
+      entity.Property(e => e.MirageTavernTier);
+
     });
   }
 

@@ -1070,20 +1070,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                 return AbilityProcessResult.Success(new List<Effect>(), auraEvents); // Return a successful result with no effects.
             }
 
-            if (runsEffects && abilityConditionsPassed)
-            {
-                var intermezzoOwner = IntromezzoGate.Owner(ability, context);
-                if (intermezzoOwner != null)
-                {
-                    if (recordTrigger && !intermezzoOwner.ConsumeIntromezzo())
-                        return AbilityProcessResult.Success(new List<Effect>(), auraEvents);
-                    if (!recordTrigger && !intermezzoOwner.IsIntromezzoActive)
-                        return AbilityProcessResult.Success(new List<Effect>(), auraEvents, true);
-                }
-            }
-
             var hasPlayerChoice = ability.Targets.Any(t => t.Config.PlayerChoiceOptions?.IsRequired == true);
-            var shouldDeferResolution = deferTargetResolution && !hasPlayerChoice && !runsAura;
+            var shouldDeferResolution = deferTargetResolution && !hasPlayerChoice && !runsAura
+                && IntromezzoGate.Owner(ability, context) == null;
 
             TargetResolutionResult targetResult;
             var needsAbilityTargets = (runsEffects && abilityConditionsPassed) || runsAura;
@@ -1151,6 +1140,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             var shouldEmitAbilityTriggeredEvent = false;
             if (runsEffects && abilityConditionsPassed)
             {
+                var intermezzoOwner = IntromezzoGate.Owner(ability, context);
+                if (intermezzoOwner != null)
+                {
+                    if (recordTrigger && !IntromezzoGate.Enter(ability, context))
+                        return AbilityProcessResult.Success(new List<Effect>(), auraEvents);
+                    if (!recordTrigger && !intermezzoOwner.IsIntromezzoActive)
+                        return AbilityProcessResult.Success(new List<Effect>(), auraEvents, true);
+                }
                 try
                 {
                     effects = await ability.CreateEffectsAsync(context, targetResult);
@@ -1294,6 +1291,112 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     ability.KeywordSummary, ability.RuntimeId);
                 return new DomainOperationResult { Success = false, ErrorMessage = ex.Message };
             }
+        }
+
+        internal void CopyToStaged(
+            AbilityManager staged,
+            Dictionary<Guid, CardInstance> stagedCards,
+            IServiceProvider stagedServices)
+        {
+            if (staged == null) throw new ArgumentNullException(nameof(staged));
+            if (stagedCards == null) throw new ArgumentNullException(nameof(stagedCards));
+            if (stagedServices == null) throw new ArgumentNullException(nameof(stagedServices));
+
+            staged.ClearAllAbilities();
+
+            foreach (var ability in _allAbilities)
+            {
+                if (ability is Ability concreteAbility)
+                {
+                    var restored = ReplayExecutionState.RestoreAbility(
+                        concreteAbility.CaptureResumeState(),
+                        stagedCards,
+                        stagedServices);
+                    staged.RegisterAbility(restored);
+                }
+                else
+                {
+                    staged.RegisterAbility(ability);
+                }
+            }
+
+            staged._abilityTombstones.Clear();
+            foreach (var (runtimeId, tombstone) in _abilityTombstones)
+            {
+                staged._abilityTombstones[runtimeId] = tombstone;
+            }
+
+            staged._abilityRegistrationOrders.Clear();
+            foreach (var (runtimeId, order) in _abilityRegistrationOrders)
+            {
+                staged._abilityRegistrationOrders[runtimeId] = order;
+            }
+
+            staged._abilityRegistrationSequence = _abilityRegistrationSequence;
+        }
+
+        internal void ReplaceStateFrom(
+            AbilityManager staged,
+            IReadOnlyDictionary<Guid, CardInstance> liveCards)
+        {
+            if (staged == null) throw new ArgumentNullException(nameof(staged));
+            if (liveCards == null) throw new ArgumentNullException(nameof(liveCards));
+
+            foreach (var ability in staged._allAbilities.OfType<Ability>())
+            {
+                if (ability.SourceCardId.HasValue && liveCards.TryGetValue(ability.SourceCardId.Value, out var liveCard))
+                {
+                    ability.RebindSourceCard(liveCard);
+                }
+            }
+
+            _allAbilities.Clear();
+            _allAbilities.AddRange(staged._allAbilities);
+
+            _abilitiesByEventType.Clear();
+            foreach (var (eventType, list) in staged._abilitiesByEventType)
+            {
+                _abilitiesByEventType[eventType] = new List<IAbility>(list);
+            }
+
+            _abilitiesByCardId.Clear();
+            foreach (var (cardId, list) in staged._abilitiesByCardId)
+            {
+                _abilitiesByCardId[cardId] = new List<IAbility>(list);
+            }
+
+            _abilitiesByRuntimeId.Clear();
+            foreach (var (runtimeId, ability) in staged._abilitiesByRuntimeId)
+            {
+                _abilitiesByRuntimeId[runtimeId] = ability;
+            }
+
+            _abilityRuntimeIdsByBuffId.Clear();
+            foreach (var (buffId, runtimeIds) in staged._abilityRuntimeIdsByBuffId)
+            {
+                _abilityRuntimeIdsByBuffId[buffId] = new List<Guid>(runtimeIds);
+            }
+
+            _abilityTombstones.Clear();
+            foreach (var (runtimeId, snapshot) in staged._abilityTombstones)
+            {
+                _abilityTombstones[runtimeId] = snapshot;
+            }
+
+            _abilityTriggeredListenerRuntimeIds.Clear();
+            foreach (var (runtimeId, flag) in staged._abilityTriggeredListenerRuntimeIds)
+            {
+                _abilityTriggeredListenerRuntimeIds[runtimeId] = flag;
+            }
+
+            _abilityRegistrationOrders.Clear();
+            foreach (var (runtimeId, order) in staged._abilityRegistrationOrders)
+            {
+                _abilityRegistrationOrders[runtimeId] = order;
+            }
+
+            _abilityRegistrationSequence = staged._abilityRegistrationSequence;
+            RefreshCardAbilities(liveCards.Values);
         }
     }
 } // Closing brace for namespace ShadowverseBeyond.Server.Domain.Abilities

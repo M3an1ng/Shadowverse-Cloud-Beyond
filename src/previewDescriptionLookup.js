@@ -1,6 +1,7 @@
 import { buildReferenceNameIndex } from './cardReferenceIndex.js';
 import { getCardStylePresenter } from './cardStyleDom.js';
-import { loadCardDefinitions } from './cardDefinitionsLoader.js';
+import { loadCardDefinitions, normalizeCardPoolScope } from './cardDefinitionsLoader.js';
+import { getActiveAbilityDataScope } from './abilityDataCache.js';
 import {
     CARD_CATALOG_INVALIDATED_EVENT,
     isAbilityOnlyInvalidation
@@ -242,14 +243,18 @@ let keywordLabelLookup = null;
 let keywordLabelNormalizedLookup = null;
 let keywordLabelPromise = null;
 
-let cardIndex = null;
-let cardIndexPromise = null;
+const cardIndexStateByScope = {
+    standard: { cardIndex: null, cardIndexPromise: null },
+    mirage: { cardIndex: null, cardIndexPromise: null }
+};
 document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, (event) => {
     if (isAbilityOnlyInvalidation(event?.detail || {})) {
         return;
     }
-    cardIndex = null;
-    cardIndexPromise = null;
+    cardIndexStateByScope.standard.cardIndex = null;
+    cardIndexStateByScope.standard.cardIndexPromise = null;
+    cardIndexStateByScope.mirage.cardIndex = null;
+    cardIndexStateByScope.mirage.cardIndexPromise = null;
 });
 let localCardSource = null;
 let localCardIndex = null;
@@ -363,24 +368,27 @@ function getMatchesByName(index, normalizedName) {
     return ids.map(id => index.cardsById.get(id)).filter(Boolean);
 }
 
-async function loadCardIndex() {
-    if (cardIndex) return cardIndex;
-    if (!cardIndexPromise) {
-        cardIndexPromise = (async () => {
+async function loadCardIndex(scope = null) {
+    const normalizedScope = normalizeCardPoolScope(scope || getActiveAbilityDataScope());
+    const state = cardIndexStateByScope[normalizedScope] || cardIndexStateByScope.standard;
+    if (state.cardIndex) return state.cardIndex;
+    if (!state.cardIndexPromise) {
+        state.cardIndexPromise = (async () => {
             try {
                 const cards = await loadCardDefinitions({
                     useCache: false,
-                    force: true
+                    force: true,
+                    scope: normalizedScope
                 });
-                cardIndex = buildCardIndex(cards);
+                state.cardIndex = buildCardIndex(cards);
             } catch (error) {
-                console.warn('PreviewDescriptionLookup: Failed to load card definitions.', error);
-                cardIndex = createEmptyIndex();
+                console.warn(`PreviewDescriptionLookup: Failed to load card definitions (${normalizedScope}).`, error);
+                state.cardIndex = createEmptyIndex();
             }
-            return cardIndex;
+            return state.cardIndex;
         })();
     }
-    return await cardIndexPromise;
+    return await state.cardIndexPromise;
 }
 
 export async function resolveKeywordInfo(rawText) {
@@ -419,7 +427,7 @@ export async function resolveDerivedCardInfo(rawText, options = {}) {
         if (match.length) return match;
     }
 
-    const index = await loadCardIndex();
+    const index = await loadCardIndex(options.scope);
     const matches = await findReferenceMatches(index, normalizedName, options);
     return matches?.length ? matches : null;
 }
@@ -458,7 +466,7 @@ export async function resolveDerivedCardMatch(rawText, options = {}) {
     }
 
     if (matches.length === 0) {
-        const index = await loadCardIndex();
+        const index = await loadCardIndex(options.scope);
         matches = await findReferenceMatches(index, normalizedName, options);
     }
 

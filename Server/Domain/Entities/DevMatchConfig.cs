@@ -15,5 +15,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public int? StartingHealth { get; set; }
         public int? PpBoostUses { get; set; }
         public int? Seed { get; set; }
+        public int? TurnTimeoutSeconds { get; set; }
+        public string? FirstPlayerMode { get; set; }
     }
 }

@@ -291,6 +291,8 @@ internal static class AiPolicyTests
         Check(Score(Card(foe,8,4),combined)==Score(Card(foe,8,4),damage),"different target pools are scored independently");
         var destroy = Effects(new EffectConfig { Type=EffectType.Destroy });
         Check(Score(Card(foe,4,4),destroy)>Score(Card(foe,9,9) with { Keywords=new() { CardKeyword.DestroyResist } },destroy),"destroy respects protection");
+        var vanish = Effects(new EffectConfig { Type=EffectType.Vanish });
+        Check(Score(Card(foe,1,1),vanish)>Score(Card(foe,9,9) with { Keywords=new() { CardKeyword.VanishResist } },vanish),"vanish respects protection");
         var discard = Effects(new EffectConfig { Type=EffectType.Discard, TargetSelector=new() { "target1" } });
         Check(((IEnumerable)discard).GetEnumerator().MoveNext(), "discard targets use material valuation rather than random target selection");
         var unsupported = Effects(new EffectConfig { Type=EffectType.Transform });

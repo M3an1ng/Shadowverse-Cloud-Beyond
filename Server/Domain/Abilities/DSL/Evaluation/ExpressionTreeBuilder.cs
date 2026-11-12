@@ -1301,6 +1301,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 return null;
             }
 
+            if (gameEvent is ShadowverseBeyond.Server.Services.ResumedHistoryEvent restored && restored.TryGetParameter(name,out var historical)) return historical;
             var eventType = gameEvent.GetType();
             if (EventParameterCache.TryGetBinding(eventType, name, out var binding))
             {
@@ -1361,6 +1362,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
 
         public static object? GetValue(object? instance, string memberName)
         {
+            if (instance is ShadowverseBeyond.Server.Services.ResumedHistoryEvent restored && restored.TryGetParameter(memberName,out var historical)) return historical;
             if (instance == null || string.IsNullOrWhiteSpace(memberName))
             {
                 return null;

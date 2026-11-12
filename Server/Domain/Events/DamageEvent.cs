@@ -70,8 +70,13 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
             var result = new DomainOperationResult { Success = true };
             var card = DamageTarget;
+            if (card.IsCombatSandboxLeader)
+            {
+                ActualDamage = 0;
+                return result;
+            }
             if (Kind == DamageKind.Ability && EffectTargetImmunityPolicy.IsImmuneToOtherCard(card, DamageSource?.InstanceId, context)) { ActualDamage = 0; return result; }
-            if (card.CurrentZone == CardZone.Graveyard || card.CurrentZone == CardZone.Removed)
+            if (card.CurrentZone == CardZone.Graveyard || card.CurrentZone == CardZone.Removed || card.CurrentZone == CardZone.Retired)
             {
                 ActualDamage = 0;
                 result.Success = false;

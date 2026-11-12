@@ -2,6 +2,8 @@ import { mountStyleEditor } from './cardStyles.js';
 import { installCardHistoryActions } from './cardHistory.js';
 import { confirmDialog } from './siteDialog.js';
 import { showAlert } from './siteDialog.js';
+import { VisualCardCanvas, sectionsFromDescription } from './components/VisualCardCanvas.js';
+import { CARD_SETS_UPDATED_EVENT } from './devToolsCardSetEnvironmentMembership.js';
 // src/cardEditor.js - 卡牌编辑器主模块
 //
 // 相关文档:
@@ -23,7 +25,8 @@ import {
     refreshAbilityDataCache,
     upsertAbilityDataCacheEntry,
     removeAbilityDataCacheEntry,
-    markAbilityDataCacheDirty
+    markAbilityDataCacheDirty,
+    setActiveAbilityDataScope
 } from './abilityDataCache.js';
 import { compareCardsForEditorAndDeck } from './cardListSort.js';
 import { compareCardSetDisplayOrder } from './cardSetDisplayOrder.js';
@@ -31,7 +34,7 @@ import {
     CARD_SET_UNSPECIFIED_ENVIRONMENT,
     buildGroupedCardSetOptions
 } from './cardSetFilterOptions.js';
-import { loadCardDefinitions } from './cardDefinitionsLoader.js';
+import { loadCardDefinitions, normalizeCardPoolScope } from './cardDefinitionsLoader.js';
 import {
     ensureDeckEnvironmentOptions,
     getDeckEnvironmentLabel,
@@ -138,6 +141,8 @@ function equalsIgnoreCase(a, b) {
 }
 
 const LEADER_CARD_ID = 0;
+const MIRAGE_LEADER_CARD_ID = -1;
+const MIRAGE_CARD_SET_NAME = '幻境战棋';
 
 function normalizeCardDefinitionId(value) {
     const parsed = Number(value);
@@ -155,7 +160,11 @@ function isLeaderCardDefinition(card) {
     const cardType = normalizeEnumName(rawType);
     const cardName = card?.name ?? card?.Name ?? '';
     const isLeaderType = equalsIgnoreCase(cardType, 'Leader') || rawType === 0;
-    return isLeaderType || cardId === LEADER_CARD_ID || equalsIgnoreCase(cardName, '主战者');
+    return isLeaderType
+        || cardId === LEADER_CARD_ID
+        || cardId === MIRAGE_LEADER_CARD_ID
+        || equalsIgnoreCase(cardName, '主战者')
+        || equalsIgnoreCase(cardName, '幻境主战者');
 }
 
 let editorEnumLocalizationPromise = null;
@@ -431,6 +440,7 @@ class CardEditor {
         this.container = null;
         this.containerId = options.containerId || 'card-editor-container';
         this.layoutMode = options.layoutMode || 'default';
+        this.cardPoolScope = normalizeCardPoolScope(options.cardPoolScope || (this.containerId.includes('mirage') ? 'mirage' : 'standard'));
         this.metadataManager = new MetadataManager();
         this.uiRenderer = new DynamicUIRenderer();
         this.currentCard = null;
@@ -450,6 +460,7 @@ class CardEditor {
         this.abilityCountsCache = new Map();
         this.abilitiesLibraryCache = null;
         this.cardCatalogInvalidationHandler = null;
+        this.cardSetsUpdatedHandler = null;
         this.editorMode = 'card';
         this.cardTab = 'basic';
         this.playerSettingsTab = 'leaderAbility';
@@ -460,10 +471,23 @@ class CardEditor {
         this.isCreatingTribeDefinition = false;
     }
 
+    isMirageScope() {
+        return this.cardPoolScope === 'mirage';
+    }
+
+    getScopeQueryParam(prefix = '?') {
+        return `${prefix}scope=${encodeURIComponent(this.cardPoolScope)}`;
+    }
+
+    getLeaderCardId() {
+        return this.isMirageScope() ? MIRAGE_LEADER_CARD_ID : LEADER_CARD_ID;
+    }
+
     /**
      * 初始化卡牌编辑器
      */
     async initialize() {
+        setActiveAbilityDataScope(this.cardPoolScope);
         if (this.isInitialized) {
             return;
         }
@@ -558,11 +582,16 @@ class CardEditor {
                 <!-- 左栏：卡牌列表 -->
                 <div class="editor-sidebar left-sidebar tech-panel">
                     <div class="sidebar-header">
-                        <h3 class="tech-header">卡牌数据库</h3>
+                        <h3 class="tech-header">${this.isMirageScope() ? '幻境专属卡池' : '卡牌数据库'}</h3>
                         <div class="sidebar-header-actions">
                             <button class="btn-tech btn-primary" id="new-card-btn">
-                                新建卡牌
+                                ${this.isMirageScope() ? '新建幻境卡' : '新建卡牌'}
                             </button>
+                            ${this.isMirageScope() ? `
+                            <button class="btn-tech btn-secondary" id="import-classic-card-btn" title="从普通对战卡池深拷贝导入至幻境卡池（自动复制立绘与衍生物闭包）">
+                                从普通卡导入
+                            </button>
+                            ` : ''}
                             <button class="btn-tech btn-secondary" id="player-settings-btn">
                                 玩家设定
                             </button>
@@ -611,21 +640,24 @@ class CardEditor {
                     <div class="editor-content" id="editor-mode-host"></div>
                 </div>
 
-                <!-- 右栏：预览区 -->
-                <div class="editor-sidebar right-sidebar tech-panel">
+                <!-- 右栏：预览 / MSE 设置区 -->
+                <div class="editor-sidebar editor-preview right-sidebar tech-panel">
                     <div class="sidebar-header">
-                        <h3 class="tech-header">预览</h3>
+                        <h3 class="tech-header" id="right-sidebar-title">预览</h3>
                     </div>
-                    <div class="sidebar-content">
-                        <div class="card-preview-container" id="card-preview">
-                            <div class="preview-placeholder">
-                                <p class="tech-text-dim">等待载入数据</p>
+                    <div class="sidebar-content custom-scrollbar">
+                        <div class="mse-inspector-slot" id="mse-right-settings" hidden></div>
+                        <div class="classic-preview-pane" id="classic-preview-pane">
+                            <div class="card-preview-container" id="card-preview">
+                                <div class="preview-placeholder">
+                                    <p class="tech-text-dim">等待载入数据</p>
+                                </div>
                             </div>
-                        </div>
-                        <div class="preview-info">
-                            <h4 class="tech-header-small">调试信息</h4>
-                            <div class="preview-details tech-code-block" id="preview-details">
-                                <p>暂无数据</p>
+                            <div class="preview-info">
+                                <h4 class="tech-header-small">调试信息</h4>
+                                <div class="preview-details tech-code-block" id="preview-details">
+                                    <p>暂无数据</p>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -654,6 +686,7 @@ class CardEditor {
                             <div class="abilities-header">
                                 <h4 class="tech-header-small">能力配置</h4>
                                 <div class="abilities-header-actions">
+                                    <button class="btn-tech btn-small" id="generate-dsl-ability-btn" title="根据卡面描述自动编译生成 DSL 能力配置">从描述生成能力 (DSL)</button>
                                     <button class="btn-tech btn-small" id="add-ability-btn">新增能力</button>
                                     <button class="btn-tech btn-small" id="link-ability-btn">复制已有能力</button>
                                 </div>
@@ -686,20 +719,21 @@ class CardEditor {
                 <div class="settings-hero tech-section">
                     <div>
                         <h4 class="tech-header-small">玩家级设定</h4>
-                        <p class="tech-text-dim">集中维护主战者能力、种类定义等系统数据.</p>
+                        <p class="tech-text-dim">${this.isMirageScope() ? '集中维护幻境主战者能力等幻境系统设定。' : '集中维护主战者能力、种类定义等系统数据.'}</p>
                     </div>
                     <div class="settings-hero-badges">
                         <span class="tech-tag">主战者能力</span>
-                        <span class="tech-tag">种类管理</span>
+                        ${this.isMirageScope() ? '' : '<span class="tech-tag">种类管理</span>'}
                     </div>
                 </div>
                 <div class="editor-tabs settings-tabs" role="tablist" aria-label="玩家设定">
                     <button class="tab-button settings-tab-button${this.playerSettingsTab === 'leaderAbility' ? ' active' : ''}" data-settings-tab="leaderAbility" aria-selected="${this.playerSettingsTab === 'leaderAbility'}">
                         主战者能力
                     </button>
+                    ${this.isMirageScope() ? '' : `
                     <button class="tab-button settings-tab-button${this.playerSettingsTab === 'tribeManagement' ? ' active' : ''}" data-settings-tab="tribeManagement" aria-selected="${this.playerSettingsTab === 'tribeManagement'}">
                         种类管理
-                    </button>
+                    </button>`}
                 </div>
                 <div class="tab-content player-settings-tab-content custom-scrollbar">
                     <div class="tab-panel settings-tab-panel${this.playerSettingsTab === 'leaderAbility' ? ' active' : ''}" id="leader-ability-settings-tab">
@@ -710,6 +744,7 @@ class CardEditor {
                                     <p class="tech-text-dim">维护主战者的能力列表与 DSL 配置。</p>
                                 </div>
                                 <div class="abilities-header-actions">
+                                    <button class="btn-tech btn-small" id="generate-dsl-ability-btn" title="根据卡面描述自动编译生成 DSL 能力配置">从描述生成能力 (DSL)</button>
                                     <button class="btn-tech btn-small" id="add-ability-btn">新增能力</button>
                                     <button class="btn-tech btn-small" id="link-ability-btn">复制已有能力</button>
                                 </div>
@@ -747,6 +782,7 @@ class CardEditor {
         if (editorMain) {
             editorMain.classList.toggle('player-settings-mode', this.editorMode === 'playerSettings');
         }
+        this.syncVisualCanvasLayout();
 
         this.syncEditorModeUi();
 
@@ -838,12 +874,18 @@ class CardEditor {
             case 'new-card-btn':
                 await this.createNewCard();
                 return;
+            case 'import-classic-card-btn':
+                await this.showImportClassicCardModal();
+                return;
             case 'player-settings-btn':
                 if (this.editorMode === 'playerSettings') {
                     await this.exitPlayerSettingsMode();
                 } else {
                     await this.enterPlayerSettingsMode();
                 }
+                return;
+            case 'generate-dsl-ability-btn':
+                await this.generateAbilitiesFromVisualCard();
                 return;
             case 'add-ability-btn':
                 this.showAddAbilityModal();
@@ -866,6 +908,29 @@ class CardEditor {
                 return;
             default:
                 break;
+            }
+        });
+
+        listen(document, 'paste', async (event) => {
+            if (!this.container || !this.container.offsetParent) return;
+            if (this.editorMode !== 'card' || this.cardTab !== 'basic' || this.useClassicBasicForm) return;
+            const activeEl = document.activeElement;
+            if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) return;
+
+            const items = event.clipboardData?.items;
+            if (!items) return;
+            for (const item of items) {
+                if (item.type.startsWith('image/')) {
+                    const file = item.getAsFile();
+                    if (file) {
+                        event.preventDefault();
+                        if (!this.currentCard) {
+                            await this.createNewCard();
+                        }
+                        await this.visualCanvas?.handleOcrImportFile(file);
+                        break;
+                    }
+                }
             }
         });
 
@@ -896,6 +961,30 @@ class CardEditor {
 
     }
 
+    syncVisualCanvasLayout() {
+        const isMseActive = this.editorMode === 'card'
+            && this.cardTab === 'basic'
+            && !this.useClassicBasicForm
+            && Boolean(this.currentCard);
+
+        this.container.querySelector('.editor-main')?.classList.toggle('mse-canvas-active', isMseActive);
+        this.container.querySelector('.right-sidebar')?.classList.toggle('is-mse-settings', isMseActive);
+
+        const rightTitle = this.container.querySelector('#right-sidebar-title');
+        if (rightTitle) {
+            rightTitle.textContent = isMseActive ? '卡面设置' : '预览';
+        }
+
+        const mseSettings = this.container.querySelector('#mse-right-settings');
+        const classicPreview = this.container.querySelector('#classic-preview-pane');
+        if (mseSettings) {
+            mseSettings.hidden = !isMseActive;
+        }
+        if (classicPreview) {
+            classicPreview.hidden = isMseActive;
+        }
+    }
+
     /**
      * 切换标签页
      */
@@ -904,7 +993,12 @@ class CardEditor {
             return;
         }
 
+        if (this.cardTab === 'basic' && tabName !== 'basic' && !this.useClassicBasicForm) {
+            this.visualCanvas?.finishInline?.();
+        }
+
         this.cardTab = tabName;
+        this.syncVisualCanvasLayout();
 
         // 移除所有活动状态
         this.container.querySelectorAll('.tab-button').forEach(btn => {
@@ -1163,11 +1257,15 @@ class CardEditor {
     }
 
     async loadTribeDefinitions(options = {}) {
+        if (this.isMirageScope()) {
+            this.tribeDefinitions = [];
+            return this.tribeDefinitions;
+        }
         if (!options.force && Array.isArray(this.tribeDefinitions) && this.tribeDefinitions.length > 0) {
             return this.tribeDefinitions;
         }
 
-        const response = await fetch('/api/tribes');
+        const response = await fetch(`/api/tribes${this.getScopeQueryParam()}`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -1191,6 +1289,19 @@ class CardEditor {
         }
 
         try {
+            const response = await fetch(`/api/tribes/suggest${this.getScopeQueryParam()}`);
+            if (response.ok) {
+                const data = await response.json();
+                const suggestions = (Array.isArray(data) ? data : [])
+                    .map(item => String(item ?? '').trim())
+                    .filter(Boolean)
+                    .sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
+                datalist.innerHTML = suggestions
+                    .map(item => `<option value="${escapeHtml(item)}"></option>`)
+                    .join('');
+                return;
+            }
+
             if (!Array.isArray(this.tribeDefinitions) || this.tribeDefinitions.length === 0) {
                 await this.loadTribeDefinitions();
             }
@@ -1392,6 +1503,10 @@ class CardEditor {
     }
 
     async saveTribeDefinitionFromForm() {
+        if (this.isMirageScope()) {
+            showAlert('幻境卡牌工坊不支持编辑经典全局种类定义，请直接在卡牌信息中填写种类名称。');
+            return;
+        }
         try {
             const nameInput = this.container?.querySelector('#tribe-definition-name');
             const aliasesInput = this.container?.querySelector('#tribe-definition-aliases');
@@ -1416,8 +1531,8 @@ class CardEditor {
 
             const isCreate = this.isCreatingTribeDefinition;
             const url = isCreate
-                ? '/api/tribes'
-                : `/api/tribes/${encodeURIComponent(this.activeTribeDefinitionName)}`;
+                ? `/api/tribes${this.getScopeQueryParam()}`
+                : `/api/tribes/${encodeURIComponent(this.activeTribeDefinitionName)}${this.getScopeQueryParam()}`;
             const method = isCreate ? 'POST' : 'PUT';
             const body = isCreate
                 ? request
@@ -1454,6 +1569,10 @@ class CardEditor {
     }
 
     async deleteActiveTribeDefinition() {
+        if (this.isMirageScope()) {
+            showAlert('幻境卡牌工坊不支持删除经典全局种类定义。');
+            return;
+        }
         try {
             const active = this.getActiveTribeDefinition(this.tribeDefinitions);
             if (!active) {
@@ -1464,7 +1583,7 @@ class CardEditor {
                 return;
             }
 
-            const response = await fetch(`/api/tribes/${encodeURIComponent(active.name)}`, {
+            const response = await fetch(`/api/tribes/${encodeURIComponent(active.name)}${this.getScopeQueryParam()}`, {
                 method: 'DELETE'
             });
 
@@ -1496,23 +1615,28 @@ class CardEditor {
         await this.ensureCardEditorMode();
         this.previousCardIdBeforeSettingsMode = null;
 
+        const isMirage = this.isMirageScope();
         this.currentCard = {
             id: null,
             name: '',
             description: '',
-            cost: 0,
-            attack: 0,
-            health: 1,
+            cost: isMirage ? 1 : 0,
+            mirageTavernTier: isMirage ? 1 : null,
+            attack: isMirage ? 2 : 0,
+            health: isMirage ? 2 : 1,
             countdown: 0,
             cardType: 'Follower',
             cardClass: 'Neutral',
             rarity: 'Bronze',
-            cardSet: '特殊',
+            cardSet: isMirage ? MIRAGE_CARD_SET_NAME : '特殊',
             keywords: [],
             tribe: [],
             canEvolve: false,
             evolveId: null,
             isCollectible: true,
+            isImplemented: false,
+            presentation: null,
+            isMirageCard: isMirage,
             artPreview: null,
             artDetail: null,
             isNew: true
@@ -1546,6 +1670,8 @@ class CardEditor {
      * 清理资源
      */
     cleanup() {
+        this.visualCanvas?.dispose?.();
+        this.visualCanvas = null;
         this.eventController?.abort();
         this.eventController = null;
         this.isInitialized = false;
@@ -1553,6 +1679,10 @@ class CardEditor {
         if (this.cardCatalogInvalidationHandler) {
             document.removeEventListener(CARD_CATALOG_INVALIDATED_EVENT, this.cardCatalogInvalidationHandler);
             this.cardCatalogInvalidationHandler = null;
+        }
+        if (this.cardSetsUpdatedHandler) {
+            document.removeEventListener(CARD_SETS_UPDATED_EVENT, this.cardSetsUpdatedHandler);
+            this.cardSetsUpdatedHandler = null;
         }
 
         if (this.container) {
@@ -1571,18 +1701,22 @@ const cardEditorInstances = new Map();
 export async function initializeCardEditor(options = {}) {
     const containerId = options.containerId || 'card-editor-container';
     const layoutMode = options.layoutMode || 'default';
+    const cardPoolScope = normalizeCardPoolScope(options.cardPoolScope || (containerId.includes('mirage') ? 'mirage' : 'standard'));
+
+    setActiveAbilityDataScope(cardPoolScope);
 
     let instance = cardEditorInstances.get(containerId);
     if (!instance) {
-        instance = new CardEditor({ containerId, layoutMode });
+        instance = new CardEditor({ containerId, layoutMode, cardPoolScope });
         cardEditorInstances.set(containerId, instance);
     } else {
         instance.layoutMode = layoutMode;
+        instance.cardPoolScope = cardPoolScope;
     }
 
     cardEditorInstance = instance;
     const wasInitialized = instance.isInitialized;
-    instance.useDefaultCardSet = true;
+    instance.useDefaultCardSet = !instance.isMirageScope();
     if (!instance.initializationTask) instance.initializationTask = instance.initialize().finally(() => { instance.initializationTask = null; });
     await instance.initializationTask;
     if (wasInitialized && instance.filteredCardsData) {
@@ -1657,6 +1791,7 @@ CardEditor.prototype.applyDataRevisionFromResponse = function(response, detail =
     syncDataRevisionFromResponse(response, {
         source: 'card-editor',
         containerId: this.containerId,
+        scope: this.cardPoolScope,
         ...detail
     });
     return changed;
@@ -1672,6 +1807,9 @@ CardEditor.prototype.bindGlobalInvalidationListener = function() {
         if (detail.source === 'card-editor' && detail.containerId === this.containerId) {
             return;
         }
+        if (detail.scope && normalizeCardPoolScope(detail.scope) !== this.cardPoolScope) {
+            return;
+        }
         if (isAbilityOnlyInvalidation(detail)) {
             return;
         }
@@ -1681,6 +1819,14 @@ CardEditor.prototype.bindGlobalInvalidationListener = function() {
     };
 
     document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, this.cardCatalogInvalidationHandler);
+    if (!this.isMirageScope()) {
+        this.cardSetsUpdatedHandler = async () => {
+            await this.loadCardSetDefinitions();
+            if (!this.isInitialized) return;
+            if (!this.useClassicBasicForm) await this.visualCanvas?.refreshCardSets();
+        };
+        document.addEventListener(CARD_SETS_UPDATED_EVENT, this.cardSetsUpdatedHandler);
+    }
 };
 
 CardEditor.prototype.queueCardListReload = function() {
@@ -1717,7 +1863,7 @@ CardEditor.prototype.clearDataCaches = function() {
 
 CardEditor.prototype.refreshAbilityDataCacheAfterSave = async function() {
     try {
-        await refreshAbilityDataCache();
+        await refreshAbilityDataCache(this.cardPoolScope);
     } catch (error) {
         console.warn('CardEditor: Failed to refresh ability data cache after save.', error);
     }
@@ -1737,7 +1883,7 @@ CardEditor.prototype.readAbilityWriteResponse = async function(response) {
         this.invalidateAbilityLibraryCache();
         this.invalidateAbilitiesForCard(failure.cardId);
         this.invalidateAbilityDetailCache(failure.id);
-        markAbilityDataCacheDirty();
+        markAbilityDataCacheDirty(this.cardPoolScope);
         if (this.getCardIdKey(this.getCurrentCardId()) === this.getCardIdKey(failure.cardId)) {
             this.applyCardEditMetadata(failure);
             if (failure.operation === 'create') {
@@ -1752,12 +1898,13 @@ CardEditor.prototype.readAbilityWriteResponse = async function(response) {
         throw new Error(savedMessage);
     }
 
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    const errMsg = failure?.error || failure?.message || response.statusText;
+    throw new Error(`HTTP ${response.status}: ${errMsg}`);
 };
 
 CardEditor.prototype.updateAbilityCachesAfterSave = function(ability, cardId) {
     if (!ability) {
-        markAbilityDataCacheDirty();
+        markAbilityDataCacheDirty(this.cardPoolScope);
         return;
     }
 
@@ -1780,13 +1927,13 @@ CardEditor.prototype.updateAbilityCachesAfterSave = function(ability, cardId) {
         this.abilitiesByCardCache.set(cardKey, nextList);
     }
 
-    upsertAbilityDataCacheEntry(ability);
+    upsertAbilityDataCacheEntry(ability, this.cardPoolScope);
 };
 
 CardEditor.prototype.removeAbilityFromCaches = function(abilityId, cardId) {
     this.invalidateAbilityDetailCache(abilityId);
     this.invalidateAbilitiesForCard(cardId);
-    removeAbilityDataCacheEntry(abilityId);
+    removeAbilityDataCacheEntry(abilityId, this.cardPoolScope);
 };
 
 CardEditor.prototype.invalidateCardListCache = function() {
@@ -2075,7 +2222,7 @@ CardEditor.prototype.populateCardListFilterOptions = async function() {
 
     const [classOptions, typeOptions, rarityOptions] = await Promise.all([
         this.metadataManager.getCardClassOptions(),
-        this.metadataManager.getCardTypeOptions(),
+        this.metadataManager.getCardTypeOptions({ includeLeader: this.isMirageScope() }),
         this.metadataManager.getCardRarityOptions()
     ]);
 
@@ -2136,7 +2283,7 @@ CardEditor.prototype.renderGroupedCardSetFilterOptions = function(groups, select
 
 CardEditor.prototype.loadCardSetDefinitions = async function() {
     try {
-        const response = await fetch('/api/cardsets');
+        const response = await fetch(`/api/cardsets${this.getScopeQueryParam()}`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
         }
@@ -2786,8 +2933,8 @@ CardEditor.prototype.uploadCardArt = async function(kind, file, filename, option
         }
 
         const endpoint = kind === 'preview'
-            ? `/api/cards/${currentCardId}/art/preview`
-            : `/api/cards/${currentCardId}/art/detail`;
+            ? `/api/cards/${currentCardId}/art/preview${this.getScopeQueryParam()}`
+            : `/api/cards/${currentCardId}/art/detail${this.getScopeQueryParam()}`;
 
         const response = await fetch(endpoint, {
             method: 'POST',
@@ -2825,10 +2972,12 @@ CardEditor.prototype.uploadCardArt = async function(kind, file, filename, option
         this.currentCard = this.convertApiCardToEditorFormat(updated);
         this.updateEditorHeader(`编辑卡牌: ${this.currentCard.name}`);
         this.renderAssetsTab();
-        if (this.layoutMode === 'test') {
+        // 静默上传由保存流程统一重挂载，避免在裁切状态重置前重新读取预览图。
+        if (this.layoutMode === 'test' && !options.silent) {
             await this.renderBasicInfoForm();
         }
         this.updateCardPreview();
+        return { ...updated, previewArtUrl: this.getArtAssetUrl(this.currentCard.artPreview) };
     } catch (error) {
         console.error('CardEditor: Failed to upload art:', error);
         if (!options.silent) {
@@ -2847,6 +2996,7 @@ CardEditor.prototype.getArtAssetUrl = function(path) {
 };
 
 CardEditor.prototype.renderBasicInfoForm = async function() {
+    this.syncVisualCanvasLayout();
     const basicTab = this.container.querySelector('#basic-tab');
     if (!basicTab) {
         console.error('CardEditor: Basic tab not found');
@@ -2855,9 +3005,21 @@ CardEditor.prototype.renderBasicInfoForm = async function() {
 
     try {
         await this.ensureKeywordLabelMap();
+
+        if (!this.useClassicBasicForm) {
+            const settingsHost = this.container.querySelector('#mse-right-settings');
+            this.visualCanvas ??= new VisualCardCanvas(this);
+            await this.visualCanvas.mount(basicTab, {
+                settingsHost,
+                keywordOptions: this.keywordLabelMap || {}
+            });
+            this.validateForm();
+            return;
+        }
+
         // 获取卡牌类型、职业、稀有度等枚举选项
         const [cardTypeOptions, cardClassOptions, cardRarityOptions] = await Promise.all([
-            this.metadataManager.getCardTypeOptions(),
+            this.metadataManager.getCardTypeOptions({ includeLeader: this.isMirageScope() }),
             this.metadataManager.getCardClassOptions(),
             this.metadataManager.getCardRarityOptions()
         ]);
@@ -2876,6 +3038,11 @@ CardEditor.prototype.renderBasicInfoForm = async function() {
             })
             : `
                 <div class="form-container tech-form">
+                    <div class="visual-card-toolbar tech-section" style="justify-content: flex-end;">
+                        <button type="button" class="btn-tech btn-small btn-primary" id="switch-visual-canvas-btn">
+                            切换至卡面编辑
+                        </button>
+                    </div>
                     <div class="form-section tech-section">
                         <h4 class="form-section-title tech-header-small">基础属性</h4>
                         <div class="form-grid form-grid-2">
@@ -3017,6 +3184,7 @@ CardEditor.prototype.renderBasicInfoForm = async function() {
 
         // 根据卡牌类型显示/隐藏战斗属性
         this.updateStatsVisibility();
+        this.updateCardPreview();
 
     } catch (error) {
         console.error('CardEditor: Failed to render basic info form:', error);
@@ -3058,6 +3226,7 @@ CardEditor.prototype.renderCardList = function(cards) {
                 <div class="card-item-header">
                     <span class="card-item-name tech-text-bold">${card.name || card.Name || '未命名'}</span>
                     <div class="card-item-indicators">
+                        ${(card.isImplemented ?? card.IsImplemented) === false ? '<span class="card-stage-badge is-unimplemented">待实装</span>' : ''}
                         <span class="card-item-cost tech-badge">${(card.cost ?? card.Cost) ?? 0}</span>
                     </div>
                 </div>
@@ -3070,6 +3239,10 @@ CardEditor.prototype.renderCardList = function(cards) {
                     <div class="card-item-stats">
                         <span class="stat-attack">攻击力 ${(card.attack ?? card.Attack) ?? 0}</span>
                         <span class="stat-health">生命值 ${(card.health ?? card.Health) ?? 1}</span>
+                    </div>
+                ` : (equalsIgnoreCase(normalizedType, 'Leader')) ? `
+                    <div class="card-item-stats">
+                        <span class="stat-health">生命值 ${(card.health ?? card.Health) ?? 20}</span>
                     </div>
                 ` : ''}
                 <div class="tech-corner-decoration"></div>
@@ -3135,6 +3308,9 @@ CardEditor.prototype.bindBasicFormEvents = function() {
     if (descInput) {
         descInput.addEventListener('input', (e) => {
             this.currentCard.description = e.target.value;
+            if (this.currentCard.presentation) {
+                this.currentCard.presentation.sections = sectionsFromDescription(e.target.value);
+            }
             this.updateCardPreview();
         });
     }
@@ -3231,6 +3407,14 @@ CardEditor.prototype.bindBasicFormEvents = function() {
             this.openArtCropModal('preview');
         });
     }
+
+    const switchVisualBtn = basicTab.querySelector('#switch-visual-canvas-btn');
+    if (switchVisualBtn) {
+        switchVisualBtn.addEventListener('click', async () => {
+            this.useClassicBasicForm = false;
+            await this.renderBasicInfoForm();
+        });
+    }
 };
 
 CardEditor.prototype.updateCardProperty = function(property, value) {
@@ -3254,6 +3438,13 @@ CardEditor.prototype.updateCardProperty = function(property, value) {
     const actualProperty = propertyMap[property] || property;
     this.currentCard[actualProperty] = value;
 
+    if (actualProperty === 'cardType' && equalsIgnoreCase(normalizeEnumName(value), 'Leader')) {
+        this.currentCard.attack = 0;
+        if (!this.currentCard.health || this.currentCard.health <= 1) {
+            this.currentCard.health = 20;
+        }
+    }
+
     // 更新预览
     this.updateCardPreview();
 
@@ -3264,15 +3455,24 @@ CardEditor.prototype.updateStatsVisibility = function() {
     const countdownContainer = this.container.querySelector('#countdown-container');
     if (!statsContainer || !countdownContainer || !this.currentCard) return;
 
-    // 只有随从卡牌显示攻击力和生命值
     const cardType = normalizeEnumName(this.currentCard.cardType);
-    const shouldShowStats = equalsIgnoreCase(cardType, 'Follower');
+    const isFollower = equalsIgnoreCase(cardType, 'Follower');
+    const isLeader = equalsIgnoreCase(cardType, 'Leader');
+    const shouldShowStats = isFollower || isLeader;
     const shouldShowCountdown =
         equalsIgnoreCase(cardType, 'Amulet') ||
         equalsIgnoreCase(cardType, 'Crest') ||
         equalsIgnoreCase(cardType, 'Faith');
     const visibleDisplay = this.layoutMode === 'test' ? 'flex' : 'block';
     statsContainer.style.display = shouldShowStats ? visibleDisplay : 'none';
+    const attackGroup = statsContainer.querySelector('#card-attack')?.closest('.form-group');
+    if (attackGroup) {
+        attackGroup.style.display = isLeader ? 'none' : '';
+    }
+    const healthInput = statsContainer.querySelector('#card-health');
+    if (isLeader && healthInput) {
+        healthInput.value = this.currentCard.health ?? 20;
+    }
     countdownContainer.style.display = shouldShowCountdown ? visibleDisplay : 'none';
 };
 
@@ -3281,6 +3481,7 @@ CardEditor.prototype.buildCardUpsertDto = function(isCreate) {
 
     const cardType = normalizeEnumName(this.currentCard.cardType);
     const isFollower = equalsIgnoreCase(cardType, 'Follower');
+    const isLeader = equalsIgnoreCase(cardType, 'Leader');
     const isCountdownType =
         equalsIgnoreCase(cardType, 'Amulet') ||
         equalsIgnoreCase(cardType, 'Crest') ||
@@ -3289,22 +3490,34 @@ CardEditor.prototype.buildCardUpsertDto = function(isCreate) {
 
     const rawPack = (this.currentCard.cardSet || '').trim();
     const currentCardId = this.getCurrentCardId();
+    const isMirage = this.isMirageScope();
+    const rawCost = Number(this.currentCard.cost) || 0;
+    const mirageTier = isMirage && !isLeader
+        ? Math.min(6, Math.max(1, Number(this.currentCard.mirageTavernTier ?? rawCost) || 1))
+        : null;
 
     return {
         id: isCreate ? null : currentCardId,
         name: this.currentCard.name?.trim() || '',
         type: cardType,
         rarity: normalizeEnumName(this.currentCard.rarity),
-        card_set: rawPack || '特殊',
+        card_set: isMirage ? MIRAGE_CARD_SET_NAME : (rawPack || '特殊'),
+        card_set_definition_id: this.cardSetDefinitions.find(set =>
+            String(set.name ?? set.Name).trim().toLowerCase() === (isMirage ? MIRAGE_CARD_SET_NAME : rawPack).toLowerCase()
+        )?.id ?? null,
         class: normalizeEnumName(this.currentCard.cardClass),
-        cost: Number(this.currentCard.cost) || 0,
-        attack: isFollower ? (Number(this.currentCard.attack) || 0) : null,
-        health: isFollower ? (Number(this.currentCard.health) || 1) : null,
+        cost: isMirage && !isLeader ? mirageTier : Math.max(0, rawCost),
+        mirageTavernTier: mirageTier,
+        isMirageCard: isMirage,
+        attack: isFollower ? (Number(this.currentCard.attack) || 0) : (isLeader ? 0 : null),
+        health: isFollower ? (Number(this.currentCard.health) || 1) : (isLeader ? Math.max(1, Number(this.currentCard.health) || 20) : null),
         countdown: isCountdownType && hasCountdownKeyword ? (Number(this.currentCard.countdown) || 0) : null,
         description: this.currentCard.description || '',
         artPreview: this.currentCard.artPreview || null,
         artDetail: this.currentCard.artDetail || null,
         isCollectible: this.currentCard.isCollectible ?? true,
+        isImplemented: this.currentCard.isImplemented ?? true,
+        presentation: this.currentCard.presentation ?? null,
         can_evolve: !!this.currentCard.canEvolve,
         evolve_id: this.currentCard.evolveId ?? null,
         keywords: Array.isArray(this.currentCard.keywords) ? this.currentCard.keywords : [],
@@ -3340,13 +3553,18 @@ CardEditor.prototype.saveCurrentCard = async function(isSaveAs) {
         return;
     }
 
+    if (this.visualCanvas && !this.useClassicBasicForm) {
+        this.visualCanvas.finishInline();
+        this.visualCanvas.syncToEditorCard();
+    }
+
     if (!this.validateForm()) {
         showAlert('请先修正表单错误后再保存');
         return;
     }
 
     const rawSetName = (this.currentCard.cardSet || '').trim();
-    if (rawSetName && !this.isKnownCardSetName(rawSetName)) {
+    if (!this.isMirageScope() && rawSetName && !this.isKnownCardSetName(rawSetName)) {
         const confirmed = await confirmDialog(`卡包 "${rawSetName}" 不存在，保存后将自动注册为新卡包。是否继续？`);
         if (!confirmed) {
             return;
@@ -3355,6 +3573,11 @@ CardEditor.prototype.saveCurrentCard = async function(isSaveAs) {
 
     const isCreate = !!this.currentCard.isNew || !!isSaveAs;
     const dto = this.buildCardUpsertDto(isCreate);
+    if (this.visualCanvas && !this.useClassicBasicForm && this.visualCanvas.hasPendingArtChanges()) {
+        // 预览上传会烘焙裁切与翻转，后端保存中性裁切，避免重载后再次应用。
+        dto.presentation = structuredClone(dto.presentation);
+        dto.presentation.art.crop = { zoom: 1, x: 0.5, y: 0.5, flipX: false };
+    }
 
     const editorRoot = this.container?.querySelector('.card-editor-layout') || this.container;
     const loader = editorRoot ? getBlockingLoader(editorRoot) : null;
@@ -3362,7 +3585,9 @@ CardEditor.prototype.saveCurrentCard = async function(isSaveAs) {
 
     try {
         const currentCardId = this.getCurrentCardId();
-        const url = isCreate ? '/api/cards' : `/api/cards/${currentCardId}`;
+        const url = isCreate
+            ? `/api/cards${this.getScopeQueryParam()}`
+            : `/api/cards/${currentCardId}${this.getScopeQueryParam()}`;
         const method = isCreate ? 'POST' : 'PUT';
 
         const response = await fetch(url, {
@@ -3372,7 +3597,8 @@ CardEditor.prototype.saveCurrentCard = async function(isSaveAs) {
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const msg = await readErrorResponseMessage(response);
+            throw new Error(`HTTP ${response.status}: ${msg}`);
         }
 
         const saved = await response.json();
@@ -3386,8 +3612,32 @@ CardEditor.prototype.saveCurrentCard = async function(isSaveAs) {
         if (savedId != null) {
             this.currentCard = this.convertApiCardToEditorFormat(saved);
             this.currentCard.isNew = false;
+
+            if (this.visualCanvas && !this.useClassicBasicForm) {
+                this.visualCanvas.mseCard.sourceCardId = savedId;
+                let detailBlob = null;
+                if (this.visualCanvas.mseCard.presentation.art.src) {
+                    loader?.show('正在生成并上传卡面...');
+                    const [previewBlob, renderedCardBlob] = await Promise.all([
+                        this.visualCanvas.hasPendingArtChanges()
+                            ? this.visualCanvas.exportCroppedPreviewBlob()
+                            : null,
+                        this.visualCanvas.exportRenderedCardBlob('image/webp')
+                    ]);
+                    detailBlob = renderedCardBlob;
+                    if (previewBlob) {
+                        const uploadResult = await this.uploadCardArt('preview', previewBlob, 'preview.webp', { silent: true });
+                        this.visualCanvas.markArtSaved(uploadResult.previewArtUrl);
+                    }
+                }
+                this.visualCanvas.saveLocalPresentationMeta(savedId);
+                if (detailBlob) {
+                    await this.uploadCardArt('detail', detailBlob, 'detail.webp', { silent: true });
+                }
+            }
+
             this.updateTabAvailability();
-            this.upsertCardInCache(saved);
+            this.upsertCardInCache(this.currentCard);
             this.updateEditorHeader(`编辑卡牌: ${this.currentCard.name}`);
             await this.renderBasicInfoForm();
             this.updateCardPreview();
@@ -3408,9 +3658,11 @@ CardEditor.prototype.saveCurrentCard = async function(isSaveAs) {
         }
 
         showAlert(isCreate ? '卡牌创建成功！' : '卡牌保存成功！');
+        return true;
     } catch (error) {
         console.error('CardEditor: Failed to save card:', error);
         showAlert(`保存失败: ${error.message}`);
+        return false;
     } finally {
         loader?.hide();
     }
@@ -3433,9 +3685,10 @@ CardEditor.prototype.deleteCurrentCard = async function() {
 
     try {
         const deletingCardId = this.getCurrentCardId();
-        const response = await fetch(`/api/cards/${deletingCardId}`, { method: 'DELETE' });
+        const response = await fetch(`/api/cards/${deletingCardId}${this.getScopeQueryParam()}`, { method: 'DELETE' });
         if (!response.ok && response.status !== 204) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const msg = await readErrorResponseMessage(response);
+            throw new Error(`HTTP ${response.status}: ${msg}`);
         }
         this.removeCardFromCache(deletingCardId);
         this.applyDataRevisionFromResponse(response, {
@@ -3444,6 +3697,7 @@ CardEditor.prototype.deleteCurrentCard = async function() {
         });
 
         this.currentCard = null;
+        this.syncVisualCanvasLayout();
         this.disableEditorButtons();
         this.updateTabAvailability();
         this.updateEditorHeader('等待选择卡牌');
@@ -3457,14 +3711,7 @@ CardEditor.prototype.deleteCurrentCard = async function() {
             `;
         }
 
-        const previewContainer = this.container.querySelector('#card-preview');
-        if (previewContainer) {
-            previewContainer.innerHTML = `
-                <div class="preview-placeholder">
-                    <p class="tech-text-dim">等待载入数据</p>
-                </div>
-            `;
-        }
+        this.updateEmptyPreviewState();
 
         await this.loadCardList();
 
@@ -3493,6 +3740,7 @@ CardEditor.prototype.loadCardList = async function(options = {}) {
         `;
 
         const allCards = await loadCardDefinitions({
+            scope: this.cardPoolScope,
             useCache: !options.force,
             force: !!options.force,
             getCached: () => this.cardListCache,
@@ -3533,10 +3781,20 @@ CardEditor.prototype.filterCardsForList = function(cards) {
         return [];
     }
 
+    const expectMirage = this.isMirageScope();
     return cards.filter(card => {
+        if (Boolean(card.isMirageCard ?? card.IsMirageCard) !== expectMirage) {
+            return false;
+        }
         const rarity = normalizeEnumName(card.rarity ?? card.Rarity ?? '');
         if (isLeaderCardDefinition(card)) {
-            return false;
+            const cardId = normalizeCardDefinitionId(getCardDefinitionId(card));
+            const isEditableMirageLeader = expectMirage
+                && cardId != null
+                && cardId > 0;
+            if (!isEditableMirageLeader) {
+                return false;
+            }
         }
 
         if (equalsIgnoreCase(rarity, 'Special')) {
@@ -3576,13 +3834,17 @@ CardEditor.prototype.selectCard = async function(cardId) {
         if (cardData) {
         } else {
             // 获取卡牌详细信息
-            const response = await fetch(`/api/cards/${cardId}`);
+            const response = await fetch(`/api/cards/${cardId}${this.getScopeQueryParam()}`);
             if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                const msg = await readErrorResponseMessage(response);
+                throw new Error(`HTTP ${response.status}: ${msg}`);
             }
             this.applyDataRevisionFromResponse(response);
 
             cardData = await response.json();
+            if (Boolean(cardData.isMirageCard ?? cardData.IsMirageCard) !== this.isMirageScope()) {
+                throw new Error('该卡牌不属于当前编辑环境，无法在此录卡入口加载。');
+            }
             if (cardKey) {
                 this.cardDetailCache.set(cardKey, cardData);
             }
@@ -3654,12 +3916,14 @@ CardEditor.prototype.updateTabAvailability = function() {
 };
 
 CardEditor.prototype.loadLeaderCard = async function() {
-    const leaderCardKey = this.getCardIdKey(LEADER_CARD_ID);
+    const leaderId = this.getLeaderCardId();
+    const leaderCardKey = this.getCardIdKey(leaderId);
     let leaderCard = leaderCardKey ? this.cardDetailCache.get(leaderCardKey) : null;
     if (!leaderCard) {
-        const response = await fetch(`/api/cards/${LEADER_CARD_ID}`);
+        const response = await fetch(`/api/cards/${leaderId}${this.getScopeQueryParam()}`);
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            const msg = await readErrorResponseMessage(response);
+            throw new Error(`HTTP ${response.status}: ${msg}`);
         }
         this.applyDataRevisionFromResponse(response);
         leaderCard = await response.json();
@@ -3704,6 +3968,14 @@ CardEditor.prototype.convertApiCardToEditorFormat = function(apiCard) {
         canEvolve: (card.canEvolve ?? card.CanEvolve) ?? false,
         evolveId: (card.evolve_id ?? card.evolveId ?? card.EvolveId) ?? null,
         isCollectible: (card.isCollectible ?? card.IsCollectible) ?? true,
+        isImplemented: card.isImplemented ?? card.IsImplemented ?? true,
+        presentation: card.presentation ?? card.Presentation ?? null,
+        isMirageCard: Boolean(card.isMirageCard ?? card.IsMirageCard),
+        mirageTavernTier: card.mirageTavernTier ?? card.MirageTavernTier ?? (
+            (Boolean(card.isMirageCard ?? card.IsMirageCard) && !equalsIgnoreCase(normalizeEnumName((card.type ?? card.Type) ?? 'Follower'), 'Leader'))
+                ? ((card.cost ?? card.Cost) || 1)
+                : null
+        ),
         isNew: false // 标记为现有卡牌
     };
 };
@@ -3943,6 +4215,10 @@ CardEditor.prototype.validateForm = function() {
         if (this.currentCard.health < 0) {
             errors.push('生命值必须为0或以上');
         }
+    } else if (equalsIgnoreCase(cardType, 'Leader')) {
+        if (this.currentCard.health < 1 || this.currentCard.health > 99) {
+            errors.push('主战者生命值必须在1至99之间');
+        }
     } else if (
         (equalsIgnoreCase(cardType, 'Amulet') || equalsIgnoreCase(cardType, 'Crest') || equalsIgnoreCase(cardType, 'Faith'))
         && hasCountdownKeyword
@@ -4029,7 +4305,7 @@ CardEditor.prototype.renderAbilitiesList = async function(options = {}) {
 
 
         // 获取卡牌的能力列表
-        const response = await fetch(`/api/cards/${currentCardId}/abilities`);
+        const response = await fetch(`/api/cards/${currentCardId}/abilities${this.getScopeQueryParam()}`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -4326,7 +4602,7 @@ try {
     };
 
     // 调用后端API创建能力
-    const response = await fetch('/api/abilities', {
+    const response = await fetch(`/api/abilities${this.getScopeQueryParam()}`, {
         method: 'POST',
         headers: buildEditorIdentityHeaders({
             'Content-Type': 'application/json'
@@ -4515,7 +4791,7 @@ CardEditor.prototype.showLinkExistingAbilityModal = async function() {
 
         modalLoader?.show('正在加载能力库...');
         try {
-            const abilityData = await ensureAbilityData();
+            const abilityData = await ensureAbilityData(this.cardPoolScope);
             allCards = Array.isArray(abilityData.cards) ? abilityData.cards : [];
             this.cardListCache = Array.isArray(allCards) ? allCards : [];
             this.allCardsData = this.cardListCache;
@@ -4823,7 +5099,7 @@ CardEditor.prototype.loadExistingAbilities = async function() {
 
 
         // 调用后端API获取所有能力
-        const response = await fetch('/api/abilities');
+        const response = await fetch(`/api/abilities${this.getScopeQueryParam()}`);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -4996,7 +5272,7 @@ CardEditor.prototype.createNewAbility = async function() {
 
 
     // 调用后端API创建能力
-    const response = await fetch('/api/abilities', {
+    const response = await fetch(`/api/abilities${this.getScopeQueryParam()}`, {
         method: 'POST',
         headers: buildEditorIdentityHeaders({
             'Content-Type': 'application/json'
@@ -5037,7 +5313,7 @@ CardEditor.prototype.copyExistingAbilityById = async function(abilityId) {
     let ability = abilityKey ? this.abilityDetailCache.get(abilityKey) : null;
 
     if (!ability) {
-        const abilityResponse = await fetch(`/api/abilities/${abilityId}`);
+        const abilityResponse = await fetch(`/api/abilities/${abilityId}${this.getScopeQueryParam()}`);
         if (!abilityResponse.ok) {
             throw new Error(`HTTP ${abilityResponse.status}: ${abilityResponse.statusText}`);
         }
@@ -5059,7 +5335,7 @@ CardEditor.prototype.copyExistingAbilityById = async function(abilityId) {
         jsonConfig: ability.jsonConfig
     };
 
-    const createRes = await fetch('/api/abilities', {
+    const createRes = await fetch(`/api/abilities${this.getScopeQueryParam()}`, {
         method: 'POST',
         headers: buildEditorIdentityHeaders({
             'Content-Type': 'application/json'
@@ -5087,7 +5363,7 @@ CardEditor.prototype.editAbility = async function(abilityId) {
 
         if (!ability) {
             // 获取能力详细信息
-            const response = await fetch(`/api/abilities/${abilityId}`);
+            const response = await fetch(`/api/abilities/${abilityId}${this.getScopeQueryParam()}`);
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
@@ -5123,7 +5399,7 @@ CardEditor.prototype.removeAbility = async function(abilityId) {
         try {
             const currentCardId = this.getCurrentCardId();
             // 调用后端API移除能力关联
-            const response = await fetch(`/api/cards/${currentCardId}/abilities/${abilityId}`, {
+            const response = await fetch(`/api/cards/${currentCardId}/abilities/${abilityId}${this.getScopeQueryParam()}`, {
                 method: 'DELETE',
                 headers: buildEditorIdentityHeaders()
             });
@@ -5332,7 +5608,7 @@ CardEditor.prototype.saveAbilityChanges = async function(originalAbility, update
     try {
 
         // 调用后端API更新能力
-        const response = await fetch(`/api/abilities/${originalAbility.id}`, {
+        const response = await fetch(`/api/abilities/${originalAbility.id}${this.getScopeQueryParam()}`, {
             method: 'PUT',
             headers: buildEditorIdentityHeaders({
                 'Content-Type': 'application/json'
@@ -5408,5 +5684,437 @@ CardEditor.prototype.loadKeywordOptions = async function(selectElement) {
             option.textContent = value;
             selectElement.appendChild(option);
         });
+    }
+};
+
+/**
+ * 3.3 自然语言/卡面描述转 DSL 能力配置 (Copilot)
+ */
+CardEditor.prototype.generateAbilitiesFromVisualCard = async function() {
+    if (!this.currentCard) {
+        showAlert('请先选择或新建一张卡牌');
+        return;
+    }
+
+    try {
+        const visualCanvas = !this.useClassicBasicForm
+            && this.visualCanvas?.mseCard?.sourceCardId === (this.currentCard.id ?? null)
+            ? this.visualCanvas
+            : null;
+        visualCanvas?.finishInline();
+        visualCanvas?.syncToEditorCard();
+
+        const rawDesc = (this.currentCard.description || '').trim();
+        let sections = visualCanvas?.mseCard?.presentation?.sections || this.currentCard.presentation?.sections;
+        if (!Array.isArray(sections) && this.currentCard.id != null) {
+            // 现有画布使用前一个键；同时兼容 v1 命名的本地段落存档。
+            const savedMeta = JSON.parse(
+                localStorage.getItem('svwb-mse-card-meta:' + this.currentCard.id)
+                || localStorage.getItem('sv_mse_presentation_v1_' + this.currentCard.id)
+                || 'null'
+            );
+            sections = savedMeta?.sections;
+        }
+        const sectionsPayload = Array.isArray(sections)
+            ? sections.filter(section => String(section.text ?? '').trim().length > 0)
+            : [];
+
+        if (!rawDesc && sectionsPayload.length === 0) {
+            showAlert('当前卡面暂无规则描述文本，请先直接在卡面规则区点击输入效果描述（例如：【入场曲】抽2张牌。对敌方主战者造成3点伤害。）');
+            return;
+        }
+
+        // 若是尚未保存的新卡，先自动保存以分配数据库 CardId
+        if (this.currentCard.isNew || this.getCurrentCardId() == null) {
+            if (!this.currentCard.name || !this.currentCard.name.trim()) {
+                this.currentCard.name = '未命名新卡';
+            }
+            const saved = await this.saveCurrentCard(false);
+            if (!saved || this.currentCard.isNew || this.getCurrentCardId() == null) {
+                return;
+            }
+        }
+
+        const currentCardId = this.getCurrentCardId();
+        const response = await fetch('/api/dsl/generate-from-card', {
+            method: 'POST',
+            headers: buildEditorIdentityHeaders({
+                'Content-Type': 'application/json'
+            }),
+            body: JSON.stringify({
+                cardId: currentCardId,
+                name: this.currentCard.name || '',
+                cardType: this.currentCard.cardType || 'Follower',
+                cardClass: this.currentCard.cardClass || 'Neutral',
+                cost: Number(this.currentCard.cost ?? 0),
+                description: this.currentCard.description || '',
+                sections: sectionsPayload
+            })
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(errText || `HTTP ${response.status}`);
+        }
+
+        const result = await response.json();
+
+        // 本次编译结果替换旧识别结果，避免删掉规则后仍残留关键字。
+        if (Array.isArray(result.detectedKeywords)) {
+            this.currentCard.keywords = [...new Set((result.detectedKeywords || []).filter(Boolean))];
+            if (visualCanvas) {
+                visualCanvas.mseCard.keywords = [...this.currentCard.keywords];
+                visualCanvas.renderKeywordsList();
+            }
+            this.updateCardPreview();
+        }
+
+        const generatedAbilities = Array.isArray(result.abilities) ? result.abilities : [];
+        if (generatedAbilities.length === 0 && this.currentCard.keywords.length === 0) {
+            showAlert('未从当前描述中识别出关键字或需要生成的触发/光环能力。');
+            return;
+        }
+
+        let createdCount = 0;
+        for (const item of generatedAbilities) {
+            const createResp = await fetch(`/api/abilities${this.getScopeQueryParam()}`, {
+                method: 'POST',
+                headers: buildEditorIdentityHeaders({
+                    'Content-Type': 'application/json'
+                }),
+                body: JSON.stringify({
+                    cardId: currentCardId,
+                    name: item.name || `${this.currentCard.name}_能力`,
+                    description: item.description || '',
+                    abilityKeywords: Array.isArray(item.abilityKeywords) ? item.abilityKeywords : [],
+                    abilityType: item.abilityType || 1,
+                    priority: item.priority || 0,
+                    isActive: item.isActive !== false,
+                    jsonConfig: item.jsonConfig
+                })
+            });
+
+            if (!createResp.ok) throw new Error(await readErrorResponseMessage(createResp));
+            const createdAbility = await this.readAbilityWriteResponse(createResp);
+            this.applyDataRevisionFromResponse(createResp, {
+                reason: 'ability-created',
+                changedCardIds: currentCardId != null ? [currentCardId] : []
+            });
+            this.applyCardEditMetadata(createdAbility);
+            this.updateAbilityCachesAfterSave(createdAbility, currentCardId);
+            createdCount++;
+        }
+
+        this.currentCard.isImplemented = true;
+        if (visualCanvas) {
+            visualCanvas.mseCard.isImplemented = true;
+            visualCanvas.syncToEditorCard();
+        }
+        if (!await this.saveCurrentCard(false)) throw new Error('编译完成，但卡牌保存未完成，请保存后再使用。');
+        if (visualCanvas) await visualCanvas.paint();
+
+        this.invalidateAbilityLibraryCache();
+        this.switchTab('abilities');
+        await this.renderAbilitiesList({ force: true });
+
+        const notesSummary = generatedAbilities
+            .map(a => Array.isArray(a.notes) ? a.notes.join('；') : (a.notes || ''))
+            .filter(Boolean)
+            .slice(0, 4)
+            .join('；');
+        showAlert(createdCount > 0
+            ? `已编译并实装，创建 ${createdCount} 条 DSL 能力配置并保存卡牌。${notesSummary ? `\n(${notesSummary})` : ''}`
+            : `已编译并实装，保存关键字：${this.currentCard.keywords.join('、')}（无需额外触发能力配置）。`);
+    } catch (error) {
+        console.error('CardEditor: Failed to generate abilities from card text:', error);
+        showAlert(`生成 DSL 能力失败: ${error.message}`);
+    }
+};
+
+/**
+ * 从普通卡牌深拷贝导入为独立幻境卡牌（无两栖：分配新ID、重写关联衍生卡与能力引用、物理隔离卡面资源）
+ */
+CardEditor.prototype.showImportClassicCardModal = async function() {
+    if (!this.isMirageScope()) {
+        showAlert('仅幻境卡牌工坊支持从普通卡导入。');
+        return;
+    }
+
+    this.closeImportClassicCardModal();
+
+    const modalHTML = `
+        <div class="modal-overlay" id="import-classic-card-modal">
+            <div class="modal-container ability-edit-container ability-copy-container">
+                <div class="modal-header">
+                    <h3>从普通卡导入到幻境卡池（深拷贝隔离）</h3>
+                    <button class="modal-close-btn" id="close-import-classic-card-modal" type="button">×</button>
+                </div>
+                <div class="modal-content ability-copy-modal">
+                    <div class="ability-copy-filters">
+                        <div class="ability-copy-search">
+                            <label class="form-label" for="import-classic-card-search">筛选普通卡</label>
+                            <input class="tech-input" type="search" id="import-classic-card-search" placeholder="搜索普通卡名称、ID、职业或费用">
+                        </div>
+                        <div class="ability-copy-stats tech-text-dim" id="import-classic-card-stats">普通卡 0</div>
+                    </div>
+                    <div class="form-grid form-grid-2" style="margin-bottom: 10px;">
+                        <div class="form-group">
+                            <label class="form-label" for="import-classic-card-tier">导入后酒馆星级 (1-6星)</label>
+                            <select id="import-classic-card-tier" class="form-input tech-select">
+                                <option value="1">★1 一星酒馆</option>
+                                <option value="2">★2 二星酒馆</option>
+                                <option value="3">★3 三星酒馆</option>
+                                <option value="4">★4 四星酒馆</option>
+                                <option value="5">★5 五星酒馆</option>
+                                <option value="6">★6 六星酒馆</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="display:flex; align-items:flex-end; padding-bottom: 6px;">
+                            <label class="form-toggle">
+                                <input type="checkbox" id="import-classic-card-abilities" checked>
+                                <span class="form-toggle-text">深拷贝关联能力与衍生卡（自动重写ID与卡面副本）</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="tech-text-dim ability-copy-hint">选中普通卡后点击“确认导入”，将生成全新幻境专属卡牌ID，后续修改绝不影响经典对战</div>
+                    <div class="ability-copy-list custom-scrollbar" id="import-classic-card-list">
+                        <div class="loading-spinner"></div>
+                        <p>正在加载普通卡牌目录...</p>
+                    </div>
+                    <div class="ability-copy-pagination">
+                        <button class="btn-tech btn-secondary btn-small" id="import-classic-card-prev" type="button" disabled>上一页</button>
+                        <div class="ability-copy-page-info tech-text-dim" id="import-classic-card-page-info">1 / 1</div>
+                        <button class="btn-tech btn-secondary btn-small" id="import-classic-card-next" type="button" disabled>下一页</button>
+                    </div>
+                    <div class="modal-actions ability-copy-actions">
+                        <button class="btn-tech btn-secondary" id="cancel-import-classic-card" type="button">取消</button>
+                        <button class="btn-tech btn-primary" id="confirm-import-classic-card" type="button" disabled>确认导入为幻境卡</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+
+    const modal = document.getElementById('import-classic-card-modal');
+    const modalContainer = modal?.querySelector('.ability-copy-container');
+    const modalLoader = modalContainer ? getBlockingLoader(modalContainer) : null;
+    const closeBtn = document.getElementById('close-import-classic-card-modal');
+    const cancelBtn = document.getElementById('cancel-import-classic-card');
+    const confirmBtn = document.getElementById('confirm-import-classic-card');
+    const listEl = document.getElementById('import-classic-card-list');
+    const searchInput = document.getElementById('import-classic-card-search');
+    const statsEl = document.getElementById('import-classic-card-stats');
+    const pageInfoEl = document.getElementById('import-classic-card-page-info');
+    const prevBtn = document.getElementById('import-classic-card-prev');
+    const nextBtn = document.getElementById('import-classic-card-next');
+    const tierSelect = document.getElementById('import-classic-card-tier');
+    const includeAbilitiesCheckbox = document.getElementById('import-classic-card-abilities');
+
+    const close = () => {
+        modalLoader?.hide();
+        this.closeImportClassicCardModal();
+    };
+
+    closeBtn?.addEventListener('click', close);
+    cancelBtn?.addEventListener('click', close);
+    modal?.addEventListener('click', (event) => {
+        if (event.target === modal) close();
+    });
+
+    let selectedSourceCardId = null;
+    const pageSize = 15;
+    let currentPage = 1;
+    let allEntries = [];
+    let filteredEntries = [];
+
+    try {
+        const response = await fetch('/api/cards?scope=standard');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const rawCards = await response.json();
+        const classicCards = (Array.isArray(rawCards) ? rawCards : []).filter(card => {
+            const id = Number(card?.id ?? card?.Id);
+            const isMirage = Boolean(card?.isMirageCard ?? card?.IsMirageCard);
+            return Number.isInteger(id) && id > 0 && !isMirage;
+        });
+
+        allEntries = classicCards.map(card => {
+            const cardId = Number(card.id ?? card.Id);
+            const cardName = String(card.name ?? card.Name ?? `Card ${cardId}`).trim() || `Card ${cardId}`;
+            const cardCost = Number(card.cost ?? card.Cost ?? 0) || 0;
+            const cardType = normalizeEnumName(card.type ?? card.Type ?? 'Follower');
+            const cardClass = normalizeEnumName(card.class ?? card.Class ?? 'Neutral');
+            const cardSet = String(card.cardSet ?? card.CardSet ?? '').trim();
+            const attack = Number(card.attack ?? card.Attack ?? 0) || 0;
+            const health = Number(card.health ?? card.Health ?? 0) || 0;
+            const searchText = [cardName, cardId, cardCost, cardType, cardClass, cardSet].join(' ').toLowerCase();
+            return {
+                cardId,
+                cardName,
+                cardCost,
+                cardType,
+                cardClass,
+                cardSet,
+                attack,
+                health,
+                searchText
+            };
+        }).sort((a, b) => a.cardId - b.cardId);
+    } catch (error) {
+        console.error('CardEditor: Failed to load classic cards for import:', error);
+        if (listEl) {
+            listEl.innerHTML = `<div class="abilities-placeholder"><p>加载普通卡牌列表失败：${escapeHtml(error.message)}</p></div>`;
+        }
+        return;
+    }
+
+    const renderList = () => {
+        const totalPages = Math.max(1, Math.ceil(filteredEntries.length / pageSize));
+        currentPage = Math.min(currentPage, totalPages);
+
+        if (statsEl) {
+            statsEl.textContent = `普通卡 ${filteredEntries.length}`;
+        }
+        if (pageInfoEl) {
+            pageInfoEl.textContent = `${currentPage} / ${totalPages}`;
+        }
+        if (prevBtn) prevBtn.disabled = currentPage <= 1;
+        if (nextBtn) nextBtn.disabled = currentPage >= totalPages;
+
+        if (!listEl) return;
+        if (filteredEntries.length === 0) {
+            listEl.innerHTML = `<div class="abilities-placeholder"><p>没有匹配的普通卡牌</p></div>`;
+            return;
+        }
+
+        const start = (currentPage - 1) * pageSize;
+        const pageItems = filteredEntries.slice(start, start + pageSize);
+
+        listEl.innerHTML = pageItems.map(entry => {
+            const isSelected = selectedSourceCardId === entry.cardId;
+            const statBadge = equalsIgnoreCase(entry.cardType, 'Follower')
+                ? `<span class="tech-tag">${entry.attack}/${entry.health}</span>`
+                : '';
+            return `
+                <div class="ability-copy-card${isSelected ? ' expanded' : ''}" data-source-card-id="${entry.cardId}" data-source-cost="${entry.cardCost}">
+                    <button type="button" class="ability-copy-card-header" style="${isSelected ? 'border-color: var(--tech-cyan, #00e5ff); background: rgba(0, 229, 255, 0.12);' : ''}">
+                        <div class="ability-copy-card-main">
+                            <span class="ability-copy-card-name tech-text-bold">${escapeHtml(entry.cardName)}</span>
+                            <span class="ability-copy-card-id tech-text-dim">#${entry.cardId}</span>
+                        </div>
+                        <div class="ability-copy-card-meta">
+                            <span class="tech-badge">费用 ${entry.cardCost}</span>
+                            ${statBadge}
+                            <span class="tech-tag">${escapeHtml(entry.cardType)}</span>
+                            <span class="tech-tag">${escapeHtml(entry.cardClass)}</span>
+                            ${entry.cardSet ? `<span class="tech-tag">${escapeHtml(entry.cardSet)}</span>` : ''}
+                        </div>
+                    </button>
+                </div>
+            `;
+        }).join('');
+
+        listEl.querySelectorAll('.ability-copy-card').forEach(cardEl => {
+            const sourceId = Number(cardEl.dataset.sourceCardId);
+            const sourceCost = Number(cardEl.dataset.sourceCost ?? 1);
+            cardEl.querySelector('.ability-copy-card-header')?.addEventListener('click', () => {
+                selectedSourceCardId = sourceId;
+                if (tierSelect) {
+                    const recommendedTier = Math.max(1, Math.min(6, sourceCost || 1));
+                    tierSelect.value = String(recommendedTier);
+                }
+                if (confirmBtn) {
+                    confirmBtn.disabled = false;
+                }
+                renderList();
+            });
+        });
+    };
+
+    const applyFilter = (query = '') => {
+        const normalized = String(query ?? '').trim().toLowerCase();
+        filteredEntries = allEntries.filter(entry => !normalized || entry.searchText.includes(normalized));
+        currentPage = 1;
+        renderList();
+    };
+
+    searchInput?.addEventListener('input', () => applyFilter(searchInput.value));
+    prevBtn?.addEventListener('click', () => {
+        if (currentPage > 1) {
+            currentPage -= 1;
+            renderList();
+        }
+    });
+    nextBtn?.addEventListener('click', () => {
+        const totalPages = Math.max(1, Math.ceil(filteredEntries.length / pageSize));
+        if (currentPage < totalPages) {
+            currentPage += 1;
+            renderList();
+        }
+    });
+
+    applyFilter('');
+
+    confirmBtn?.addEventListener('click', async () => {
+        if (!selectedSourceCardId) return;
+        confirmBtn.disabled = true;
+        modalLoader?.show('正在深拷贝导入为幻境卡...');
+        try {
+            const tavernTier = Math.max(1, Math.min(6, parseInt(tierSelect?.value ?? '1', 10) || 1));
+            const includeAbilities = includeAbilitiesCheckbox ? includeAbilitiesCheckbox.checked : true;
+
+            const response = await fetch('/api/cards/mirage/import', {
+                method: 'POST',
+                headers: buildEditorIdentityHeaders({
+                    'Content-Type': 'application/json'
+                }),
+                body: JSON.stringify({
+                    sourceCardId: selectedSourceCardId,
+                    mirageTavernTier: tavernTier,
+                    includeAbilities
+                })
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                throw new Error(errText || `HTTP ${response.status}`);
+            }
+
+            const result = await response.json();
+            const importedCard = result?.card ?? result?.Card;
+            const newCardId = importedCard?.id ?? importedCard?.Id;
+            const derivedIds = result?.importedDerivedCardIds ?? result?.ImportedDerivedCardIds ?? [];
+            const abilityCount = Number(result?.importedAbilityCount ?? result?.ImportedAbilityCount ?? 0);
+
+            this.applyDataRevisionFromResponse(response, {
+                reason: 'mirage-card-imported',
+                changedCardIds: newCardId != null ? [newCardId, ...derivedIds] : []
+            });
+            this.invalidateAbilityLibraryCache();
+
+            close();
+            await this.loadCardList({ force: true });
+            if (newCardId != null) {
+                await this.selectCard(newCardId);
+            }
+
+            showAlert(`导入成功！已生成独立幻境卡 #${newCardId}「${importedCard?.name ?? importedCard?.Name ?? ''}」（同步克隆衍生卡 ${derivedIds.length} 张、能力 ${abilityCount} 条）。`);
+        } catch (error) {
+            console.error('CardEditor: Failed to import classic card to mirage:', error);
+            showAlert(`导入失败: ${error.message}`);
+            confirmBtn.disabled = false;
+        } finally {
+            modalLoader?.hide();
+        }
+    });
+};
+
+CardEditor.prototype.closeImportClassicCardModal = function() {
+    const modal = document.getElementById('import-classic-card-modal');
+    if (modal) {
+        modal.remove();
     }
 };

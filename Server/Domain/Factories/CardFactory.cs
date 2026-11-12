@@ -43,6 +43,18 @@ namespace ShadowverseBeyond.Server.Domain.Factories
                 throw new ArgumentException($"CardDefinition not found for ID: {cardDefinitionId}", nameof(cardDefinitionId));
             }
 
+            var expectMirage = gameState.Mode == GameMode.Mirage;
+            if (cardDefinition.IsMirageCard != expectMirage)
+            {
+                _logger.LogError(
+                    "Rejected card creation due to mode ownership mismatch. CardDefinitionId={CardDefinitionId}, IsMirageCard={IsMirageCard}, GameMode={GameMode}",
+                    cardDefinitionId,
+                    cardDefinition.IsMirageCard,
+                    gameState.Mode);
+                throw new InvalidOperationException(
+                    $"CardDefinition {cardDefinitionId} (IsMirageCard={cardDefinition.IsMirageCard}) cannot be instantiated in GameMode {gameState.Mode}.");
+            }
+
             Guid instanceId = Guid.NewGuid();
             var cardInstance = new CardInstance(instanceId, cardDefinition.Id, ownerPlayerId);
 

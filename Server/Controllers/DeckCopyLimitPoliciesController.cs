@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -108,13 +108,13 @@ public class DeckCopyLimitPoliciesController : ControllerBase
         var cardIds = items.Select(item => item.CardDefinitionId).Distinct().ToList();
         var existingCardIds = await _db.CardDefinitions
             .AsNoTracking()
-            .Where(card => cardIds.Contains(card.Id))
+            .Where(card => cardIds.Contains(card.Id) && !card.IsMirageCard)
             .Select(card => card.Id)
             .ToListAsync(cancellationToken);
         var missingCardIds = cardIds.Except(existingCardIds).OrderBy(id => id).ToList();
         if (missingCardIds.Count > 0)
         {
-            return BadRequest($"Unknown cardDefinitionId: {string.Join(", ", missingCardIds)}.");
+            return BadRequest($"Unknown or non-classic cardDefinitionId: {string.Join(", ", missingCardIds)}.");
         }
 
         var existingRows = await _db.DeckCardCopyLimitPolicies

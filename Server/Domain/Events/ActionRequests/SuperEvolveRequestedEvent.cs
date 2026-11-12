@@ -5,6 +5,7 @@ using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Events.Metadata;
 using ShadowverseBeyond.Server.Domain.Metadata;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using System;
 using System.Linq;
 
@@ -37,6 +38,11 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
 
         public DomainOperationResult Commit(GameContext context)
         {
+            if (context.CurrentGameState.Mode == GameMode.Mirage)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "幻境模式不允许手动超进化。" };
+            }
+
             var requestingPlayer = context.CurrentGameState.GetPlayerState(this.PlayerId);
             if (requestingPlayer == null)
             {

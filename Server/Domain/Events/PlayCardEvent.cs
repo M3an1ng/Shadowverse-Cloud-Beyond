@@ -35,6 +35,9 @@ namespace ShadowverseBeyond.Server.Domain.Events
 
         public int? AlternateCardDefinitionId { get; }
 
+        // Keep one event identity so evolution choices resolved before playing are reused after summoning.
+        internal EvolveEvent? MirageTripleEvolution { get; }
+
         public PlayCardEvent(PlayerState player, CardInstance card, PlayMode playMode, int? paidCost)
             : this(player, card, playMode, paidCost, null, null, null)
         {
@@ -57,6 +60,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
             PaidCost = paidCost ?? card.CurrentCost;
             TriggeredAbilityRuntimeId = triggeredAbilityRuntimeId;
             AlternateCardDefinitionId = alternateCardDefinitionId;
+            if (card.IsMirageTriple && card.IsFollower && !card.IsEvolved && !alternateCardDefinitionId.HasValue)
+            {
+                MirageTripleEvolution = new EvolveEvent(card, TargetInfo.ForPlayer(player));
+            }
         }
 
         public DomainOperationResult Commit(GameContext context)
@@ -133,6 +140,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
             }
 
             result.GeneratedEvents.AddRange(playResult.GeneratedEvents);
+            if (MirageTripleEvolution != null)
+            {
+                result.GeneratedEvents.Add(MirageTripleEvolution);
+            }
             var modeEvent = CreateModeEvent(player, card);
             if (modeEvent != null)
             {

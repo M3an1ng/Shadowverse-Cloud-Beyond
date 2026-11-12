@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using System.Threading;
 using System.Text.Json.Serialization;
+using System.Text.Json;
 
 namespace ShadowverseBeyond.Server.Models
 {
@@ -17,6 +18,11 @@ namespace ShadowverseBeyond.Server.Models
         /// A unique identifier for this specific action instance, used for tracking its completion.
         /// </summary>
         public Guid ActionId { get; } = Guid.NewGuid();
+
+        public string? CommandId { get; set; }
+        public string Origin { get; set; } = "player";
+        public long? ExpectedStateRevision { get; set; }
+        public string? RejectionCode { get; set; }
 
         /// <summary>
         /// Identifies the type of action (e.g., "PlayCard", "Attack", "EndTurn").
@@ -85,6 +91,12 @@ namespace ShadowverseBeyond.Server.Models
         public static PlayerActionCompletion Rejected(string reason) => new(PlayerActionCompletionStatus.Rejected, reason);
 
         public static PlayerActionCompletion Cancelled(string reason) => new(PlayerActionCompletionStatus.Cancelled, reason);
+    }
+
+    public sealed class MatchStateRead(Func<ShadowverseBeyond.Server.Domain.Entities.GameState, IServiceProvider, Task<JsonElement>> reader) : PlayerActionWrapper("ReadMatchState", Guid.Empty, null)
+    {
+        public Func<ShadowverseBeyond.Server.Domain.Entities.GameState, IServiceProvider, Task<JsonElement>> Reader { get; } = reader;
+        public JsonElement Value { get; set; }
     }
 
     public enum PlayerActionCompletionStatus

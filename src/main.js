@@ -2,8 +2,9 @@ import { installLocalAiTraining } from './localAiTraining.js';
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installLocalAiTraining, {once:true}); else void installLocalAiTraining();
 import { createRevealPresentationGate } from "./revealPresentationGate.js";
 import { formatRoomHandshake } from "./multiplayerRoomPresentation.js";
+import { loadAboutChangelog } from "./aboutChangelog.js";
 import "./styles/mini-feature-theme.css";
-﻿import { initializeTakeTwo,tryJoinTakeTwo } from './takeTwo.js';
+﻿import { initializeTakeTwo, tryJoinTakeTwo, stopTakeTwoWaitingLobby } from './takeTwo.js';
 import { listSpectatableRooms, showTakeTwoSpectator, findTakeTwoSpectatorRoom } from './takeTwoSpectator.js';
 import { confirmDialog } from './siteDialog.js';
 import { showAlert } from './siteDialog.js';
@@ -33,7 +34,8 @@ import {
     handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested,
     handleCardRevealed, handleFusion, handleAbilityTriggered, handleKeywordAdded, handleKeywordRemoved, handleCardInstanceUpdated,
     handleChatHistory, handleChatMessage, handleMatchHistorySync, surrenderGame,
-    handleCardMoved, handleEmblemUpdated, handleCounterChanged, handleCardReturned, handleTuck, appendGameLog // 【新增】导入最大值更新处理函数
+    handleCardMoved, handleEmblemUpdated, handleCounterChanged, handleCardReturned, handleTuck, appendGameLog,
+    handleMirageCombatReplay, abortMirageCombatPlayback // 【新增】导入最大值更新处理函数与幻境战斗回放门禁
 } from './gameManager.js';
 // loadCards is obsolete now that the server is the single source of truth.
 import {
@@ -46,7 +48,9 @@ import {
     updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi,
     refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast,
     replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard,
-    appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual
+    appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual,
+    prepareCardMoveVisual, commitCardMoveVisual, notifyCardPlayed, playAttackLunge, playUnitEvolutionEffect, notifyShieldRemoved, cancelAllBattleMotions,
+    startMirageCombatPlaybackUi, renderMirageCombatStep, renderMirageCombatOutcome, hideMirageCombatPlaybackOverlay, showMirageReconnectLockOverlay
 } from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
 import { initDevConsole } from './devConsole.js'; // 开发者控制台
 import { ensureEnumLocalizations } from './enumLocalizationCache.js';
@@ -63,6 +67,7 @@ import {
 import {
     buildDeckPresentation,
     formatDeckSummaryLabel,
+    getDeckClassLabel,
     getDeckEnvironmentLabel,
     getDeckRuleLabel,
     normalizeDeckRule as normalizeDeckRuleShared,
@@ -78,7 +83,9 @@ import { setupDailyQuestUI } from './dailyQuestMenu.js';
 import { setupUserInfoUI } from './userMenu.js';
 // 在页面初始化前接入真实 console；面板首次打开时才创建 DOM。
 bindGameView({
-    renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual
+    renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual,
+    prepareCardMoveVisual, commitCardMoveVisual, notifyCardPlayed, playAttackLunge, playUnitEvolutionEffect, notifyShieldRemoved, cancelAllBattleMotions,
+    startMirageCombatPlaybackUi, renderMirageCombatStep, renderMirageCombatOutcome, hideMirageCombatPlaybackOverlay, showMirageReconnectLockOverlay
 });
 initDevConsole();
 // import { endTurn } from './turnManager.js'; // Keep commented out
@@ -229,6 +236,7 @@ let pendingHandshake = null; // Set by multiplayer UI before initialization
 let pendingRouteTransition = null; // { fromRoute, toRoute }
 let pendingRoomExitDecision = null; // { sourceRoute, targetRoute, gameId }
 let confirmedBattleExitSurrender = false;
+let returningToLobbyForRematch = false;
 let roomExitDecisionModalEl = null;
 let roomExitDecisionPromise = null;
 let roomExitDecisionResolve = null;
@@ -848,6 +856,12 @@ function showRoomExitDecisionPrompt() {
         return roomExitDecisionPromise;
     }
 
+    const fromLobby = pendingRoomExitDecision?.sourceRoute === 'multiplayer';
+    const bodyText = fromLobby
+        ? '你仍在多人对战房间候战中，可以返回房间继续等待，或退出并解散/释放座位。'
+        : '你可以返回当前多人对战，或断开并退出该房间。';
+    const returnLabel = fromLobby ? '返回房间' : '返回对战';
+
     roomExitDecisionPromise = new Promise((resolve) => {
         roomExitDecisionResolve = resolve;
 
@@ -857,10 +871,10 @@ function showRoomExitDecisionPrompt() {
             <div class="room-exit-decision-card" role="dialog" aria-label="对战连接确认" aria-modal="true">
                 <div class="room-exit-decision-title">已返回主界面</div>
                 <div class="room-exit-decision-body">
-                    你可以返回当前多人对战，或断开并退出该房间。
+                    ${bodyText}
                 </div>
                 <div class="room-exit-decision-actions">
-                    <button type="button" class="room-exit-decision-btn room-exit-decision-return">返回对战</button>
+                    <button type="button" class="room-exit-decision-btn room-exit-decision-return">${returnLabel}</button>
                     <button type="button" class="room-exit-decision-btn room-exit-decision-disconnect">断开连接</button>
                 </div>
             </div>
@@ -888,6 +902,7 @@ async function handlePendingRoomExitDecisionOnNavigation() {
         return;
     }
 
+    const sourceRoute = pendingRoomExitDecision.sourceRoute;
     const action = await showRoomExitDecisionPrompt();
 
     if (!pendingRoomExitDecision) {
@@ -896,7 +911,7 @@ async function handlePendingRoomExitDecisionOnNavigation() {
 
     if (action === 'return') {
         clearPendingRoomExitDecision();
-        await router.navigateTo('game');
+        await router.navigateTo(sourceRoute === 'multiplayer' ? 'multiplayer' : 'game');
         return;
     }
 
@@ -1011,19 +1026,29 @@ function registerBeforeUnloadGuard() {
     });
 }
 
-async function createMatch(useAiFallback) {
+async function createMatch(useAiFallback, options = {}) {
     const session = getUserSession();
-    const payload = await apiPostJson("/api/match", {
+    const isPublic = options?.isPublic !== false;
+    const mode = options?.mode || 'Standard';
+    const body = {
         useAiFallback,
-        hostPlayerId: session.userId || null
-    });
+        isPublic: Boolean(isPublic),
+        hostPlayerId: session.userId || null,
+        mode
+    };
+    const payload = await apiPostJson("/api/match", body);
+    const resolvedMode = String(payload.mode || mode || 'Standard');
+    const isMirage = payload.isMirage === true || resolvedMode.toLowerCase() === 'mirage';
     return {
-        gameId: payload.gameId,
+        gameId: payload.roomId || payload.gameId,
         playerId: payload.hostPlayerId,
         token: payload.hostToken,
         joinCode: payload.joinCode,
         role: "host",
-        useAiFallback: payload.useAiFallback
+        useAiFallback: payload.useAiFallback,
+        isPublic: payload.isPublic !== false,
+        mode: resolvedMode,
+        isMirage
     };
 }
 
@@ -1032,30 +1057,59 @@ async function joinMatch(gameId, joinCode, options = {}) {
     const resolvedPlayerId = options.playerId === undefined
         ? (session.userId || session.guestId || null)
         : options.playerId;
-    const payload = await apiPostJson(`/api/match/${encodeURIComponent(gameId)}/join`, {
-        joinCode,
-        playerId: resolvedPlayerId
+    const trimmedGameId = String(gameId || '').trim();
+    const trimmedCode = String(joinCode || '').trim();
+    const endpoint = trimmedGameId
+        ? `/api/match/${encodeURIComponent(trimmedGameId)}/join`
+        : `/api/match/join-by-code`;
+    const payload = await apiPostJson(endpoint, {
+        joinCode: trimmedCode,
+        playerId: resolvedPlayerId,
+        ...(options.token ? { token: options.token } : {})
     });
+    const resolvedMode = String(payload.mode || 'Standard');
+    const isMirage = payload.isMirage === true || resolvedMode.toLowerCase() === 'mirage';
     return {
-        gameId: payload.gameId,
+        gameId: payload.roomId || payload.gameId,
         playerId: payload.guestPlayerId,
         token: payload.guestToken,
-        joinCode: payload.joinCode,
+        joinCode: payload.joinCode || trimmedCode,
         role: "guest",
-        useAiFallback: payload.useAiFallback
+        useAiFallback: payload.useAiFallback,
+        isPublic: payload.isPublic !== false,
+        mode: resolvedMode,
+        isMirage
     };
 }
 
-async function markReady(gameId, playerId, token) {
-    await apiPostJson(`/api/match/${encodeURIComponent(gameId)}/ready`, { playerId, token });
+async function markReady(gameId, playerId, token, ready = true) {
+    return await apiPostJson(`/api/match/${encodeURIComponent(gameId)}/ready`, { playerId, token, ready });
 }
 
 async function startMatch(gameId, playerId, token) {
-    await apiPostJson(`/api/match/${encodeURIComponent(gameId)}/start`, { playerId, token });
+    return await apiPostJson(`/api/match/${encodeURIComponent(gameId)}/start`, { playerId, token });
 }
 
-async function getMatch(gameId) {
-    return await apiGetJson(`/api/match/${encodeURIComponent(gameId)}`);
+async function kickGuestFromMatch(gameId, playerId, token, targetGuestPlayerId = null) {
+    return await apiPostJson(`/api/match/${encodeURIComponent(gameId)}/kick`, {
+        playerId,
+        token,
+        ...(targetGuestPlayerId ? { targetGuestPlayerId } : {})
+    });
+}
+
+async function getMatch(gameId, auth = null) {
+    const effectiveAuth = auth || (() => {
+        const candidate = pendingHandshake || lobbyHandshake;
+        if (candidate && candidate.gameId === gameId && candidate.playerId && candidate.token) {
+            return { playerId: candidate.playerId, token: candidate.token };
+        }
+        return null;
+    })();
+    const query = effectiveAuth?.playerId && effectiveAuth?.token
+        ? `?playerId=${encodeURIComponent(effectiveAuth.playerId)}&token=${encodeURIComponent(effectiveAuth.token)}`
+        : '';
+    return await apiGetJson(`/api/match/${encodeURIComponent(gameId)}${query}`);
 }
 
 async function listMatches() {
@@ -1406,9 +1460,9 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
             logEventReceipt(eventName, eventData);
             if (EVENT_STREAM_NAMES.includes(eventName)) {
                 const payloadForLog = typeof logMapper === 'function' ? logMapper(eventData) : eventData;
-                handler(eventData);
+                const completion = handler(eventData);
                 appendGameLog(eventName, payloadForLog);
-                return;
+                return completion;
             }
             return handler(eventData);
         });
@@ -1449,11 +1503,12 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
             // Ensure gameManager and updateFullGameState are imported correctly
             try {
                 setConnectionStatus('connected');
-                const hydrationSucceeded = updateFullGameState(receivedGameState); // Directly update the game state and UI
+                const hydrationSucceeded = updateFullGameState(receivedGameState, { isReconnectFullSync: true }); // Directly update the game state and UI
                 if (hydrationSucceeded === false) {
                     void handleStateHydrationFailure('重连失败').catch(error => console.error('MAIN: 状态同步失败后的连接清理失败。', error));
                     return;
                 }
+                syncRematchRoomButtonVisibility();
             } catch (error) { // Catch for outer try (Line 98)
                 console.error("MAIN: Error calling updateFullGameState for subsequent update:", error);
                 void handleStateHydrationFailure('重连失败').catch(error => console.error('MAIN: 状态同步失败后的连接清理失败。', error));
@@ -1505,7 +1560,10 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     wireEvent("CardInstanceUpdated", handleCardInstanceUpdated);
     wireEvent("CardMoved", handleCardMoved);
     wireEvent("PlayerMulliganCompleted", handlePlayerMulliganCompleted);
-    wireEvent("GameOver", handleGameOver);
+    wireEvent("GameOver", (eventData) => {
+        handleGameOver(eventData);
+        syncRematchRoomButtonVisibility();
+    });
     wireEvent("AttackStateUpdated", handleAttackStateUpdated);
     wireEvent("ActStateUpdated", handleActStateUpdated);
     wireEvent("FusionStateUpdated", handleFusionStateUpdated);
@@ -1522,6 +1580,10 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     wireEvent("ChatHistory", handleChatHistory);
     wireEvent("ChatMessage", handleChatMessage);
     wireEvent("MatchHistorySync", handleMatchHistorySync);
+    onCurrentEvent("ReceiveMirageCombatReplay", (replayDto) => {
+        logEventReceipt("ReceiveMirageCombatReplay", replayDto);
+        void handleMirageCombatReplay(replayDto);
+    });
     // Generic log entries (for events without specific DTO)
     onCurrentEvent("LogEvent", (eventData) => {
         appendGameLog("LogEvent", eventData);
@@ -1540,8 +1602,10 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
         const message = typeof errorMessage === 'string' ? errorMessage : String(errorMessage ?? '');
         console.error("MAIN: Received Error from Server:", message);
 
-        if (message.startsWith("ROOM_CLOSED:")) {
-            const reason = message.slice("ROOM_CLOSED:".length).trim() || "房间已关闭。";
+        if (message.startsWith("ROOM_CLOSED:") || message.startsWith("ROOM_KICKED:")) {
+            abortMirageCombatPlayback("leave_room");
+            const prefix = message.startsWith("ROOM_KICKED:") ? "ROOM_KICKED:" : "ROOM_CLOSED:";
+            const reason = message.slice(prefix.length).trim() || "房间已关闭。";
             showAlert(reason);
             clearCachedHandshake();
             void router.navigateTo('navigation').catch(error => {
@@ -1581,6 +1645,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     conn.onclose((error) => {
         stopConnectionHeartbeat(conn);
         if (connection !== conn) return;
+        abortMirageCombatPlayback("reconnecting");
         logPerfDebug('signalr-game', 'connection closed', {
             connectionId,
             state: conn.state,
@@ -1597,6 +1662,7 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
 
     conn.onreconnecting((error) => {
         if (connection !== conn) return;
+        abortMirageCombatPlayback("reconnecting");
         setSignalRConnection(null);
         logPerfDebug('signalr-game', 'connection reconnecting', {
             connectionId,
@@ -1960,16 +2026,34 @@ export { connection };
 
 // --- Multiplayer UI Helpers ---
 let mpPollTimerId = null;
+let mpPollSessionId = 0;
+let mpPollInFlight = false;
+let resumeMultiplayerPollingFn = null;
 let suppressMultiplayerLeaveOnce = false;
 let mpLastCopied = { value: null, at: 0 };
 const MP_COPY_STICKY_MS = 0;
 const mpNotificationSoundPlayer = createLobbyNotificationSoundPlayer();
 
 function stopMultiplayerPolling() {
+    mpPollSessionId++;
+    mpPollInFlight = false;
     if (mpPollTimerId) {
         clearInterval(mpPollTimerId);
         mpPollTimerId = null;
     }
+}
+
+function syncRematchRoomButtonVisibility() {
+    const rematchBtn = document.getElementById('rematch-room-button');
+    if (!rematchBtn) return;
+    const handshake = getActiveNonAiRoomHandshake();
+    const canShow = Boolean(
+        gameState.gameOver === true &&
+        handshake &&
+        handshake.dualControl !== true &&
+        !isSpectatorBattle(gameState, handshake)
+    );
+    rematchBtn.style.display = canShow ? 'inline-flex' : 'none';
 }
 
 function formatHandshakeOutput(handshake) {
@@ -2126,13 +2210,21 @@ function setupMultiplayerUI() {
     const draftGuid = id => String(id).replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
     const buildSpectateRoomMeta = (room) => {
         const parts = [];
+        parts.push(room.isPublic === false ? '私密房' : '公开房');
         if (room.round) {
             parts.push(`第 ${room.round} 局`);
         }
-        parts.push(room.hasGuest || room.useAiFallback ? '对手已就位' : '等待对手');
+        if ((room.hostWins || 0) + (room.guestWins || 0) > 0) {
+            parts.push(`比分 ${room.hostWins || 0}:${room.guestWins || 0}`);
+        }
+        parts.push(room.hasGuest || room.useAiFallback ? '对手已就位' : (room.canJoin ? '等待对手（点击直接加入）' : '等待对手'));
         if (room.isTakeTwo) {
             const label = { rotation: '指定', unlimited: '无限', open: '开放', as2p: 'AS2P' }[room.draftEnvironment];
             parts.push(label === 'AS2P' ? 'AS2P' : `${label || getDeckEnvironmentLabel(room.requiredEnvironment) || '开放'} | 双选对战`);
+            return parts.join(' · ');
+        }
+        if (room.isMirage) {
+            parts.push('幻境模式');
             return parts.join(' · ');
         }
         if (room.requiredEnvironment) {
@@ -2160,8 +2252,13 @@ function setupMultiplayerUI() {
             const item = document.createElement('button');
             item.type = 'button';
             item.className = 'mp-room-item';
-            item.disabled = !room.canSpectate;
-            item.title = room.canSpectate ? '点击填入房间号' : '房间未开始，暂不可观战';
+            const actionable = Boolean(room.canSpectate || room.canJoin);
+            item.disabled = !actionable;
+            item.title = room.canSpectate
+                ? '点击填入观战房间号'
+                : room.canJoin
+                    ? '点击直接加入该公开房间'
+                    : (room.isPublic === false ? '私密房间等待中，请通过6位邀请码加入' : '房间未开始，暂不可观战');
 
             const main = document.createElement('div');
             main.className = 'mp-room-main';
@@ -2172,7 +2269,7 @@ function setupMultiplayerUI() {
 
             const status = document.createElement('span');
             status.className = 'mp-room-status';
-            status.textContent = room.statusLabel;
+            status.textContent = room.canJoin ? '公开可加入' : room.statusLabel;
 
             main.append(id, status);
             item.appendChild(main);
@@ -2191,8 +2288,15 @@ function setupMultiplayerUI() {
                         inputSpectateGame.value = room.draftRoomId ? draftGuid(room.draftRoomId) : room.roomId;
                         inputSpectateGame.focus();
                     }
-                    setOutput(outSpectate, `已选择房间：${room.roomId}`);
+                    setOutput(outSpectate, `已选择观战房间：${room.roomId}`);
                     closeSpectateRoomModal();
+                });
+            } else if (room.canJoin) {
+                item.addEventListener('click', () => {
+                    closeSpectateRoomModal();
+                    if (inputJoinGame) inputJoinGame.value = room.roomId;
+                    if (inputJoinCode) inputJoinCode.value = '';
+                    void executeJoinFlow(room.roomId, '', { isPublicDirectJoin: true, isMirage: room.isMirage === true });
                 });
             }
 
@@ -2245,6 +2349,7 @@ function setupMultiplayerUI() {
         if (!handshake) return null;
         if (handshake.role === 'spectator') return null;
         if (handshake.useAiFallback === true) return null;
+        if (handshake.isMirage === true) return null;
         if (!handshake.gameId || !handshake.playerId || !handshake.token) return null;
 
         if (roomDeckSyncState.gameId !== handshake.gameId) {
@@ -2379,184 +2484,338 @@ function setupMultiplayerUI() {
         setDeckOutput('卡组加载失败，请稍后重试。', true);
     });
 
+    const isMirageRoomPayload = (room, handshake = null) => {
+        if (room?.isMirage === true || String(room?.mode || '').toLowerCase() === 'mirage') {
+            return true;
+        }
+        return handshake?.isMirage === true || String(handshake?.mode || '').toLowerCase() === 'mirage';
+    };
+
+    const buildLobbyStatusHtml = (handshake, room = null, prefixMessage = '') => {
+        const isHost = handshake.role === 'host';
+        const isMirage = isMirageRoomPayload(room, handshake);
+        const isPublic = room?.isPublic ?? handshake.isPublic ?? true;
+        const visibilityTag = isPublic ? '公开房' : '私密房';
+        const modeBadge = isMirage
+            ? `<div style="color:#00e5ff;font-size:12px;margin-bottom:4px;">${visibilityTag} · 幻境模式</div>`
+            : `<div style="color:#00e5ff;font-size:12px;margin-bottom:4px;">${visibilityTag}</div>`;
+
+        let scoreHtml = '';
+        if (room && ((room.hostWins || 0) + (room.guestWins || 0) + (room.draws || 0) > 0 || (room.round || 0) > 0)) {
+            scoreHtml = `<div style="font-size:12px;color:#ffd54f;margin-bottom:4px;">房间战绩：房主 ${room.hostWins || 0} 胜 - ${room.guestWins || 0} 胜 访客${room.draws ? `（${room.draws} 平）` : ''} · 已进行 ${room.round || 0} 局</div>`;
+        }
+
+        let seatsHtml = '';
+        if (room) {
+            const hostClass = !isMirage && room.hostDeckClass ? ` [${getDeckClassLabel(room.hostDeckClass)}]` : '';
+            const guestClass = !isMirage && room.guestDeckClass ? ` [${getDeckClassLabel(room.guestDeckClass)}]` : '';
+            const hostStatus = room.hostReady ? '已准备' : '未准备';
+            const guestStatus = room.guestPlayerId
+                ? (room.guestReady ? '已准备' : '未准备')
+                : '等待加入';
+            seatsHtml = `<div style="font-size:12px;margin:4px 0;color:rgba(255,255,255,0.9);">房主${hostClass}：${hostStatus} ｜ 访客${guestClass}：${guestStatus}</div>`;
+        }
+
+        const myReady = room ? (isHost ? room.hostReady : room.guestReady) : true;
+        const toggleReadyLabel = myReady ? '取消准备' : '准备就绪';
+        const canKick = isHost && Boolean(room?.guestPlayerId) && room?.status !== 'Started';
+        const actionsHtml = `<div class="mp-lobby-inline-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+            <button type="button" class="mp-btn ghost" style="padding:4px 10px;font-size:12px;" data-mp-room-action="toggle-ready" data-next-ready="${!myReady}">${toggleReadyLabel}</button>
+            ${canKick ? `<button type="button" class="mp-btn ghost" style="padding:4px 10px;font-size:12px;color:#ffb74d;" data-mp-room-action="kick-guest" data-guest-id="${room.guestPlayerId}">踢出访客</button>` : ''}
+            <button type="button" class="mp-btn ghost" style="padding:4px 10px;font-size:12px;color:#ff6e6e;" data-mp-room-action="leave-room">${isHost ? '解散房间' : '退出房间'}</button>
+        </div>`;
+
+        return `${modeBadge}${scoreHtml}${prefixMessage ? `<div>${prefixMessage}</div>` : ''}${seatsHtml}${formatHandshakeOutput(handshake)}${actionsHtml}`;
+    };
+
+    const startRoomLobbyPolling = (handshake, outputEl, intervalMs = 1300) => {
+        stopMultiplayerPolling();
+        const sessionId = ++mpPollSessionId;
+        const isHost = handshake.role === 'host';
+        const guestJoinSoundTracker = isHost
+            ? createGuestJoinSoundTracker({ playGuestJoined: () => mpNotificationSoundPlayer.playGuestJoined() })
+            : null;
+
+        const pollOnce = async () => {
+            if (sessionId !== mpPollSessionId || mpPollInFlight) return;
+            const activeHandshake = pendingHandshake || lobbyHandshake;
+            if (!activeHandshake || activeHandshake.gameId !== handshake.gameId) {
+                stopMultiplayerPolling();
+                return;
+            }
+            mpPollInFlight = true;
+            try {
+                const room = await getMatch(handshake.gameId, {
+                    playerId: handshake.playerId,
+                    token: handshake.token
+                });
+                if (sessionId !== mpPollSessionId) return;
+
+                updateMultiplayerFormatFromRoom(room);
+                const status = room.status;
+                const guestJoined = !!room.guestPlayerId;
+                guestJoinSoundTracker?.observe(room);
+
+                if (status === "Closed") {
+                    stopMultiplayerPolling();
+                    const reason = room.closedReason || "房间已关闭。";
+                    setOutput(outputEl, `房间已解散：${reason}<br>${formatHandshakeOutput(handshake)}`, true);
+                    clearCachedHandshake();
+                    return;
+                }
+
+                if (!isHost && !room.guestPlayerId) {
+                    stopMultiplayerPolling();
+                    setOutput(outputEl, `已被房主移出房间或座位已失效。`, true);
+                    clearCachedHandshake();
+                    return;
+                }
+
+                const statusText = `房间状态：${status}${isHost ? (guestJoined ? "（对手已加入）" : "（等待对手）") : ""}`;
+                setOutput(outputEl, buildLobbyStatusHtml(handshake, room, statusText));
+
+                if (status === "Ready") {
+                    try {
+                        await startMatch(handshake.gameId, handshake.playerId, handshake.token);
+                    } catch {
+                        // another side may already start
+                    }
+                }
+
+                if (status === "Started") {
+                    stopMultiplayerPolling();
+                    suppressMultiplayerLeaveOnce = true;
+                    router.navigateTo('game');
+                }
+            } catch (err) {
+                if (sessionId !== mpPollSessionId) return;
+                const message = err?.message || String(err);
+                if (isRoomUnavailableError(message)) {
+                    stopMultiplayerPolling();
+                    setOutput(outputEl, `房间已解散或已失效。<br>${formatHandshakeOutput(handshake)}`, true);
+                    clearCachedHandshake();
+                    return;
+                }
+                setOutput(outputEl, buildLobbyStatusHtml(handshake, null, `轮询提示：${message}`), true);
+            } finally {
+                if (sessionId === mpPollSessionId) {
+                    mpPollInFlight = false;
+                }
+            }
+        };
+
+        void pollOnce();
+        mpPollTimerId = setInterval(pollOnce, intervalMs);
+    };
+
+    resumeMultiplayerPollingFn = () => {
+        const handshake = getActiveNonAiRoomHandshake();
+        if (!handshake || handshake.dualControl) return;
+        const targetOutput = handshake.role === 'guest' ? outJoin : outCreate;
+        if (targetOutput) {
+            startRoomLobbyPolling(handshake, targetOutput, handshake.role === 'guest' ? 1200 : 1500);
+        }
+    };
+
+    multiplayerPanel?.addEventListener('click', async (event) => {
+        const actionBtn = event.target?.closest?.('[data-mp-room-action]');
+        if (!actionBtn) return;
+        event.preventDefault();
+        const action = actionBtn.dataset.mpRoomAction;
+        const handshake = getActiveNonAiRoomHandshake();
+        if (!handshake) return;
+        const targetOutput = handshake.role === 'guest' ? outJoin : outCreate;
+
+        try {
+            actionBtn.disabled = true;
+            if (action === 'toggle-ready') {
+                const nextReady = actionBtn.dataset.nextReady === 'true';
+                if (nextReady && !handshake.isMirage) {
+                    const deckId = await getSelectedMultiplayerDeckId();
+                    if (deckId) {
+                        await submitDeckSelection(handshake, { deckId });
+                        markRoomDeckSynced(handshake, deckId);
+                    }
+                }
+                const updatedRoom = await markReady(handshake.gameId, handshake.playerId, handshake.token, nextReady);
+                const cancelHint = handshake.isMirage ? '已取消准备。' : '已取消准备，可自由更换卡组。';
+                setOutput(targetOutput, buildLobbyStatusHtml(handshake, updatedRoom, nextReady ? '已准备就绪。' : cancelHint));
+            } else if (action === 'kick-guest') {
+                const guestId = actionBtn.dataset.guestId || null;
+                const updatedRoom = await kickGuestFromMatch(handshake.gameId, handshake.playerId, handshake.token, guestId);
+                setOutput(targetOutput, buildLobbyStatusHtml(handshake, updatedRoom, '已将访客移出房间，等待新对手加入。'));
+            } else if (action === 'leave-room') {
+                stopMultiplayerPolling();
+                await leaveCurrentPvpRoom('manual-lobby-leave');
+                setOutput(targetOutput, '已退出当前房间。');
+            }
+        } catch (err) {
+            setOutput(targetOutput, buildLobbyStatusHtml(handshake, null, `操作失败：${err?.message || String(err)}`), true);
+        } finally {
+            actionBtn.disabled = false;
+        }
+    });
+
     bindButton(btnCreateHost, async () => {
         if (!outCreate) return;
         mpNotificationSoundPlayer.unlock();
         try {
-            const deckId = await getSelectedMultiplayerDeckId();
-            if (!deckId) {
-                setDeckOutput('请先选择卡组。', true);
-                return;
-            }
-            setOutput(outCreate, '创建房间中...');
-            const handshake = await createMatch(false);
-            await markReady(handshake.gameId, handshake.playerId, handshake.token);
-            const selection = await submitDeckSelection(handshake, { deckId });
-            if (!selection.ok) {
-                setOutput(outCreate, `卡组选择失败：${selection.message}`, true);
-                return;
-            }
-            markRoomDeckSynced(handshake, deckId);
-            setPendingHandshake(handshake);
-            setOutput(outCreate, `房间已创建，等待对手加入。<br>${formatHandshakeOutput(handshake)}`);
-
-            stopMultiplayerPolling();
-            const guestJoinSoundTracker = createGuestJoinSoundTracker({
-                playGuestJoined: () => mpNotificationSoundPlayer.playGuestJoined()
-            });
-            mpPollTimerId = setInterval(async () => {
-                try {
-                    const room = await getMatch(handshake.gameId);
-                    updateMultiplayerFormatFromRoom(room);
-                    const status = room.status;
-                    const guestJoined = !!room.guestPlayerId;
-                    guestJoinSoundTracker.observe(room);
-                    if (status === "Closed") {
-                        stopMultiplayerPolling();
-                        const reason = room.closedReason || "房间已关闭。";
-                        setOutput(outCreate, `房间已解散：${reason}<br>${formatHandshakeOutput(handshake)}`, true);
-                        clearCachedHandshake();
-                        return;
-                    }
-                    setOutput(outCreate, `房间状态：${status}${guestJoined ? "（对手已加入）" : "（等待对手）"}<br>${formatHandshakeOutput(handshake)}`);
-
-                    if (status === "Ready") {
-                        try {
-                            await startMatch(handshake.gameId, handshake.playerId, handshake.token);
-                        } catch (err) {
-                            // another side may already start
-                        }
-                    }
-
-                    if (status === "Started") {
-                        stopMultiplayerPolling();
-                        suppressMultiplayerLeaveOnce = true;
-                        router.navigateTo('game');
-                    }
-                } catch (err) {
-                    const message = err?.message || String(err);
-                    if (message.includes('房间不存在')) {
-                        stopMultiplayerPolling();
-                        setOutput(outCreate, `房间已解散：房间不存在（可能对手已退出）<br>${formatHandshakeOutput(handshake)}`, true);
-                        clearCachedHandshake();
-                        return;
-                    }
-                    setOutput(outCreate, `轮询失败：${message}<br>${formatHandshakeOutput(handshake)}`, true);
+            const roomMode = btnCreateHost?.closest('.mp-card')?.dataset?.roomMode === 'mirage'
+                ? 'Mirage'
+                : 'Standard';
+            const isMirage = roomMode === 'Mirage';
+            let deckId = null;
+            if (!isMirage) {
+                deckId = await getSelectedMultiplayerDeckId();
+                if (!deckId) {
+                    setDeckOutput('请先选择卡组。', true);
+                    return;
                 }
-            }, 1500);
+            }
+            const isPublic = document.getElementById('mp-is-public')?.checked !== false;
+            setOutput(outCreate, '创建房间中...');
+            const handshake = await createMatch(false, { isPublic, mode: roomMode });
+            // Save handshake immediately so user can still retry or leave if deck submission fails
+            setPendingHandshake(handshake);
+
+            if (!isMirage) {
+                const selection = await submitDeckSelection(handshake, { deckId });
+                if (!selection.ok) {
+                    setOutput(outCreate, buildLobbyStatusHtml(handshake, null, `房间已创建，但卡组选择失败：${selection.message}`), true);
+                    return;
+                }
+                markRoomDeckSynced(handshake, deckId);
+            }
+            const readyRoom = await markReady(handshake.gameId, handshake.playerId, handshake.token, true);
+            setOutput(outCreate, buildLobbyStatusHtml(handshake, readyRoom, '房间已创建，等待对手加入。'));
+            startRoomLobbyPolling(handshake, outCreate, 1500);
         } catch (err) {
             setOutput(outCreate, `创建失败：${err.message}`, true);
         }
     });
 
-    bindButton(btnJoin, async () => {
+    const executeJoinFlow = async (rawGameId, rawJoinCode, options = {}) => {
         if (!outJoin) return;
-        const gameId = inputJoinGame?.value?.trim();
-        const joinCode = inputJoinCode?.value?.trim();
-        if (!gameId || !joinCode) {
-            setOutput(outJoin, '请输入 GameId 与 JoinCode。', true);
+        const gameId = String(rawGameId || '').trim();
+        const joinCode = String(rawJoinCode || '').trim();
+        if (!gameId && !joinCode) {
+            setOutput(outJoin, '请输入 6 位邀请码（JoinCode），或在房间列表中点击公开房间加入。', true);
             return;
         }
 
         try {
-            if(await tryJoinTakeTwo(gameId,joinCode))return;
-            await ensureDecksLoaded();
-            const selectedDeckId = normalizeDeckId(deckSelectionState.selected.multiplayer);
-            if (!selectedDeckId) {
-                setDeckOutput('请先在多人对战中选择卡组。', true);
-                return;
-            }
-            const selectedDeck = getDeckById(selectedDeckId, deckSelectionState.decks);
-            if (!selectedDeck) {
-                setDeckOutput('当前已选卡组不存在，请重新选择后再加入。', true);
-                return;
-            }
+            if (gameId && joinCode && await tryJoinTakeTwo(gameId, joinCode)) return;
 
+            let knownIsMirage = options.isMirage === true;
             let requiredFormat = null;
-            try {
-                const room = await getMatch(gameId);
-                const environment = normalizeEnvironment(
-                    room?.requiredEnvironment ?? room?.hostDeckEnvironment ?? room?.environment,
-                    ''
-                );
-                const rule = normalizeDeckRule(
-                    room?.requiredRule ?? room?.hostDeckRule ?? room?.rule,
-                    ''
-                );
-                if (environment && rule) {
-                    requiredFormat = { environment, rule };
+            if (gameId && isValidGuid(gameId)) {
+                try {
+                    const room = await getMatch(gameId);
+                    if (isMirageRoomPayload(room)) {
+                        knownIsMirage = true;
+                    } else {
+                        const environment = normalizeEnvironment(
+                            room?.requiredEnvironment ?? room?.hostDeckEnvironment ?? room?.environment,
+                            ''
+                        );
+                        const rule = normalizeDeckRule(
+                            room?.requiredRule ?? room?.hostDeckRule ?? room?.rule,
+                            ''
+                        );
+                        if (environment && rule) {
+                            requiredFormat = { environment, rule };
+                        }
+                    }
+                } catch {
+                    // Ignore here and let join flow surface authoritative errors.
                 }
-            } catch {
-                // Ignore here and let join flow surface authoritative errors.
             }
 
-            const selectedDeckValid = await validateDeckForSelection(selectedDeck);
-            if (!selectedDeckValid) {
-                setDeckOutput('当前选择卡组未通过校验，无法加入房间。', true);
-                return;
-            }
+            let selectedDeckId = null;
+            if (!knownIsMirage) {
+                await ensureDecksLoaded();
+                selectedDeckId = await getSelectedMultiplayerDeckId();
+                const mustValidateBeforeJoin = Boolean(gameId);
+                if (!selectedDeckId && mustValidateBeforeJoin) {
+                    setDeckOutput('请先在多人对战中选择卡组。', true);
+                    return;
+                }
+                if (selectedDeckId) {
+                    const selectedDeck = getDeckById(selectedDeckId, deckSelectionState.decks);
+                    if (!selectedDeck && mustValidateBeforeJoin) {
+                        setDeckOutput('当前已选卡组不存在，请重新选择后再加入。', true);
+                        return;
+                    }
+                    if (selectedDeck) {
+                        const selectedDeckValid = await validateDeckForSelection(selectedDeck);
+                        if (!selectedDeckValid) {
+                            if (mustValidateBeforeJoin) {
+                                setDeckOutput('当前选择卡组未通过校验，无法加入房间。', true);
+                                return;
+                            }
+                            selectedDeckId = null;
+                        } else if (requiredFormat && !matchesDeckFormat(selectedDeck, requiredFormat)) {
+                            setDeckOutput(`当前选择卡组与房主卡组不匹配（需要 ${getDeckEnvironmentLabel(requiredFormat.environment)} | ${getDeckRuleLabel(requiredFormat.rule)}），无法加入。`, true);
+                            return;
+                        }
+                    }
+                }
 
-            if (requiredFormat && !matchesDeckFormat(selectedDeck, requiredFormat)) {
-                setDeckOutput(`当前选择卡组与房主卡组不匹配（需要 ${getDeckEnvironmentLabel(requiredFormat.environment)} | ${getDeckRuleLabel(requiredFormat.rule)}），无法加入。`, true);
-                return;
+                if (requiredFormat) {
+                    setMultiplayerDeckFormat(requiredFormat, 'multiplayer');
+                }
+                await refreshSelectableDecks();
+                updateMultiplayerDeckSwitcher();
+                setDeckOutput('');
             }
-
-            if (requiredFormat) {
-                setMultiplayerDeckFormat(requiredFormat, 'multiplayer');
-            }
-            await refreshSelectableDecks();
-            updateMultiplayerDeckSwitcher();
-            setDeckOutput('');
 
             setOutput(outJoin, '加入房间中...');
-            const handshake = await joinMatch(gameId, joinCode);
-            await markReady(handshake.gameId, handshake.playerId, handshake.token);
-            const selection = await submitDeckSelection(handshake, { deckId: selectedDeckId });
-            if (!selection.ok) {
-                setOutput(outJoin, `卡组选择失败：${selection.message}`, true);
+            let handshake;
+            try {
+                handshake = await joinMatch(gameId, joinCode);
+            } catch (joinErr) {
+                const msg = String(joinErr?.message || joinErr || '');
+                if (!gameId && /^[0-9]{6}$/.test(joinCode) && (msg.includes('未找到') || msg.includes('不存在') || msg.includes('404'))) {
+                    if (await tryJoinTakeTwo('', joinCode)) return;
+                }
+                throw joinErr;
+            }
+
+            if (!handshake.isMirage && !selectedDeckId) {
+                await leaveMatch(handshake.gameId, handshake.playerId, handshake.token).catch(() => {});
+                setDeckOutput('该房间为构筑对战，请先在多人对战中选择可用卡组后再加入。', true);
+                setOutput(outJoin, '加入已取消：请先选择可用构筑卡组。', true);
                 return;
             }
-            markRoomDeckSynced(handshake, selectedDeckId);
+
+            // Save handshake immediately so user keeps seat ownership even if deck sync fails
+            setPendingHandshake(handshake);
+
+            if (!handshake.isMirage) {
+                const selection = await submitDeckSelection(handshake, { deckId: selectedDeckId });
+                if (!selection.ok) {
+                    setOutput(outJoin, buildLobbyStatusHtml(handshake, null, `已进入房间，但卡组同步失败：${selection.message}`), true);
+                    return;
+                }
+                markRoomDeckSynced(handshake, selectedDeckId);
+            }
+            const readyRoom = await markReady(handshake.gameId, handshake.playerId, handshake.token, true);
             try {
                 await startMatch(handshake.gameId, handshake.playerId, handshake.token);
             } catch (err) {
                 console.warn("Guest start skipped:", err.message);
             }
-            setPendingHandshake(handshake);
-            setOutput(outJoin, `加入成功，等待房间开始。<br>${formatHandshakeOutput(handshake)}`);
-
-            stopMultiplayerPolling();
-            mpPollTimerId = setInterval(async () => {
-                try {
-                    const room = await getMatch(handshake.gameId);
-                    updateMultiplayerFormatFromRoom(room);
-                    if (room.status === "Closed") {
-                        stopMultiplayerPolling();
-                        const reason = room.closedReason || "房间已关闭。";
-                        setOutput(outJoin, `房间已解散：${reason}<br>${formatHandshakeOutput(handshake)}`, true);
-                        clearCachedHandshake();
-                        return;
-                    }
-                    setOutput(outJoin, `房间状态：${room.status}<br>${formatHandshakeOutput(handshake)}`);
-                    if (room.status === "Started") {
-                        stopMultiplayerPolling();
-                        suppressMultiplayerLeaveOnce = true;
-                        router.navigateTo('game');
-                    }
-                } catch (err) {
-                    const message = err?.message || String(err);
-                    if (message.includes('房间不存在')) {
-                        stopMultiplayerPolling();
-                        setOutput(outJoin, `房间已解散：房间不存在（可能对手已退出）<br>${formatHandshakeOutput(handshake)}`, true);
-                        clearCachedHandshake();
-                        return;
-                    }
-                    setOutput(outJoin, `轮询失败：${message}<br>${formatHandshakeOutput(handshake)}`, true);
-                }
-            }, 1200);
+            setOutput(outJoin, buildLobbyStatusHtml(handshake, readyRoom, '加入成功，等待房间开始。'));
+            startRoomLobbyPolling(handshake, outJoin, 1200);
         } catch (err) {
             setOutput(outJoin, `加入失败：${err.message}`, true);
         }
+    };
+
+    bindButton(btnJoin, async () => {
+        const gameId = inputJoinGame?.value?.trim() || '';
+        const joinCode = inputJoinCode?.value?.trim() || '';
+        await executeJoinFlow(gameId, joinCode);
     });
 
     bindButton(btnGoGame, () => {
@@ -2573,17 +2832,19 @@ function setupMultiplayerUI() {
         // For PVP rooms, only enter game when Started (avoids hanging init while waiting)
         (async () => {
             try {
-                const deckId = await getSelectedMultiplayerDeckId();
-                if (!deckId) {
-                    showAlert('请先选择卡组。');
-                    return;
+                if (!handshake.isMirage) {
+                    const deckId = await getSelectedMultiplayerDeckId();
+                    if (!deckId) {
+                        showAlert('请先选择卡组。');
+                        return;
+                    }
+                    const selection = await submitDeckSelection(handshake, { deckId });
+                    if (!selection.ok) {
+                        showAlert(selection.message || "无法选择卡组。");
+                        return;
+                    }
+                    markRoomDeckSynced(handshake, deckId);
                 }
-                const selection = await submitDeckSelection(handshake, { deckId });
-                if (!selection.ok) {
-                    showAlert(selection.message || "无法选择卡组。");
-                    return;
-                }
-                markRoomDeckSynced(handshake, deckId);
                 const room = await getMatch(handshake.gameId);
                 updateMultiplayerFormatFromRoom(room);
                 if (room.status === "Ready") {
@@ -2627,10 +2888,11 @@ function setupMultiplayerUI() {
             renderSpectateRoomList(rooms);
 
             const spectatableCount = rooms.filter(room => room.canSpectate).length;
-            if (spectatableCount > 0) {
-                setOutput(outSpectate, `找到 ${spectatableCount} 个正在对战的房间，点击房间即可填入。`);
+            const joinableCount = rooms.filter(room => room.canJoin).length;
+            if (spectatableCount > 0 || joinableCount > 0) {
+                setOutput(outSpectate, `找到 ${spectatableCount} 个可观战房间、${joinableCount} 个可加入公开房，点击对应条目即可操作。`);
             } else if (rooms.length > 0) {
-                setOutput(outSpectate, '当前尚无正在对战的房间。', true);
+                setOutput(outSpectate, '当前仅有等待中的私密房间（请使用6位邀请码加入，开局后可观战）。', true);
             } else {
                 setOutput(outSpectate, '当前没有可显示的房间。', true);
             }
@@ -2743,10 +3005,12 @@ function setupSingleplayerUI() {
         if (modeSelect) modeSelect.value = normalized;
 
         const isDual = normalized === 'dual';
-        if (startDesc) startDesc.textContent = isDual ? '确认双方卡组后开始' : '确认玩家与 AI 卡组后开始';
-        if (modeHint) modeHint.textContent = isDual
-            ? '提示：双人同机将自动加入客位并控制双方。'
-            : '提示：单人对战需要选择玩家与 AI 卡组。';
+        if (startDesc) {
+            startDesc.textContent = isDual ? '确认双方卡组后开始' : '确认玩家与 AI 卡组后开始';
+        }
+        if (modeHint) {
+            modeHint.textContent = isDual ? '提示：双人同机将自动加入客位并控制双方。' : '提示：单人对战需要选择玩家与 AI 卡组。';
+        }
         if (opponentLabel) opponentLabel.textContent = isDual ? '对手卡组' : 'AI 卡组';
     };
 
@@ -2839,9 +3103,6 @@ function setupSingleplayerUI() {
                 // Join as an anonymous guest to avoid host/guest sharing the same playerId when logged in.
                 const guestHandshake = await joinMatch(hostHandshake.gameId, hostHandshake.joinCode, { playerId: null });
 
-                await markReady(hostHandshake.gameId, hostHandshake.playerId, hostHandshake.token);
-                await markReady(guestHandshake.gameId, guestHandshake.playerId, guestHandshake.token);
-
                 const hostSelection = await submitDeckSelection(hostHandshake, { deckId: playerDeckId });
                 if (!hostSelection.ok) {
                     setStartOutput(`卡组选择失败：${hostSelection.message}`, true);
@@ -2853,6 +3114,9 @@ function setupSingleplayerUI() {
                     setStartOutput(`卡组选择失败：${guestSelection.message}`, true);
                     return;
                 }
+
+                await markReady(hostHandshake.gameId, hostHandshake.playerId, hostHandshake.token, true);
+                await markReady(guestHandshake.gameId, guestHandshake.playerId, guestHandshake.token, true);
 
                 await startMatch(hostHandshake.gameId, hostHandshake.playerId, hostHandshake.token);
 
@@ -2869,12 +3133,12 @@ function setupSingleplayerUI() {
                 router.navigateTo('game');
             } else {
                 const handshake = await createMatch(true);
-                await markReady(handshake.gameId, handshake.playerId, handshake.token);
                 const selection = await submitDeckSelection(handshake, { deckId: playerDeckId, aiDeckId, requireAi: true });
                 if (!selection.ok) {
                     setStartOutput(`卡组选择失败：${selection.message}`, true);
                     return;
                 }
+                await markReady(handshake.gameId, handshake.playerId, handshake.token, true);
                 await startMatch(handshake.gameId, handshake.playerId, handshake.token);
                 setPendingHandshake(handshake);
                 router.navigateTo('game');
@@ -2896,95 +3160,6 @@ function syncTopNavHoverLock() {
     document.body.classList.toggle('topnav-hover-locked', hasPinnedCard);
 }
 
-async function loadAboutChangelog() {
-    const list = document.getElementById('about-changelog');
-    const versionEl = document.getElementById('about-card-version');
-    if (!list) return;
-
-    const normalizeVersion = (value) => {
-        if (typeof value !== 'string') return null;
-        const trimmed = value.trim();
-        if (!trimmed) return null;
-        return trimmed.startsWith('v') ? trimmed : `v${trimmed}`;
-    };
-
-    const parseVersion = (value) => {
-        const normalized = normalizeVersion(value);
-        if (!normalized) return [0, 0, 0];
-        const raw = normalized.slice(1).split('.');
-        const parts = raw.map(part => Number.parseInt(part, 10));
-        return [parts[0] || 0, parts[1] || 0, parts[2] || 0];
-    };
-
-    const compareVersions = (a, b) => {
-        const va = parseVersion(a);
-        const vb = parseVersion(b);
-        for (let i = 0; i < Math.max(va.length, vb.length); i += 1) {
-            const diff = (va[i] || 0) - (vb[i] || 0);
-            if (diff !== 0) return diff;
-        }
-        return 0;
-    };
-
-    try {
-        const changelogUrl = new URL('../data/about-changelog.json', import.meta.url);
-        const response = await fetch(changelogUrl, { cache: 'no-store' });
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-        const items = await response.json();
-        list.innerHTML = '';
-
-        const entries = Array.isArray(items) ? items : [];
-        if (!entries.length) {
-            const emptyItem = document.createElement('li');
-            emptyItem.textContent = '暂无更新日志';
-            list.appendChild(emptyItem);
-            return;
-        }
-
-        const versions = entries
-            .map(item => (typeof item === 'object' && item ? item.version : null))
-            .filter(Boolean);
-        const latestVersion = versions.length
-            ? versions.reduce((latest, current) => {
-                if (!latest) return current;
-                return compareVersions(current, latest) > 0 ? current : latest;
-            }, null)
-            : null;
-
-        if (versionEl && latestVersion) {
-            versionEl.textContent = normalizeVersion(latestVersion);
-        }
-
-        const displayEntries = latestVersion
-            ? entries.filter(item => item && typeof item === 'object' && item.version === latestVersion)
-            : entries;
-
-        displayEntries.forEach((item) => {
-            if (!item) return;
-            const li = document.createElement('li');
-            if (typeof item === 'string') {
-                li.textContent = item;
-                list.appendChild(li);
-                return;
-            }
-            const tag = document.createElement('span');
-            tag.className = 'about-tag';
-            tag.textContent = normalizeVersion(item.version) || 'v0.0.0';
-            li.appendChild(tag);
-            li.append(document.createTextNode(` ${item.text || ''}`));
-            list.appendChild(li);
-        });
-    } catch (err) {
-        console.warn('MAIN: Failed to load about changelog:', err);
-        list.innerHTML = '';
-        const fallbackItem = document.createElement('li');
-        fallbackItem.textContent = '更新日志加载失败';
-        list.appendChild(fallbackItem);
-    }
-}
-
 function setupAboutUI() {
     const toggle = document.getElementById('about-toggle');
     const card = document.getElementById('about-card');
@@ -2996,6 +3171,7 @@ function setupAboutUI() {
     const setOpen = (open) => {
         card.classList.toggle('active', open);
         card.setAttribute('aria-hidden', open ? 'false' : 'true');
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
         if (open && userCard) {
             userCard.classList.remove('active');
             userCard.setAttribute('aria-hidden', 'true');
@@ -3027,7 +3203,13 @@ function setupAboutUI() {
         setOpen(false);
     });
 
-    loadAboutChangelog();
+    loadAboutChangelog({
+        onInteract: () => {
+            if (!card.classList.contains('active')) {
+                setOpen(true);
+            }
+        }
+    });
 }
 
 function setupTopNavHoverLock() {
@@ -3445,13 +3627,21 @@ async function initializeGamePage() {
     if (gameInitialized) return;
     gamePageSession++;
     gameInitialized = await initializeApp();
+    syncRematchRoomButtonVisibility();
 }
 
 async function cleanupGamePage() {
+    abortMirageCombatPlayback("leave_room");
     gamePageSession++;
     reconnectInProgress = false;
+    const rematchBtn = document.getElementById('rematch-room-button');
+    if (rematchBtn) rematchBtn.style.display = 'none';
+
     const handshake = getActiveNonAiRoomHandshake();
-    const shouldDeferLeave = shouldDeferRoomLeaveForDecision(
+    const keepRoomForRematch = returningToLobbyForRematch === true && !!handshake;
+    returningToLobbyForRematch = false;
+
+    const shouldDeferLeave = !keepRoomForRematch && shouldDeferRoomLeaveForDecision(
         pendingRouteTransition?.fromRoute,
         pendingRouteTransition?.toRoute,
         handshake,
@@ -3462,13 +3652,10 @@ async function cleanupGamePage() {
     try {
         const closeConnections = disconnectGameConnections();
         let leaveRoom;
-        if (shouldDeferLeave) {
-            leaveRoom = Promise.resolve();
-        } else if (confirmedBattleExitSurrender) {
-            clearCachedHandshake();
+        if (keepRoomForRematch || shouldDeferLeave) {
             leaveRoom = Promise.resolve();
         } else {
-            leaveRoom = leaveCurrentPvpRoom('cleanupGame');
+            leaveRoom = leaveCurrentPvpRoom(confirmedBattleExitSurrender ? 'cleanupGame-surrender' : 'cleanupGame');
         }
         const completed = await Promise.allSettled([closeConnections, leaveRoom]);
         const failures = completed.filter(item => item.status === 'rejected').map(item => item.reason);
@@ -3491,6 +3678,7 @@ async function cleanupGamePage() {
 async function cleanupMultiplayerPage() {
     document.body.classList.remove('show-multiplayer');
     stopMultiplayerPolling();
+    stopTakeTwoWaitingLobby();
     if (suppressMultiplayerLeaveOnce) {
         suppressMultiplayerLeaveOnce = false;
         return;
@@ -3540,8 +3728,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('MAIN: Failed to initialize singleplayer UI:', error);
     }
 
+    const rematchBtn = document.getElementById('rematch-room-button');
+    rematchBtn?.addEventListener('click', () => {
+        returningToLobbyForRematch = true;
+        void router.navigateTo('multiplayer');
+    });
+
     try {
         appendAfterRouteChangeHandler('deck-selection-context-route', async (_oldRoute, newRoute) => {
+            if (newRoute === 'multiplayer') {
+                resumeMultiplayerPollingFn?.();
+            }
             if (newRoute !== 'multiplayer' && newRoute !== 'singleplayer') {
                 return;
             }

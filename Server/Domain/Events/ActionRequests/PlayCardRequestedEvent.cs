@@ -44,7 +44,25 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
             // 1. Validation Logic from PlayCardAbility.CheckConditions
             // =================================================================
 
-            if (PlayerId != context.CurrentGameState.CurrentPlayerId)
+            if (context.CurrentGameState.Mode == GameMode.Mirage && !context.CurrentGameState.IsCombatSandbox)
+            {
+                if (context.CurrentGameState.Phase != GamePhase.Recruit)
+                {
+                    result.Success = false;
+                    result.ErrorMessage = $"Can only play cards during Recruit phase in Mirage mode (Current: {context.CurrentGameState.Phase}).";
+                    return result;
+                }
+
+                if (context.CurrentGameState.Mirage != null
+                    && (context.CurrentGameState.Mirage.ReadyPlayerIds.Contains(PlayerId)
+                        || context.CurrentGameState.Mirage.ClosingRecruitRoundNumber == context.CurrentGameState.Mirage.RoundNumber))
+                {
+                    result.Success = false;
+                    result.ErrorMessage = "Player has already locked lineup for this recruit round.";
+                    return result;
+                }
+            }
+            else if (PlayerId != context.CurrentGameState.CurrentPlayerId)
             {
                 result.Success = false;
                 result.ErrorMessage = "It's not your turn to play a card.";
@@ -72,6 +90,24 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 result.Success = false;
                 result.ErrorMessage = "该卡牌处于【无法使用】状态。";
                 return result;
+            }
+
+            if (cardToPlay.IsMirageRecruited && context.CurrentGameState.Mode == GameMode.Mirage)
+            {
+                if ((cardToPlay.CardType == CardType.Follower || cardToPlay.CardType == CardType.Amulet)
+                    && activePlayerState.FieldOccupancyCount >= GameConstants.Field.MaxFieldSize)
+                {
+                    result.Success = false;
+                    result.ErrorMessage = "Field is full.";
+                    return result;
+                }
+
+                return activePlayerState.PreparePlayCard(
+                    cardToPlay,
+                    PlayMode.Base,
+                    paidCost: 0,
+                    triggeredAbilityRuntimeId: null,
+                    alternateCardDefinitionId: null);
             }
 
             IAbility? selectedAbility = null;

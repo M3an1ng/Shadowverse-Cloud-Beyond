@@ -40,7 +40,29 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
         /// <summary>
         /// The game has concluded, determining win/loss conditions.
         /// </summary>
-        GameOver
+        GameOver,
+
+        /// <summary>
+        /// Mirage auto-battler simultaneous recruit & preparation phase.
+        /// </summary>
+        Recruit,
+
+        /// <summary>
+        /// Mirage auto-battler automated combat simulation & playback phase.
+        /// </summary>
+        AutoCombat
+    }
+
+    /// <summary>
+    /// Represents the overall game mode of a match instance.
+    /// </summary>
+    public enum GameMode
+    {
+        [Description("标准对战")]
+        Standard = 0,
+
+        [Description("幻境战棋")]
+        Mirage = 1
     }
 
     /// <summary>
@@ -244,6 +266,8 @@ namespace ShadowverseBeyond.Server.Dtos.Enums
         Removed = 8,
         [Description("准备中")]
         Staging = 9, // Temporary zone during card creation
+        [Description("已退场")]
+        Retired = 10, // Mirage mode retired/sold/synthesized cards (do not enter Graveyard)
         [Description("无")]
         None = 100
     }

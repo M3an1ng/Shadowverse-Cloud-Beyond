@@ -66,6 +66,14 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers
                                    effectName, parameters.TargetCardDefinitionId);
                     return new GameStateActionResult { Success = false, ErrorMessage = $"Target CardDefinition ID {parameters.TargetCardDefinitionId} not found." };
                 }
+
+                var expectMirage = context.CurrentGameState.Mode == GameMode.Mirage;
+                if (targetDefinition.IsMirageCard != expectMirage)
+                {
+                    Logger.LogError("{EffectName}: Target CardDefinition {TargetDefId} mode mismatch (IsMirageCard={IsMirageCard}, GameMode={GameMode}).",
+                                   effectName, parameters.TargetCardDefinitionId, targetDefinition.IsMirageCard, context.CurrentGameState.Mode);
+                    return new GameStateActionResult { Success = false, ErrorMessage = $"Target CardDefinition ID {parameters.TargetCardDefinitionId} is not allowed in {context.CurrentGameState.Mode} mode." };
+                }
             }
 
             CardInstance? copySourceCard = null;

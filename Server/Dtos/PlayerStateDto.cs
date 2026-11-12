@@ -63,6 +63,7 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public bool HasCompletedMulligan { get; set; } = false; // Flag indicating if the player has submitted their mulligan choice.
         public bool HasTakenFirstTurn { get; set; } = false; // Legacy flag retained for compatibility.
         public int TurnNumber { get; set; } = 0; // Renamed: Tracks the player's individual turn number, starts at 0 before their first turn begins.
+        public MiragePlayerStateDto? Mirage { get; set; }
 
         // Add Banished count, etc., if needed by UI
         // Removed IBoardEntityState implementation

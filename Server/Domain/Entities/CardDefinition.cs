@@ -123,6 +123,17 @@ public class CardDefinition
     [DslExposable("是否可收集", Description = "不可收集代表该卡牌为衍生物")]
     public bool IsCollectible { get; set; } = true; // Default to true
 
+    /// <summary>
+    /// Indicates whether this card belongs exclusively to the Mirage auto-battler card pool.
+    /// Mirage cards and Classic (Standard) cards are strictly mutually exclusive.
+    /// </summary>
+    public bool IsMirageCard { get; set; } = false;
+
+    /// <summary>
+    /// Explicit tavern tier (1-6) when this card belongs to the Mirage card pool.
+    /// </summary>
+    public int? MirageTavernTier { get; set; }
+
     // Removed IsEvolved property - evolution is handled through the evolution system
 
     /// <summary>

@@ -794,6 +794,67 @@
     height: 16px;
 }
 
+#devtools-cardset-env-modal [hidden] {
+    display: none !important;
+}
+
+#devtools-cardset-env-modal .pack-manager-search {
+    flex: 1;
+    min-width: 240px;
+}
+
+.pack-manager-create-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+}
+
+.pack-manager-create-row .form-input {
+    flex: 1;
+    min-width: 180px;
+}
+
+.pack-manager-logo-box {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 120px;
+    height: 48px;
+    background: #080e18;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+}
+
+.pack-manager-logo-thumb {
+    display: block;
+    max-width: 110px;
+    max-height: 44px;
+    object-fit: contain;
+}
+
+.pack-manager-logo-empty {
+    color: var(--color-secondary);
+    font-size: var(--text-xs);
+}
+
+.devtools-cardset-env-table tr.pack-manager-highlighted td {
+    background: rgba(50, 140, 220, 0.14);
+    border-top: 1px solid rgba(80, 180, 240, 0.5);
+    border-bottom: 1px solid rgba(80, 180, 240, 0.5);
+}
+
+.devtools-cardset-env-table th:first-child {
+    white-space: nowrap;
+}
+
+.devtools-cardset-env-table button {
+    white-space: nowrap;
+}
+
 .devtools-copy-limit-card-id {
     font-family: var(--font-mono);
 }

@@ -268,6 +268,19 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 gameState.GameId, refreshCycleId, reason);
         }
 
+        internal void ReplaceDerivedStateCacheFrom(string gameId, BuffService source)
+        {
+            if (source == null || string.IsNullOrWhiteSpace(gameId))
+            {
+                return;
+            }
+
+            if (source._derivedStateCacheByGameId.TryGetValue(gameId, out var cache))
+            {
+                _derivedStateCacheByGameId[gameId] = new Dictionary<Guid, DerivedStateCacheEntry>(cache);
+            }
+        }
+
         public void InvalidateDerivedState(GameState gameState, Guid cardInstanceId)
         {
             if (cardInstanceId == Guid.Empty)

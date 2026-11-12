@@ -19,6 +19,10 @@ namespace ShadowverseBeyond.Server.Services
             {
                 for (var scope = _current.Value; scope != null; scope = scope.Previous)
                 {
+                    if (scope.IsSuspendedBarrier)
+                    {
+                        return null;
+                    }
                     if (scope.Context is { } context)
                     {
                         return context;
@@ -31,6 +35,13 @@ namespace ShadowverseBeyond.Server.Services
         public GameContextScope Enter(GameContext context)
         {
             var scope = new GameContextScope(this, context, _current.Value);
+            _current.Value = scope;
+            return scope;
+        }
+
+        public System.IDisposable SuspendAmbient()
+        {
+            var scope = new GameContextScope(this, null, _current.Value, isSuspendedBarrier: true);
             _current.Value = scope;
             return scope;
         }

@@ -1,880 +1,1390 @@
 [
   {
     "version": "v0.0.1",
+    "type": "feature",
     "text": "首页交互与 UI 架构搭建"
   },
   {
     "version": "v0.0.1",
+    "type": "feature",
     "text": "对战与编辑器流程雏形"
   },
   {
     "version": "v0.0.2",
+    "type": "improve",
     "text": "回合开始提示加入擦除动画与阵营颜色区分"
   },
   {
     "version": "v0.0.2",
+    "type": "feature",
     "text": "预览描述关键词/衍生卡高亮与点击详情图展示"
   },
   {
     "version": "v0.0.2",
+    "type": "fix",
     "text": "修复了部分情况下DSL编辑器后续节点推荐错误的问题"
   },
   {
     "version": "v0.0.2",
+    "type": "feature",
     "text": "新增回合结束计时功能，并重绘了相关按钮的UI"
   },
   {
     "version": "v0.0.3",
+    "type": "feature",
     "text": "战场卡牌新增攻击可用状态样式提示"
   },
   {
     "version": "v0.0.3",
+    "type": "improve",
     "text": "对战卡牌样式与背景图展示比例调整（含攻击/生命/倒数/土之印显示）"
   },
   {
     "version": "v0.0.3",
+    "type": "adjust",
     "text": "计数器默认值逻辑统一，支持初始值配置并同步至编辑器"
   },
   {
     "version": "v0.0.3",
+    "type": "fix",
     "text": "修复对战界面无法添加纹章的错误"
   },
   {
     "version": "v0.0.3",
+    "type": "feature",
     "text": "卡牌详情替换为统一窗口并加载真实卡牌数据"
   },
   {
     "version": "v0.0.3",
+    "type": "feature",
     "text": "详情描述关键词与衍生物支持点击查看/跳转"
   },
   {
     "version": "v0.0.3",
+    "type": "feature",
     "text": "增加断线重连功能"
   },
   {
     "version": "v0.0.3",
+    "type": "feature",
     "text": "增加对战界面卡牌关键字的特效显示"
   },
   {
     "version": "v0.0.3",
+    "type": "fix",
     "text": "修复了大量DSL编辑器的已知问题"
   },
   {
     "version": "v0.0.4",
+    "type": "feature",
     "text": "增加卡包自动推荐功能"
   },
   {
     "version": "v0.0.4",
+    "type": "feature",
     "text": "卡牌预览和详情界面增强纹章显示的适配（通过{纹章名}调用）"
   },
   {
     "version": "v0.0.4",
+    "type": "fix",
     "text": "修复了DSL编辑器输入值会截断的问题"
   },
   {
     "version": "v0.0.4",
+    "type": "feature",
     "text": "增强效果配置能力类参数的支持"
   },
   {
     "version": "v0.0.4",
+    "type": "improve",
     "text": "优化卡牌编辑器的加载速度"
   },
   {
     "version": "v0.0.4",
+    "type": "fix",
     "text": "修正部分回合流程的结算问题"
   },
   {
     "version": "v0.0.4",
+    "type": "adjust",
     "text": "修改了连锁能力和随机能力的子能力配置方式"
   },
   {
     "version": "v0.0.5",
+    "type": "improve",
     "text": "优化了卡牌信息界面的样式"
   },
   {
     "version": "v0.0.5",
+    "type": "fix",
     "text": "修复了DSL中部分字典无法使用输入键访问的问题"
   },
   {
     "version": "v0.0.5",
+    "type": "feature",
     "text": "增强目标配置反选支持"
   },
   {
     "version": "v0.0.5",
+    "type": "feature",
     "text": "增加了临时Buff的结算逻辑"
   },
   {
     "version": "v0.0.6",
+    "type": "feature",
     "text": "增加了持久式能力的支持"
   },
   {
     "version": "v0.0.6",
+    "type": "fix",
     "text": "修复部分情况下效果编辑器无法保存的问题"
   },
   {
     "version": "v0.0.6",
+    "type": "fix",
     "text": "修复部分情况下DSL编辑器枚举值不匹配的问题"
   },
   {
     "version": "v0.0.6",
+    "type": "fix",
     "text": "修复对战中启动费用计算错误的问题"
   },
   {
     "version": "v0.0.7",
+    "type": "improve",
     "text": "修改了能力编辑器的关闭方式，防止误触"
   },
   {
     "version": "v0.0.7",
+    "type": "feature",
     "text": "增加了持久式能力的编辑入口"
   },
   {
     "version": "v0.0.7",
+    "type": "feature",
     "text": "增加了进化和超进化事件支持的属性"
   },
   {
     "version": "v0.0.7",
+    "type": "fix",
     "text": "修复了对战时进化权和超进化权分开结算的问题"
   },
   {
     "version": "v0.0.7",
+    "type": "feature",
     "text": "效果配置中增加了修改变量和发动魔力增幅效果"
   },
   {
     "version": "v0.0.7",
+    "type": "fix",
     "text": "增加了对战中纹章UI不会正确移除的问题"
   },
   {
     "version": "v0.0.7",
+    "type": "fix",
     "text": "增加了对战中-效果不会造成死亡结算的问题"
   },
   {
     "version": "v0.0.7",
+    "type": "feature",
     "text": "目标配置界面增加了更多关联方支持"
   },
   {
     "version": "v0.0.7",
+    "type": "feature",
     "text": "更新了效果配置的通用组件对于高级表达式的支持"
   },
   {
     "version": "v0.0.7",
+    "type": "improve",
     "text": "优化前端的缓存机制，提高能力编辑器响应速度（大概）"
   },
   {
     "version": "v0.0.8",
+    "type": "fix",
     "text": "修复了部分DSL表达式无法显示的问题,并优化了部分表达式的显示效果"
   },
   {
     "version": "v0.0.8",
+    "type": "improve",
     "text": "优化了能力编辑界面的信息显示"
   },
   {
     "version": "v0.0.8",
+    "type": "feature",
     "text": "增加了【失去能力】效果"
   },
   {
     "version": "v0.0.8",
+    "type": "fix",
     "text": "修复了连锁能力错误的问题"
   },
   {
     "version": "v0.0.9",
+    "type": "fix",
     "text": "修复了对战中断线重连的错误"
   },
   {
     "version": "v0.0.9",
+    "type": "fix",
     "text": "修复了对战中复制出现错误的问题"
   },
   {
     "version": "v0.0.9",
+    "type": "improve",
     "text": "优化了部分DSL表达式的解析范围"
   },
   {
     "version": "v0.0.9",
+    "type": "feature",
     "text": "优化了对战界面控制台，增加了能力日志追踪功能"
   },
   {
     "version": "v0.0.10",
+    "type": "fix",
     "text": "找回了DSL编辑器失踪的（）按钮"
   },
   {
     "version": "v0.0.10",
+    "type": "fix",
     "text": "修复了在可选目标不足的情况下能力依旧要求选择目标的问题"
   },
   {
     "version": "v0.0.10",
+    "type": "adjust",
     "text": "调整了随机与抉择能力的结算顺序，并增加了相应事件"
   },
   {
     "version": "v0.0.10",
+    "type": "feature",
     "text": "增加了对战界面变量显示"
   },
   {
     "version": "v0.0.10",
+    "type": "adjust",
     "text": "调整了连锁能力的结算顺序，现在连锁能力会正确的在主效果执行完毕后发动"
   },
   {
     "version": "v0.0.11",
+    "type": "adjust",
     "text": "调整了进化事件的参数以增强统一性（注意：目前进化卡牌已经由事件源变为目标，请注意调整触发时机-可触发对象"
   },
   {
     "version": "v0.0.11",
+    "type": "improve",
     "text": "将选择卡牌ID的组件替换为可查询模式"
   },
   {
     "version": "v0.0.11",
+    "type": "feature",
     "text": "增加了新的Buff类持续时间（我方/敌方的回合开始/结束时）"
   },
   {
     "version": "v0.0.11",
+    "type": "fix",
     "text": "修复了DSL编辑器中点击子表达式有时候无法正常编辑的问题"
   },
   {
     "version": "v0.0.11",
+    "type": "fix",
     "text": "修复了部分情况下变量和牌堆更新延迟的问题"
   },
   {
     "version": "v0.0.12",
+    "type": "fix",
     "text": "修复了DSL编辑器在保存表达式时会由于工作区路径错误丢失内容的问题"
   },
   {
     "version": "v0.0.12",
+    "type": "fix",
     "text": "修复了对战界面UI延迟更新的问题"
   },
   {
     "version": "v0.0.12",
+    "type": "feature",
     "text": "部分拥有复制模式的效果支持配置数量"
   },
   {
     "version": "v0.0.12",
+    "type": "improve",
     "text": "调整了卡牌编辑器的缓存更新策略，让保存的卡牌可以即时查询"
   },
   {
     "version": "v0.0.12",
+    "type": "adjust",
     "text": "更改了模式的预选择流程，让改写参数能够成功生效"
   },
   {
     "version": "v0.0.13",
+    "type": "fix",
     "text": "修复了DSL不同子表达式无法多次筛选的问题"
   },
   {
     "version": "v0.0.13",
+    "type": "fix",
     "text": "修复了快照的类型转换问题"
   },
   {
     "version": "v0.0.13",
+    "type": "fix",
     "text": "修复了部分情况下手牌溢出的问题"
   },
   {
     "version": "v0.0.13",
+    "type": "improve",
     "text": "优化了对战界面的按钮"
   },
   {
     "version": "v0.0.14",
+    "type": "improve",
     "text": "优化了DSL编辑器的筛选逻辑"
   },
   {
     "version": "v0.0.14",
+    "type": "fix",
     "text": "修复对战时会错误显示爆能强化的问题"
   },
   {
     "version": "v0.0.14",
+    "type": "fix",
     "text": "修复能力触发事件无法检测的问题"
   },
   {
     "version": "v0.0.14",
+    "type": "feature",
     "text": "增加对于进化和超进化解禁的支持"
   },
   {
     "version": "v0.0.14",
+    "type": "adjust",
     "text": "调整连锁能力的执行逻辑"
   },
   {
     "version": "v0.0.15",
+    "type": "feature",
     "text": "增加多重筛选的支持"
   },
   {
     "version": "v0.0.15",
+    "type": "improve",
     "text": "优化前端变量和Buff的显示逻辑"
   },
   {
     "version": "v0.0.15",
+    "type": "fix",
     "text": "修复了DSL部分情况下节点位置保存错误的问题"
   },
   {
     "version": "v0.0.15",
+    "type": "improve",
     "text": "优化DSL编辑器收藏功能保存和加载不稳定的情况"
   },
   {
     "version": "v0.0.15",
+    "type": "adjust",
     "text": "调整能力触发事件的公告时机，使其晚于能力本体发送"
   },
   {
     "version": "v0.0.15",
+    "type": "fix",
     "text": "尝试修复了可能存在的对局信息泄露情况"
   },
   {
     "version": "v0.0.16",
+    "type": "fix",
     "text": "修复本地双人对战网络延迟的问题"
   },
   {
     "version": "v0.0.16",
+    "type": "fix",
     "text": "修复DSL提交和筛选异常的问题"
   },
   {
     "version": "v0.0.16",
+    "type": "fix",
     "text": "修复对战中屏障徽记未加载的问题"
   },
   {
     "version": "v0.0.16",
+    "type": "fix",
     "text": "修复了前端位置变化的显示问题"
   },
   {
     "version": "v0.0.16",
+    "type": "fix",
     "text": "修复了免费进化未生效的问题"
   },
   {
     "version": "v0.0.16",
+    "type": "feature",
     "text": "增加了无法攻击主战者与无法攻击从者的关键字"
   },
   {
     "version": "v0.0.16",
+    "type": "improve",
     "text": "将所有卡图替换为webp格式以优化加载速度"
   },
   {
     "version": "v0.0.17",
+    "type": "fix",
     "text": "修复了变形不打断交战的问题"
   },
   {
     "version": "v0.0.17",
+    "type": "fix",
     "text": "修复了回合开始与费用增长时点的问题"
   },
   {
     "version": "v0.0.17",
+    "type": "adjust",
     "text": "规范化了能力的发动顺序，加入位置影响"
   },
   {
     "version": "v0.0.17",
+    "type": "fix",
     "text": "修复了部分情况下抉择和选择目标会导致能力失败的问题"
   },
   {
     "version": "v0.0.18",
+    "type": "fix",
     "text": "修复了能力触发顺序的问题"
   },
   {
     "version": "v0.0.18",
+    "type": "feature",
     "text": "目标配置简化模式增加本卡牌选项"
   },
   {
     "version": "v0.0.18",
+    "type": "feature",
     "text": "效果配置选项中增加输出功能"
   },
   {
     "version": "v0.0.19",
+    "type": "feature",
     "text": "效果重复次数现在可接受动态值"
   },
   {
     "version": "v0.0.19",
+    "type": "fix",
     "text": "修复输出参数传递的问题"
   },
   {
     "version": "v0.0.19",
+    "type": "fix",
     "text": "修复调整属性值时会错误继承伤害的问题"
   },
   {
     "version": "v0.0.19",
+    "type": "fix",
     "text": "修复了依序分支效果仍需要设置触发事件的错误"
   },
   {
     "version": "v0.0.19",
+    "type": "adjust",
     "text": "调整了卡牌查询的默认排序策略，现在以消费→职业→种类→卡包的序列显示"
   },
   {
     "version": "v0.0.19",
+    "type": "feature",
     "text": "DSL编辑器现在支持对于事件历史的查询"
   },
   {
     "version": "v0.0.19",
+    "type": "adjust",
     "text": "Before阶段的能力效果允许触发连锁能力"
   },
   {
     "version": "v0.0.19",
+    "type": "fix",
     "text": "修复土之秘术偶尔不会更新土之印数量的问题"
   },
   {
     "version": "v0.0.20",
+    "type": "fix",
     "text": "修复了观战时无法切换视角且主视角对方卡牌不显示的问题"
   },
   {
     "version": "v0.0.20",
+    "type": "adjust",
     "text": "调整了融合的触发逻辑（所有融合能力的触发事件重定向到开始融合）"
   },
   {
     "version": "v0.0.20",
+    "type": "feature",
     "text": "增加了同名能力触发限制选项（用于瞬念召唤等类似能力）"
   },
   {
     "version": "v0.0.20",
+    "type": "adjust",
     "text": "细化了替换事件的参数"
   },
   {
     "version": "v0.0.20",
+    "type": "improve",
     "text": "优化了DSL编辑器增加节点时的列表显示"
   },
   {
     "version": "v0.0.20",
+    "type": "feature",
     "text": "增加了融合数量的前端显示"
   },
   {
     "version": "v0.0.20",
+    "type": "fix",
     "text": "修复了对战中必杀部分情况下错误生效/失效的问题"
   },
   {
     "version": "v0.0.20",
+    "type": "fix",
     "text": "修复了部分情况下费用校验出错的问题"
   },
   {
     "version": "v0.0.20",
+    "type": "feature",
     "text": "增加新的效果选项"
   },
   {
     "version": "v0.0.21",
+    "type": "fix",
     "text": "修复了DSL编辑器节点列表截断的问题"
   },
   {
     "version": "v0.0.21",
+    "type": "adjust",
     "text": "修改了多效果的目标选择策略，使效果触发更加稳定"
   },
   {
     "version": "v0.0.21",
+    "type": "adjust",
     "text": "随机和模式效果结算改为按顺序排列"
   },
   {
     "version": "v0.0.21",
+    "type": "fix",
     "text": "修复了调整生命最大值会错误的增加当前生命的问题"
   },
   {
     "version": "v0.0.22",
+    "type": "feature",
     "text": "增加玩家级别变量的显示（点击主战者查看）"
   },
   {
     "version": "v0.0.22",
+    "type": "adjust",
     "text": "调整了回合开始的结算时序"
   },
   {
     "version": "v0.0.22",
+    "type": "adjust",
     "text": "调整了部分事件的参数，使其语义更加自然（变形目标现在为Target，并可以从连锁能力的触发事件中访问）"
   },
   {
     "version": "v0.0.22",
+    "type": "feature",
     "text": "增强了DSL管线编辑的支持"
   },
   {
     "version": "v0.0.23",
+    "type": "feature",
     "text": "对战界面增加了能力追踪弹窗"
   },
   {
     "version": "v0.0.23",
+    "type": "feature",
     "text": "对战日志可点击查看卡牌详情，并增加了部分事件输出"
   },
   {
     "version": "v0.0.23",
+    "type": "fix",
     "text": "修复了多人对战时卡组无法切换的问题"
   },
   {
     "version": "v0.0.23",
+    "type": "fix",
     "text": "修复了超进化随从会在回合外造成特殊伤害的问题"
   },
   {
     "version": "v0.0.23",
+    "type": "fix",
     "text": "修复了事件历史会丢失参数类型的问题"
   },
   {
     "version": "v0.0.24",
+    "type": "feature",
     "text": "后台增加了胜率统计"
   },
   {
     "version": "v0.0.24",
+    "type": "feature",
     "text": "增加了对战中的聊天窗口和弹幕显示"
   },
   {
     "version": "v0.0.24",
+    "type": "improve",
     "text": "扩展了DSL表达式的显示"
   },
   {
     "version": "v0.0.24",
+    "type": "feature",
     "text": "增加了能力追踪的开关"
   },
   {
     "version": "v0.0.24",
+    "type": "feature",
     "text": "牌组编辑界面增加卡组预览和导出"
   },
   {
     "version": "v0.0.24",
+    "type": "adjust",
     "text": "为了避免玩家感到困惑，暂时清空了金币数"
   },
   {
     "version": "v0.0.25",
+    "type": "improve",
     "text": "增强了断线重连功能"
   },
   {
     "version": "v0.0.25",
+    "type": "improve",
     "text": "修改了聊天窗口和弹幕的样式"
   },
   {
     "version": "v0.0.25",
+    "type": "fix",
     "text": "修复了一些已知问题"
   },
   {
     "version": "v0.0.26",
+    "type": "adjust",
     "text": "延长断线重连的时间"
   },
   {
     "version": "v0.0.26",
+    "type": "fix",
     "text": "修复DSL编辑器管线操作添加表达式失败的问题"
   },
   {
     "version": "v0.0.26",
+    "type": "feature",
     "text": "增加重置密码功能"
   },
   {
     "version": "v0.0.26",
+    "type": "fix",
     "text": "修复了卡牌在部分情况下会错误触发谢幕曲的问题"
   },
   {
     "version": "v0.0.26",
+    "type": "adjust",
     "text": "庆祝星云第一次小赛，金币掉率增加至1.2倍!"
   },
   {
     "version": "v0.0.26",
+    "type": "feature",
     "text": "增加了胜率看板的按时间筛选功能"
   },
   {
     "version": "v0.0.26",
+    "type": "fix",
     "text": "修复了超进化从者以能力破坏攻击目标时不会造成主战者伤害的问题"
   },
   {
     "version": "v0.0.26",
+    "type": "fix",
     "text": "增加了法术守护会错误的影响随机目标的问题"
   },
   {
     "version": "v0.0.26",
+    "type": "feature",
     "text": "增加了进化/超进化的确认"
   },
   {
     "version": "v0.0.26",
+    "type": "feature",
     "text": "增加了已使用卡牌的记录查询"
   },
   {
     "version": "v0.0.27",
+    "type": "improve",
     "text": "修改了融合的操作流程，使其更加明显"
   },
   {
     "version": "v0.0.27",
+    "type": "fix",
     "text": "修复了部分情况下连锁能力死亡结算出错的问题"
   },
   {
     "version": "v0.0.27",
+    "type": "fix",
     "text": "修复了法术守护的遗留问题"
   },
   {
     "version": "v0.0.27",
+    "type": "fix",
     "text": "修复了房主更容易先手的问题"
   },
   {
     "version": "v0.0.27",
+    "type": "feature",
     "text": "增加了目标配置的策略选项(继续执行/停止能力/阻碍玩家操作)"
   },
   {
     "version": "v0.0.28",
+    "type": "fix",
     "text": "修复了交战时的结算顺序"
   },
   {
     "version": "v0.0.28",
+    "type": "fix",
     "text": "修复了可选目标UI"
   },
   {
     "version": "v0.0.29",
+    "type": "fix",
     "text": "修复了一系列已知问题"
   },
   {
     "version": "v0.0.29",
+    "type": "adjust",
     "text": "重构了离场相关链路的逻辑"
   },
   {
     "version": "v0.0.29",
+    "type": "fix",
     "text": "修复了快照错误"
   },
   {
     "version": "v0.0.30",
+    "type": "feature",
     "text": "增加部分卡牌的可撤回的支持"
   },
   {
     "version": "v0.0.30",
+    "type": "feature",
     "text": "增加了能力配置的上移/下移功能"
   },
   {
     "version": "v0.0.30",
+    "type": "improve",
     "text": "对于对战界面的UI进行了部分优化"
   },
   {
     "version": "v0.0.30",
+    "type": "fix",
     "text": "修复了反选目标会忽略灵气和潜行卡片的问题"
   },
   {
     "version": "v0.0.30",
+    "type": "fix",
     "text": "修复了部分能力无法取消的问题"
   },
   {
     "version": "v0.0.30",
+    "type": "feature",
     "text": "增加了信仰类型卡"
   },
   {
     "version": "v0.0.30",
+    "type": "feature",
     "text": "新增快捷选择卡组组件"
   },
   {
     "version": "v0.0.30",
+    "type": "feature",
     "text": "增加了双职业模式，并完善了卡组编辑系统"
   },
   {
     "version": "v0.0.31",
+    "type": "fix",
     "text": "修复了本地双人对战中客位无法启动的错误"
   },
   {
     "version": "v0.0.31",
+    "type": "feature",
     "text": "增加了卡牌禁限管理功能"
   },
   {
     "version": "v0.0.31",
+    "type": "feature",
     "text": "实装了卡牌赞/踩与评论功能"
   },
   {
     "version": "v0.0.32",
+    "type": "improve",
     "text": "优化了卡组编辑保存体验"
   },
   {
     "version": "v0.0.32",
+    "type": "fix",
     "text": "修复了收藏的DSL表达式无法编辑的问题"
   },
   {
     "version": "v0.0.32",
+    "type": "feature",
     "text": "增强DSL表达式的支持，允许查看卡牌定义数据"
   },
   {
     "version": "v0.0.32",
+    "type": "fix",
     "text": "修复了战斗控制台无法输出日志的问题"
   },
   {
     "version": "v0.0.32",
+    "type": "fix",
     "text": "修复了对战中爆能信息未即时刷新的问题"
   },
   {
     "version": "v0.0.33",
+    "type": "fix",
     "text": "修复了一些已知问题"
   },
   {
     "version": "v0.0.33",
+    "type": "feature",
     "text": "增加了网页应用安装入口"
   },
   {
     "version": "v0.0.33",
+    "type": "adjust",
     "text": "双职业模式关闭"
   },
   {
     "version": "v0.0.34",
+    "type": "feature",
     "text": "卡牌编辑增加了种类管理，并增加了对于复数类型的支持"
   },
   {
     "version": "v0.0.34",
+    "type": "feature",
     "text": "扩展了去重键的应用范围，现在支持列表去重"
   },
   {
     "version": "v0.0.34",
+    "type": "feature",
     "text": "正式开放卡评活动"
   },
   {
     "version": "v0.0.35",
+    "type": "feature",
     "text": "变形效果增加复制模式配置选项"
   },
   {
     "version": "v0.0.35",
+    "type": "feature",
     "text": "效果配置中增加触发能力效果"
   },
   {
     "version": "v0.0.35",
+    "type": "improve",
     "text": "优化了卡包筛选的显示样式"
   },
   {
     "version": "v0.0.35",
+    "type": "fix",
     "text": "修复了部分已知问题"
   },
   {
     "version": "v0.0.36",
+    "type": "fix",
     "text": "修复了模式选择时出现检测错误的问题"
   },
   {
     "version": "v0.0.36",
+    "type": "fix",
     "text": "修复了触发能力效果枚举选项未正常出现的问题"
   },
   {
     "version": "v0.0.36",
+    "type": "feature",
     "text": "移除能力效果新增本能力配置模式"
   },
   {
     "version": "v0.0.36",
+    "type": "feature",
     "text": "增加已创建能力ID的复制功能"
   },
   {
     "version": "v0.0.36",
+    "type": "improve",
     "text": "优化对战界面的卡牌动画"
   },
   {
     "version": "v0.0.36",
+    "type": "fix",
     "text": "修复了分支能力的触发事件同步问题"
   },
   {
     "version": "v0.0.37",
+    "type": "feature",
     "text": "增加了事件参数，以支持能力进场判断"
   },
   {
     "version": "v0.0.37",
+    "type": "fix",
     "text": "修复了Buff类效果的条件移除"
   },
   {
     "version": "v0.0.37",
+    "type": "fix",
     "text": "修复了能力在移除时可能失效的问题"
   },
   {
     "version": "v0.0.38",
+    "type": "feature",
     "text": "增加了类天盾效果作为关键字"
   },
   {
     "version": "v0.0.38",
+    "type": "feature",
     "text": "增加了当前房间列表查看功能"
   },
   {
     "version": "v0.0.38",
+    "type": "fix",
     "text": "修复了房间过期时限过短的问题"
   },
   {
     "version": "v0.0.38",
+    "type": "improve",
     "text": "优化了卡牌数据加载速度"
   },
   {
     "version": "v0.0.38",
+    "type": "feature",
     "text": "增加了计数器更新事件的可用参数"
   },
   {
     "version": "v0.0.38",
+    "type": "fix",
     "text": "统一回合边界清理时点，修复回合结束能力读取连击数异常的问题"
   },
   {
     "version": "v0.0.39",
+    "type": "fix",
     "text": "修复了调度后手牌位置变化的问题"
   },
   {
     "version": "v0.0.39",
+    "type": "fix",
     "text": "修复了部分已知Bug"
   },
   {
     "version": "v0.0.40",
+    "type": "fix",
     "text": "修复了无垠界域牌组无法显示注释的问题"
   },
   {
     "version": "v0.0.40",
+    "type": "feature",
     "text": "增加了对于瞬念召唤、激奏、结晶和发现的支持"
   },
   {
     "version": "v0.0.40",
+    "type": "feature",
     "text": "增加了能力关键字临时状态效果"
   },
   {
     "version": "v0.0.40",
+    "type": "improve",
     "text": "优化了多人房间的UI显示"
   },
   {
     "version": "v0.0.40",
+    "type": "fix",
     "text": "修复了无视守护关键字无法正常生效的问题"
   },
   {
     "version": "v0.0.40",
+    "type": "improve",
     "text": "优化了对战中的画面效果"
   },
   {
     "version": "v0.0.40",
+    "type": "fix",
     "text": "修复了部分情况下从者在生命值为0的时候不被破坏的问题"
   },
   {
     "version": "v0.0.40",
+    "type": "fix",
     "text": "修复了一个可能导致内存泄露的问题"
   },
   {
     "version": "v0.0.41",
     "date": "2026-10-30",
+    "type": "feature",
     "text": "增加了激奏和结晶的特效"
   },
   {
     "version": "v0.0.41",
     "date": "2026-10-30",
+    "type": "feature",
     "text": "增加了卡片公开的动画与对局记录显示"
   },
   {
     "version": "v0.0.41",
     "date": "2026-10-30",
+    "type": "feature",
     "text": "实装了卡片风格系统与双选模式"
   },
   {
     "version": "v0.0.41",
     "date": "2026-10-30",
+    "type": "feature",
     "text": "牌组编辑处新增卡查界面"
   },
   {
     "version": "v0.0.41",
     "date": "2026-10-30",
+    "type": "feature",
     "text": "增加了亡召池筛选与触发能力跳过选择目标与模式的选项"
   },
   {
     "version": "v0.0.41",
     "date": "2026-10-30",
+    "type": "feature",
     "text": "增加了卡片数据版本回退的功能"
   },
   {
     "version": "v0.0.41",
     "date": "2026-10-30",
+    "type": "fix",
     "text": "修复了变身逻辑"
   },
   {
     "version": "v0.0.41",
     "date": "2026-10-30",
+    "type": "improve",
     "text": "对部分UI进行了修改，优化局内附加能力的显示"
   },
   {
     "version": "v0.0.42",
     "date": "2026-11-02",
+    "type": "feature",
     "text": "实装了发现和间奏"
   },
   {
     "version": "v0.0.42",
     "date": "2026-11-02",
+    "type": "feature",
     "text": "实装了证据"
   },
   {
     "version": "v0.0.42",
     "date": "2026-11-02",
+    "type": "fix",
     "text": "修复了子能力不勾选播报时不监听关键词事件的问题"
   },
   {
     "version": "v0.0.42",
     "date": "2026-11-02",
+    "type": "adjust",
     "text": "修正了天盾关键词的效果"
   },
   {
     "version": "v0.0.42",
     "date": "2026-11-02",
+    "type": "improve",
     "text": "优化了每日任务的逻辑"
   },
   {
     "version": "v0.0.42",
     "date": "2026-11-02",
+    "type": "improve",
     "text": "优化了双选房间的观战体验"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "feature",
+    "text": "实装了幻境模式（酒馆招募、升本、冻结、三连合成、发现奖券、战斗沙盒模拟与镜像对手）"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "feature",
+    "text": "实装了经典模式与幻境模式的双环境卡池隔离（覆盖工坊、DSL、卡包、风格与历史版本）"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "feature",
+    "text": "卡牌工坊新增 MSE 可视化卡面直编画布，支持五段式规则排版、插画拖拽缩放裁切与实时渲染"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "feature",
+    "text": "支持新建自定义卡包、上传卡包 Logo，以及卡牌实装状态标记"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "feature",
+    "text": "实装了对局帧录像、事件历史按序回溯、状态还原与断点续玩（Resume）系统"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "feature",
+    "text": "新增开发者对局实验室（Match Lab）与 Agent 自动化对局观测及事件注入调试接口"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复了发现（Discover）在跳过选择、自动随机选择、跨回合归属与 Before 拦截顺序上的问题"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复了间奏（Intromezzo）在目标跳过或取消时误翻转、Before 拦截休眠态漏翻转及占用同名触发名额的问题"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复了双选重抽失败后本地候选牌未回滚、公开动画越过场面更新插队，以及共享卡片风格保存后缓存未刷新的问题"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "improve",
+    "text": "优化了卡牌版本历史批量保存查询性能，并增加了风格、卡池与历史基线的并发写入保护"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复多个效果连续触发时，卡牌费用、攻击力和生命值可能显示错误的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复偶尔点击结束回合或投降却没有反应的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复AI上一步还没结束就开始下一步的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复对局结束后AI仍可能继续行动的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复新对局仍显示上一局回合、换牌提示或倒计时的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复重连后，旧连接消息可能干扰当前对局的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复游客编辑卡组时，未保存的修改也会生效的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复导入卡组时，按错误的对战模式检查卡牌的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复卡组加载失败后，页面看似可用却无法正常操作的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复房间关闭出错后，仍显示正在对战的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复快速切换页面时，画面与操作可能对不上的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复切换胜率筛选后，旧结果覆盖新结果的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复奖励领取失败后，仍被标记为已领取的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复对局结算出错时，奖励可能只发放一部分的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复卡包开启失败时，仍显示成功却没有卡牌的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复复制或编辑能力时，意外改动原能力内容的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复能力读取失败后，被当成空白能力继续编辑的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复卡牌或能力已保存后，提示却让人误以为没保存的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复更换头像失败后，原头像丢失的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复更换卡图失败后，原卡图丢失或无法显示的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复异常回放被当成空回放显示的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复部分旧卡牌的职业、类型或稀有度识别错误的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复更新游戏时，历史任务和金币记录可能被误删的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复首次启动时可能无法进入游戏的问题。"
+  },
+  {
+    "version": "v0.0.43",
+    "date": "2026-11-08",
+    "type": "fix",
+    "text": "修复页面加载失败后，再次打开仍停留在错误页面的问题。"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "improve",
+    "planned": true,
+    "text": "強化AI"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "圖鑒"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "錄像系統"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "社交"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "任務和成就"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "場景/特效/主戰者創作接入口"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "創作接入mse"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "週報/月報 數據統計"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "比賽系統"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "權限管理"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "卡牌多版本，異畫，閃卡"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "商城/公告"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "更合理的更新日誌，BUG上傳直接對接Agent"
+  },
+  {
+    "version": "v1.0.00",
+    "type": "feature",
+    "planned": true,
+    "text": "OCR自動導入卡牌信息"
   }
 ]

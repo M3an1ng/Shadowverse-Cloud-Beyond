@@ -11,8 +11,12 @@ namespace ShadowverseBeyond.Server.Mappings
     public static class PlayerStateProjection
     {
 
-        public static PlayerStateDto Create(PlayerState source, GameContext? context)
+        public static PlayerStateDto Create(PlayerState source, GameContext? context) =>
+            Create(source, context, null);
+
+        public static PlayerStateDto Create(PlayerState source, GameContext? context, GameState? ownerGame)
         {
+            var game = ownerGame ?? context?.CurrentGameState;
             return new PlayerStateDto
             {
                 IsIntromezzoActive = source.IsIntromezzoActive,
@@ -51,6 +55,96 @@ namespace ShadowverseBeyond.Server.Mappings
                 HasCompletedMulligan = source.HasCompletedMulligan,
                 HasTakenFirstTurn = source.HasTakenFirstTurn,
                 TurnNumber = source.TurnNumber,
+                Mirage = BuildMiragePlayerDto(source, game)
+            };
+        }
+
+        private static MiragePlayerStateDto? BuildMiragePlayerDto(PlayerState source, GameState? game)
+        {
+            if (source.Mirage == null)
+            {
+                return null;
+            }
+
+            var rules = game?.Mirage?.Rules ?? new MirageRuleConfig();
+            var isReady = game?.Mirage?.ReadyPlayerIds?.Contains(source.PlayerId) == true;
+            var canUpgrade = source.Mirage.TavernTier < rules.MaxTavernTier
+                && source.CurrentPlayPoints >= source.Mirage.UpgradeCost
+                && !isReady
+                && (game == null || game.Phase == ShadowverseBeyond.Server.Dtos.Enums.GamePhase.Recruit);
+
+            return new MiragePlayerStateDto
+            {
+                TavernTier = source.Mirage.TavernTier,
+                MaxTavernTier = rules.MaxTavernTier,
+                UpgradeCost = source.Mirage.TavernTier >= rules.MaxTavernTier ? 0 : source.Mirage.UpgradeCost,
+                CanUpgradeTier = canUpgrade,
+                IsShopFrozen = source.Mirage.IsShopFrozen,
+                IsReady = isReady,
+                HardGoldCap = rules.HardGoldCap,
+                RefreshCost = rules.RefreshCost,
+                SellRefund = rules.SellRefund,
+                HasSelectedLeader = source.Mirage.HasSelectedLeader,
+                LeaderCandidateCardIds = source.Mirage.LeaderCandidateCardIds.ToList(),
+                LeaderCandidates = source.Mirage.LeaderCandidateCardIds.Select(cardDefId =>
+                {
+                    var def = ShadowverseBeyond.Server.Services.GameDataProvider.Instance?.GetCardDefinition(cardDefId);
+                    return new MirageShopOfferDto
+                    {
+                        OfferId = Guid.Empty,
+                        CardDefinitionId = cardDefId,
+                        Name = def?.Name ?? $"#{cardDefId}",
+                        Description = def?.Description ?? string.Empty,
+                        ArtPreview = def?.ArtPreview,
+                        Attack = def?.Attack ?? 0,
+                        Health = def?.Health ?? 20,
+                        TavernTier = 0,
+                        BuyCost = 0,
+                        TripleGroupId = null,
+                        Class = def?.Class.ToString(),
+                        Type = def?.Type.ToString() ?? "Leader"
+                    };
+                }).ToList(),
+                ShopOffers = source.Mirage.ShopOffers.Select(offer =>
+                {
+                    var def = ShadowverseBeyond.Server.Services.GameDataProvider.Instance?.GetCardDefinition(offer.CardDefinitionId);
+                    return new MirageShopOfferDto
+                    {
+                        OfferId = offer.OfferId,
+                        CardDefinitionId = offer.CardDefinitionId,
+                        Name = def?.Name ?? $"#{offer.CardDefinitionId}",
+                        Description = def?.Description ?? string.Empty,
+                        ArtPreview = def?.ArtPreview,
+                        Attack = def?.Attack ?? 0,
+                        Health = def?.Health ?? 0,
+                        TavernTier = offer.TavernTier,
+                        BuyCost = offer.BuyCost,
+                        TripleGroupId = offer.CardDefinitionId.ToString()
+                    };
+                }).ToList(),
+                PendingTickets = source.Mirage.PendingTickets.Select(t => new MirageDiscoverTicketDto
+                {
+                    TicketId = t.TicketId,
+                    TargetTier = t.TargetTier,
+                    CandidateCardDefinitionIds = t.CandidateCardDefinitionIds.ToList(),
+                    Candidates = t.CandidateCardDefinitionIds.Select(cardDefId =>
+                    {
+                        var def = ShadowverseBeyond.Server.Services.GameDataProvider.Instance?.GetCardDefinition(cardDefId);
+                        return new MirageShopOfferDto
+                        {
+                            OfferId = t.TicketId,
+                            CardDefinitionId = cardDefId,
+                            Name = def?.Name ?? $"#{cardDefId}",
+                            Description = def?.Description ?? string.Empty,
+                            ArtPreview = def?.ArtPreview,
+                            Attack = def?.Attack ?? 0,
+                            Health = def?.Health ?? 0,
+                            TavernTier = t.TargetTier,
+                            BuyCost = 0,
+                            TripleGroupId = cardDefId.ToString()
+                        };
+                    }).ToList()
+                }).ToList()
             };
         }
 

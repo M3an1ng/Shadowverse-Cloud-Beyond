@@ -48,7 +48,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [DslExposable("当前对战环境", Description = "当前对局双方共同使用的构筑环境")]
         public DeckEnvironment CurrentEnvironment => CurrentGameState.GetRequiredUniqueEnvironment();
 
-        public Guid RequestingPlayerId { get; }
+        public Guid RequestingPlayerId { get; init; }
         internal Random? BenchmarkRandom { get; init; }
 
         /// <summary>
@@ -98,6 +98,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
         [DslExposable("事件历史", Description = "当前对局的事件历史读取器")]
         public EventHistoryReader EventHistory { get; }
 
+        public IEventHistoryService EventHistoryService { get; }
+
         public IReadOnlyDictionary<string, List<TargetInfo>> ResolvedTargets { get; init; } = new Dictionary<string, List<TargetInfo>>();
 
         [DslExposable("目标池", Description = "当前能力已解析的卡牌目标池")]
@@ -125,7 +127,8 @@ namespace ShadowverseBeyond.Server.Domain.Events
             IBuffService? buffService = null,
             bool isCancellable = false,
             bool isAuraRefresh = false,
-            IReadOnlyDictionary<string, List<TargetInfo>>? resolvedTargets = null)
+            IReadOnlyDictionary<string, List<TargetInfo>>? resolvedTargets = null,
+            IEventHistoryService? eventHistoryService = null)
         {
             ServiceProvider = serviceProvider;
             Mapper = mapper;
@@ -146,11 +149,37 @@ namespace ShadowverseBeyond.Server.Domain.Events
             AbilityManager = currentGameState.AbilityManager;
             BuffManager = currentGameState.BuffManager;
             AuraManager = currentGameState.AuraManager ?? NullAuraManager.Instance;
-            BuffService = serviceProvider.GetRequiredService<IBuffService>();
-            EventHistory = new EventHistoryReader(serviceProvider.GetRequiredService<IEventHistoryService>(), currentGameState.GameId);
+            BuffService = buffService ?? serviceProvider.GetRequiredService<IBuffService>();
+            EventHistoryService = eventHistoryService ?? serviceProvider.GetRequiredService<IEventHistoryService>();
+            EventHistory = new EventHistoryReader(EventHistoryService, currentGameState.GameId);
 
             // Set the ambient context upon creation.
             _ambientScope = accessor.Enter(this);
+        }
+
+        public static GameContext CreateForSandbox(
+            IServiceProvider serviceProvider,
+            IMapper mapper,
+            IGameContextAccessor accessor,
+            GameState sandboxGameState,
+            IBuffService sandboxBuffService,
+            IEventHistoryService sandboxHistoryService,
+            Guid requestingPlayerId,
+            CancellationToken cancellationToken = default)
+        {
+            if (sandboxGameState == null) throw new ArgumentNullException(nameof(sandboxGameState));
+            if (sandboxBuffService == null) throw new ArgumentNullException(nameof(sandboxBuffService));
+            if (sandboxHistoryService == null) throw new ArgumentNullException(nameof(sandboxHistoryService));
+
+            return new GameContext(
+                serviceProvider,
+                mapper,
+                accessor,
+                sandboxGameState,
+                requestingPlayerId,
+                cancellationToken,
+                buffService: sandboxBuffService,
+                eventHistoryService: sandboxHistoryService);
         }
 
         private static IReadOnlyList<CardInstance> ExtractCardTargets(IEnumerable<TargetInfo>? targets)

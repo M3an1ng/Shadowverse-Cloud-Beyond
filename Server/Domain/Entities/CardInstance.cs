@@ -37,7 +37,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
     /// Can represent cards in any zone (hand, field, deck, graveyard, etc.) and any type (leader, unit, amulet, spell).
     /// </summary>
     [DslExposable("卡牌实例", Description = "代表游戏中一张具体的卡牌实例")]
-    public class CardInstance : ICard
+    public partial class CardInstance : ICard
     {
         public const string SpellboostCounterKey = "spellboost";
         public const string EarthsigilCounterKey = "earthsigil";
@@ -97,7 +97,32 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         [DslExposable("卡牌类型", Description = "卡牌的类型（随从、法术、护符等）")]
         public CardType CardType => CurrentDefinition?.Type ?? CardType.Follower;
 
-        public int BaseCost => CurrentDefinition?.Cost ?? 0;
+        /// <summary>
+        /// Optional override for base cost (e.g. Mirage recruited cards deployed for 0 gold).
+        /// </summary>
+        public int? CostOverride { get; set; }
+
+        /// <summary>
+        /// Indicates whether this card instance was recruited in Mirage mode (free deployment from hand).
+        /// </summary>
+        public bool IsMirageRecruited { get; set; }
+
+        /// <summary>
+        /// Indicates whether this card instance is a synthesized Mirage triple (golden 2x base stats).
+        /// </summary>
+        public bool IsMirageTriple { get; set; }
+
+        /// <summary>
+        /// In a combat sandbox, stores the original recruit-state CardInstance.InstanceId for permanent growth commit.
+        /// </summary>
+        public Guid? OriginInstanceId { get; set; }
+
+        /// <summary>
+        /// Indicates whether this leader card is a dummy leader inside a Mirage combat sandbox.
+        /// </summary>
+        public bool IsCombatSandboxLeader { get; set; }
+
+        public int BaseCost => CostOverride ?? CurrentDefinition?.Cost ?? 0;
 
         /// <summary>
         /// DSL-visible cost; callers with an explicit context should use GetCurrentCost.
@@ -111,9 +136,14 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             : Math.Max(0, context.BuffService.GetEffectiveCost(this, context));
 
         /// <summary>
+        /// Optional override for base attack (e.g. Mirage triple synthesis 2x base attack).
+        /// </summary>
+        public int? BaseAttackOverride { get; set; }
+
+        /// <summary>
         /// Base attack from CardDefinition (before any buffs or effects).
         /// </summary>
-        public int BaseAttack => CurrentDefinition?.Attack ?? 0;
+        public int BaseAttack => BaseAttackOverride ?? CurrentDefinition?.Attack ?? 0;
 
         /// <summary>
         /// Current attack value (for units/leaders).
@@ -139,9 +169,14 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public int CurrentHealth => MaxHealth - Damage;
 
         /// <summary>
+        /// Optional override for base health (e.g. Custom Format / Tavern Brawl LeaderMaxHealth).
+        /// </summary>
+        public int? BaseHealthOverride { get; set; }
+
+        /// <summary>
         /// Base health from CardDefinition (before any buffs or effects).
         /// </summary>
-        public int BaseHealth => CurrentDefinition?.Health ?? 0;
+        public int BaseHealth => BaseHealthOverride ?? CurrentDefinition?.Health ?? 0;
 
         /// <summary>
         /// Maximum health value (for units/leaders).
@@ -229,8 +264,9 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public bool CanAttackIn(GameContext? context)
         {
             var keywords = GetKeywords(context);
+            var isMirageSandbox = context?.CurrentGameState?.IsCombatSandbox == true;
             return !keywords.Contains(CardKeyword.Shackle) &&
-                (keywords.Contains(CardKeyword.Rush) || keywords.Contains(CardKeyword.Storm) || IsEvolved || ZoneStayTurn > 0) &&
+                (isMirageSandbox || keywords.Contains(CardKeyword.Rush) || keywords.Contains(CardKeyword.Storm) || IsEvolved || ZoneStayTurn > 0) &&
                 GetActionUsageCount(CardActionUsageType.Attack) < GetActionUsageLimit(CardActionUsageType.Attack, context);
         }
 
@@ -698,6 +734,11 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 return false;
             }
 
+            if (target.IsCombatSandboxLeader)
+            {
+                return false;
+            }
+
             var opponentField = opponentPlayer.Field;
             static bool HasEffectiveWard(CardInstance follower)
             {
@@ -917,7 +958,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             IsEvolved = true;
             IsSuperEvolved = isSuperEvolution;
 
-            if (isSuperEvolution)
+            if (isSuperEvolution || IsMirageTriple)
             {
                 return new DomainOperationResult { Success = true };
             }
@@ -989,7 +1030,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             ConsumeActionUsage(CardActionUsageType.Attack);
         }
 
-        internal sealed record CardRuntimeStateSnapshot
+        public sealed record CardRuntimeStateSnapshot
         {
             public int? AlternateArtDefinitionId { get; init; }
             public int Damage { get; init; }
@@ -998,6 +1039,13 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             public int? CurrentCountdown { get; init; }
             public bool IsSilenced { get; init; }
             public int ZoneStayTurn { get; init; }
+            public bool IsMirageRecruited { get; init; }
+            public bool IsMirageTriple { get; init; }
+            public Guid? OriginInstanceId { get; init; }
+            public int? BaseAttackOverride { get; init; }
+            public int? BaseHealthOverride { get; init; }
+            public int? CostOverride { get; init; }
+            public bool IsCombatSandboxLeader { get; init; }
             public Dictionary<CardActionUsageType, int> ActionUsageCounts { get; init; } = new();
             public Dictionary<CardActionUsageType, int> ActionUsageLimits { get; init; } = new();
             public Dictionary<string, object> AbilityState { get; init; } = new();
@@ -1018,16 +1066,71 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 CurrentCountdown = CurrentCountdown,
                 IsSilenced = IsSilenced,
                 ZoneStayTurn = ZoneStayTurn,
+                IsMirageRecruited = IsMirageRecruited,
+                IsMirageTriple = IsMirageTriple,
+                OriginInstanceId = OriginInstanceId,
+                BaseAttackOverride = BaseAttackOverride,
+                BaseHealthOverride = BaseHealthOverride,
+                CostOverride = CostOverride,
+                IsCombatSandboxLeader = IsCombatSandboxLeader,
                 ActionUsageCounts = Enum.GetValues<CardActionUsageType>()
                     .ToDictionary(actionType => actionType, actionType => GetActionUsageCount(actionType)),
                 ActionUsageLimits = Enum.GetValues<CardActionUsageType>()
                     .ToDictionary(actionType => actionType, actionType => GetBaseActionUsageLimit(actionType)),
-                AbilityState = new Dictionary<string, object>(AbilityState),
+                AbilityState = CloneAbilityStateDictionary(AbilityState),
                 AdditionalNames = new List<string>(_additionalNames),
                 AdditionalTribes = new List<string>(_additionalTribes),
                 FusedCards = new List<CardInstance>(_fusedCards),
                 Counters = new Dictionary<string, int>(_counters)
             };
+        }
+
+        private static Dictionary<string, object> CloneAbilityStateDictionary(IReadOnlyDictionary<string, object>? source)
+        {
+            var result = new Dictionary<string, object>(StringComparer.Ordinal);
+            if (source == null)
+            {
+                return result;
+            }
+
+            foreach (var pair in source)
+            {
+                result[pair.Key] = CloneAbilityStateValue(pair.Value)!;
+            }
+            return result;
+        }
+
+        private static object? CloneAbilityStateValue(object? value)
+        {
+            return value switch
+            {
+                null => null,
+                string or bool or byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal or Guid or DateTime or DateTimeOffset or Enum => value,
+                System.Text.Json.JsonElement jsonElement => jsonElement.Clone(),
+                System.Text.Json.Nodes.JsonNode jsonNode => jsonNode.DeepClone(),
+                IReadOnlyDictionary<string, object> readOnlyDict => CloneAbilityStateDictionary(readOnlyDict),
+                System.Collections.IDictionary dict => CloneUntypedDictionary(dict),
+                HashSet<Guid> guidSet => new HashSet<Guid>(guidSet),
+                HashSet<string> stringSet => new HashSet<string>(stringSet, stringSet.Comparer),
+                HashSet<int> intSet => new HashSet<int>(intSet),
+                List<Guid> guidList => new List<Guid>(guidList),
+                List<string> stringList => new List<string>(stringList),
+                List<int> intList => new List<int>(intList),
+                System.Collections.IEnumerable enumerable => enumerable.Cast<object?>().Select(CloneAbilityStateValue).ToList(),
+                ICloneable cloneable => cloneable.Clone(),
+                _ => value
+            };
+        }
+
+        private static Dictionary<string, object?> CloneUntypedDictionary(System.Collections.IDictionary dict)
+        {
+            var copy = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (System.Collections.DictionaryEntry entry in dict)
+            {
+                var key = entry.Key?.ToString() ?? string.Empty;
+                copy[key] = CloneAbilityStateValue(entry.Value);
+            }
+            return copy;
         }
 
         internal void CopyRuntimeStateFrom(CardInstance source)
@@ -1045,12 +1148,19 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             CurrentCountdown = source.CurrentCountdown;
             IsSilenced = source.IsSilenced;
             ZoneStayTurn = source.ZoneStayTurn;
+            IsMirageRecruited = source.IsMirageRecruited;
+            IsMirageTriple = source.IsMirageTriple;
+            OriginInstanceId = source.OriginInstanceId;
+            BaseAttackOverride = source.BaseAttackOverride;
+            BaseHealthOverride = source.BaseHealthOverride;
+            CostOverride = source.CostOverride;
+            IsCombatSandboxLeader = source.IsCombatSandboxLeader;
             foreach (var actionType in Enum.GetValues<CardActionUsageType>())
             {
                 SetActionUsageCount(actionType, source.ActionUsageCounts.TryGetValue(actionType, out var usageCount) ? usageCount : 0);
                 SetBaseActionUsageLimit(actionType, source.ActionUsageLimits.TryGetValue(actionType, out var usageLimit) ? usageLimit : 1);
             }
-            AbilityState = new Dictionary<string, object>(source.AbilityState);
+            AbilityState = CloneAbilityStateDictionary(source.AbilityState);
             _additionalNames.Clear();
             _additionalNames.AddRange(source.AdditionalNames);
             _additionalTribes.Clear();

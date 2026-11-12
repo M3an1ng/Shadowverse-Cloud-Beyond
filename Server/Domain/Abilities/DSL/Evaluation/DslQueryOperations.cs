@@ -387,7 +387,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 .ToList();
 
             var semantics = context?.ServiceProvider.GetService<ITribeSemantics>();
-            var expandedTribes = semantics?.Expand(tribeValues) ?? tribeValues;
+            var mode = context?.CurrentGameState?.Mode;
+            var expandedTribes = semantics?.Expand(tribeValues, mode) ?? tribeValues;
             var expandedSet = new HashSet<string>(expandedTribes, StringComparer.OrdinalIgnoreCase);
             var ordered = new List<object?>();
 

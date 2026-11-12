@@ -92,11 +92,14 @@
     color: var(--color-secondary);
 }
 
-/* --- Game Board Layout --- */
+/* ==========================================================================
+   Game Board Layout (Obsidian Tactics — Unified Dual-Mode Arena)
+   ========================================================================== */
 #game-container {
-    display: flex;
-    flex-direction: column;
-    justify-content: center; /* Center battlefield vertically */
+    --battle-horizon-y: calc(50% - 66px);
+    display: block;
+    flex: 1;
+    min-height: 0;
     height: 100%;
     width: 100%;
     max-width: 100%;
@@ -106,6 +109,8 @@
     z-index: 1;
     isolation: isolate;
     overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 #game-container.has-battle-custom-background::before {
@@ -129,383 +134,433 @@
         0 0 0 1px rgba(0, 0, 0, 0.12);
 }
 
-/* HUD Elements (Absolute Positioning within Game Container) */
-.player-info {
-    position: absolute; /* Changed to absolute to stay within game-container */
+/* ==========================================================================
+   1. Symmetrical Corner Pods (Bottom-Left Self & Top-Right Opponent)
+      W-Shaped 5-Ring Emblem Grid + Single-Line Variable Strip
+   ========================================================================== */
+.battle-corner-pod {
+    position: absolute;
+    z-index: 40;
     display: flex;
     flex-direction: column;
-    padding: var(--space-4);
-    z-index: 90; /* Ensure HUD is above battlefield but below modals */
-    width: 300px;
-    pointer-events: none; /* Let clicks pass through */
-    transition: all 0.3s ease;
+    gap: 8px;
+    font-family: var(--font-mono);
+    pointer-events: auto;
+}
+
+.battle-corner-pod.is-bottom-left {
+    bottom: 14px;
+    left: 18px;
+    align-items: flex-start;
+}
+
+.battle-corner-pod.is-top-right {
+    top: 10px;
+    right: 18px;
+    align-items: flex-end;
+}
+
+/* Original W-Shaped 5-Slot Staggered Emblem Grid (3 Top, 2 Bottom) */
+#game-container .emblem-zone {
+    --emblem-size: 30px;
+    display: grid;
+    grid-template-columns: repeat(6, 18px);
+    grid-template-rows: repeat(2, 27px);
+    column-gap: 2px;
+    row-gap: 3px;
+    justify-items: center;
+    align-items: center;
+    padding: 2px;
+    background: transparent;
+    border: none;
+}
+
+#game-container .emblem-zone.is-empty {
+    display: none !important;
+}
+
+#game-container .emblem-zone .emblem-slot:nth-child(1) {
+    grid-column: 1 / span 2;
+    grid-row: 1;
+}
+
+#game-container .emblem-zone .emblem-slot:nth-child(2) {
+    grid-column: 3 / span 2;
+    grid-row: 1;
+}
+
+#game-container .emblem-zone .emblem-slot:nth-child(3) {
+    grid-column: 5 / span 2;
+    grid-row: 1;
+}
+
+#game-container .emblem-zone .emblem-slot:nth-child(4) {
+    grid-column: 2 / span 2;
+    grid-row: 2;
+}
+
+#game-container .emblem-zone .emblem-slot:nth-child(5) {
+    grid-column: 4 / span 2;
+    grid-row: 2;
+}
+
+.battle-var-strip {
+    height: 30px;
+    padding: 0 4px;
+    background: rgba(10, 11, 15, 0.92);
+    border: 1px solid rgba(196, 210, 228, 0.14);
+    border-radius: 5px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    display: inline-flex;
+    align-items: center;
+}
+
+.battle-extra-counters {
+    display: contents;
+}
+
+/* ==========================================================================
+   2. Center 5-Layer Vertical Stack (Opponent HUD + Dual Holographic Board + Self HUD)
+   ========================================================================== */
+.battle-center-stack {
+    position: absolute;
+    top: 8px;
+    bottom: 136px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: clamp(700px, 54vw, 1060px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    z-index: 26;
+    pointer-events: none;
+}
+
+.player-info.leader-rpg-hud {
+    pointer-events: auto;
+    position: relative;
+    top: auto;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    width: 468px;
+    height: 76px;
+    padding: 0;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    transform: translateX(6px);
+    font-family: var(--font-mono);
+    cursor: pointer;
+    z-index: 4;
+    transition: filter 0.16s ease, transform 0.16s ease;
+}
+
+.player-info.leader-rpg-hud.is-self {
+    margin-top: 4px;
+}
+
+/* Borderless Dual-Layer Holographic Battlefield */
+#battlefield {
+    pointer-events: auto;
+    position: relative;
+    top: auto;
+    left: auto;
+    transform: none;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    gap: 0;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    z-index: 2;
+}
+
+#battlefield::before,
+#battlefield::after {
+    content: none;
+}
+
+#battlefield:has(.card:hover) {
+    z-index: 14;
+}
+
+.battle-field-zone {
+    width: 100%;
+    height: 168px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    backdrop-filter: blur(4px);
+    transition: opacity 0.2s ease, filter 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.battle-field-zone.is-upper {
+    background: linear-gradient(180deg, rgba(239, 68, 68, 0.14) 0%, rgba(0, 0, 0, 0.38) 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.battle-field-zone.is-lower {
+    background: linear-gradient(0deg, rgba(6, 182, 212, 0.14) 0%, rgba(0, 0, 0, 0.38) 100%);
+    border-top: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.battle-zone-tag {
+    position: absolute;
+    top: 7px;
+    right: 14px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: rgba(226, 232, 240, 0.24);
+    pointer-events: none;
+    z-index: 1;
+}
+
+.battle-field-zone.is-lower .battle-zone-tag {
+    top: auto;
+    bottom: 7px;
+}
+
+#player2-field,
+#player1-field {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    pointer-events: auto;
+    z-index: 2;
+}
+
+.battle-field-zone.is-crowded #player2-field,
+.battle-field-zone.is-crowded #player1-field {
+    gap: 10px;
+    padding-left: 14px;
+    padding-right: 14px;
+}
+
+/* Central 58px Divider & Original Inter 900 4rem Watermark / Wipe Banner */
+.battle-field-divider {
+    height: 58px;
+    width: 100%;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+#turn-info {
+    position: relative;
+    top: auto;
+    left: auto;
+    transform: none;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-size: 4rem;
+    line-height: 1;
+    font-weight: 900;
+    color: rgba(255, 255, 255, 0.1);
+    text-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+    transition: all 0.5s ease;
+    pointer-events: none;
+    z-index: 2;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
     user-select: none;
     -webkit-user-select: none;
 }
 
-.opponent-info {
-    top: 1px;
-    right: 1px;
-    align-items: flex-end;
-    border-radius: 20px;
-    /* HUD Background Plate */
-    /* background: linear-gradient(135deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 100%); */
-    /* border-left: 2px solid var(--color-error); */ /* Removed to fix edge glitch */
-    /* border-bottom: 1px solid rgba(255, 255, 255, 0.1); Removed white border */
-    /* border-bottom-left-radius: var(--radius-lg); */
-    backdrop-filter: blur(8px);
-    padding-top: var(--space-4);
-    padding-right: var(--space-4);
+#turn-info[data-turn-owner="mirage"] {
+    font-size: 2.65rem;
+    letter-spacing: 0.1em;
+    color: rgba(255, 255, 255, 0.1);
 }
 
-.player-info-self {
-    bottom: 1px;
-    left: 1px;
-    align-items: flex-start;
-    border-radius: 20px;
-    /* HUD Background Plate */
-    /* background: linear-gradient(315deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.6) 100%); */
-    /* border-right: 2px solid var(--color-primary); */ /* Removed to fix edge glitch */
-    /* border-top: 1px solid rgba(255, 255, 255, 0.1); Removed white border */
-    /* border-top-right-radius: var(--radius-lg); */
-    backdrop-filter: blur(8px);
-    padding-bottom: var(--space-4);
-    padding-left: var(--space-4);
+#turn-info.active {
+    color: rgba(255, 255, 255, 0.8);
+    transform: scale(1.2);
+    z-index: 100;
+    text-shadow: 0 0 30px var(--color-primary);
 }
 
-/* Avatar & Name Row */
-.player-avatar-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    margin-bottom: var(--space-2);
-    pointer-events: auto;
+/* Original Turn Start Banner (uses turn-info element directly without extra box) */
+#turn-info.turn-start-friendly {
+    color: var(--color-success);
+    text-shadow: 0 0 22px rgba(0, 0, 0, 0.45);
+    z-index: 100;
 }
 
-.opponent-info .player-avatar-row {
-    flex-direction: row-reverse;
+#turn-info.turn-start-enemy {
+    color: var(--color-accent);
+    text-shadow: 0 0 22px rgba(0, 0, 0, 0.45);
+    z-index: 100;
 }
 
-.player-avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: var(--radius-sm);
-    background: var(--color-surface-highlight);
-    color: var(--color-text);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 900;
-    font-size: var(--text-lg);
-    border: 1px solid var(--color-border);
-    box-shadow: var(--shadow-md);
+#turn-info.turn-start-active {
+    animation: turn-start-wipe 1.3s ease-out forwards;
+    will-change: clip-path, opacity;
 }
 
-.player-name {
-    font-weight: 700;
-    font-size: var(--text-base);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--color-secondary);
+@keyframes turn-start-wipe {
+    0% {
+        opacity: 0;
+        clip-path: inset(0 100% 0 0);
+    }
+    15% {
+        opacity: 1;
+        clip-path: inset(0 0 0 0);
+    }
+    80% {
+        opacity: 1;
+        clip-path: inset(0 0 0 0);
+    }
+    100% {
+        opacity: 0;
+        clip-path: inset(0 0 0 100%);
+    }
 }
 
-/* Stats Grid */
-.player-stats {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 4px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--color-secondary);
-    width: 100%;
-    background: transparent;
-    pointer-events: auto;
-}
-
-.stat {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 2px 0;
-}
-
-/* HP Styling */
-.stat.hp {
-    font-size: var(--text-2xl);
-    color: var(--color-text);
-    border-bottom: 1px solid var(--color-border);
-    padding-bottom: 4px;
-    margin-bottom: 4px;
-    font-weight: 900;
-}
-
-/* PP Styling (Blue Bar) */
-.stat.pp {
-    color: #60a5fa; /* Blue 400 */
-    font-weight: bold;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 2px;
-}
-
-.pp-header {
-    display: flex;
-    justify-content: space-between;
-    width: 100%;
-}
-
-.pp-bar-container {
-    display: flex;
-    gap: 2px;
-    height: 6px;
-    width: 100%;
-}
-
-.pp-segment {
-    flex: 1;
-    background-color: #1e3a8a; /* Dark Blue */
-    border-radius: 1px;
-    transition: all 0.3s ease;
-}
-
-.pp-segment.active {
-    background-color: #60a5fa; /* Blue 400 */
-    box-shadow: 0 0 4px rgba(96, 165, 250, 0.5);
-}
-
-.pp-segment.empty {
-    background-color: #18181b; /* Zinc 900 */
-    border: 1px solid #27272a; /* Zinc 800 */
-}
-
-/* EP Styling (Yellow Dots) */
-.stat.ep {
-    color: #facc15; /* Yellow 400 */
-    font-weight: bold;
-    flex-direction: row; /* Changed to row */
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    background: #18181b; /* Zinc 900 */
-    padding: 4px 8px;
-    border: 1px solid #27272a; /* Zinc 800 */
-    border-radius: 2px;
-}
-
-.ep-header {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.ep-dots-container {
-    display: flex;
-    gap: 4px;
-    justify-content: flex-end;
-}
-
-.ep-dot {
-    width: 12px; /* Larger dots */
-    height: 12px;
-    background-color: #27272a; /* Zinc 800 */
-    border: 1px solid #3f3f46; /* Zinc 700 */
-    border-radius: 50%;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.ep-dot.active {
-    background-color: #facc15; /* Yellow 400 */
-    border-color: #fef08a; /* Yellow 200 */
-    box-shadow: 0 0 8px rgba(250, 204, 21, 0.6);
-    transform: scale(1.1);
-}
-
-.sep-header {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.sep-dots-container {
-    display: flex;
-    gap: 4px;
-    justify-content: flex-end;
-}
-
-.sep-dot {
-    width: 12px;
-    height: 12px;
-    background-color: #27272a;
-    border: 1px solid #3f3f46;
-    border-radius: 50%;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.sep-dot.active {
-    background-color: #fb7185; /* Rose 400 */
-    border-color: #fecdd3; /* Rose 200 */
-    box-shadow: 0 0 8px rgba(251, 113, 133, 0.6);
-    transform: scale(1.1);
-}
-
-/* Turn Indicator Badge */
-.turn-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 10px;
-    font-weight: 900;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-left: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-}
-
-.turn-badge.first {
-    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
-    color: white;
-    border: 1px solid #60a5fa;
-}
-
-.turn-badge.second {
-    background: linear-gradient(135deg, #ef4444, #b91c1c);
-    color: white;
-    border: 1px solid #f87171;
-}
-
-/* Deck & Grave Styling */
-.stat.deck {
-    color: #a1a1aa; /* Zinc 400 */
-    background: #18181b; /* Zinc 900 */
-    padding: 4px 8px;
-    border: 1px solid #27272a; /* Zinc 800 */
-    border-radius: 2px;
-}
-
-.stat.graveyard {
-    color: #a1a1aa; /* Zinc 400 */
-    background: #18181b; /* Zinc 900 */
-    padding: 4px 8px;
-    border: 1px solid #27272a; /* Zinc 800 */
-    border-radius: 2px;
-}
-
-.stat span {
-    font-weight: bold;
-    color: inherit;
-}
-
-/* Battlefield (Centered Holographic Table) */
-#battlefield {
+/* ==========================================================================
+   3. Hands: Non-Colliding Top Opponent Hand & Bottom Dynamic-Overlap Fan Hand
+   ========================================================================== */
+.player-hand {
     position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 50%; /* Full width */
-    height: 50%; /* Occupy central area */
-    min-height: 500px;
-    display: flex; /* Changed to flex column to separate fields */
-    flex-direction: column;
-    justify-content: space-between; /* Push fields apart */
-    gap: 60px; /* Gap for Turn Info */
-    z-index: 1;
-    pointer-events: none; /* Allow clicks to pass through empty areas */
-}
-
-/* Grid Background Pattern for Battlefield - Moved to individual fields or removed if causing clutter */
-/* Removed global grid to clean up center area */
-
-/* Gradient Zones */
-#player2-field {
-    /* Opponent Zone: Red/Magenta tint */
-    background:
-        linear-gradient(180deg, rgba(239, 68, 68, 0.15) 0%, rgba(0,0,0,0.4) 100%);
-    display: flex;
-    align-items: flex-end; /* Align cards to the bottom of their zone */
-    padding-bottom: var(--space-8);
-    position: relative;
-    flex: 1;
-    width: 100%;
-    pointer-events: auto; /* Re-enable clicks */
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(4px);
-}
-
-#player1-field {
-    /* Player Zone: Cyan/Blue tint */
-    background:
-        linear-gradient(0deg, rgba(6, 182, 212, 0.15) 0%, rgba(0,0,0,0.4) 100%);
-    display: flex;
-    align-items: flex-start; /* Align cards to the top of their zone */
-    padding-top: var(--space-8);
-    position: relative;
-    flex: 1;
-    width: 100%;
-    pointer-events: auto; /* Re-enable clicks */
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-    backdrop-filter: blur(4px);
-}
-
-/* Central Divider Line - Removed as we now have a gap */
-
-.field {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-2);
-    min-height: 160px;
-}
-
-/* Hand Area */
-.hand, .hand-container {
-    position: absolute;
+    bottom: 12px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
-    justify-content: center;
     align-items: flex-end;
-    gap: -40px;
-    height: 160px;
-    z-index: 20;
+    justify-content: center;
+    padding: 14px 20px 8px;
+    z-index: 48;
     perspective: 1000px;
-    bottom: -10px; /* Default for player hand */
-    transition: bottom 0.3s;
+    transition: bottom 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.hand-container:hover, .player-hand:hover {
-    bottom: 0;
-    gap: var(--space-2);
+.player-hand:hover {
+    bottom: 17px;
 }
 
+.player-hand .hand-card {
+    margin: 0 var(--hand-overlap, 3px);
+    transform-origin: 50% 135%;
+    transform:
+        translateY(min(7px, calc(var(--fan-abs, 0) * 1.8px)))
+        rotate(calc(var(--fan-offset, 0) * 1.2deg));
+}
+
+.player-hand:hover .hand-card {
+    margin: 0 var(--hand-overlap-hover, 5px);
+}
+
+/* Top-Center Opponent Mini Hand (Clear below 42px Header) */
 .opponent-hand {
-    top: -20px; /* Adjusted to be visible */
-    transform: translateX(-50%) scale(0.7);
-    opacity: 0.9;
-    pointer-events: none; /* Prevent interaction with opponent hand */
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    right: auto;
+    bottom: auto;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    z-index: 30;
+    pointer-events: none;
 }
 
-/* Action Buttons (End Turn) */
-#end-turn-button, #end-turn-btn {
+.opponent-hand .card-back {
+    width: 30px;
+    height: 41px;
+    margin: 0 -3px;
+    border-radius: 4px;
+    transform:
+        translateY(calc(var(--fan-abs, 0) * -1px))
+        rotate(calc(var(--fan-offset, 0) * -2deg));
+}
+
+/* Spectator / Dual-Control Face-Up Opponent Hand */
+.opponent-hand.is-face-up-opponent {
+    top: 2px;
+    transform: translateX(-50%) scale(0.44);
+    transform-origin: top center;
+    pointer-events: auto;
+    z-index: 42;
+}
+
+.opponent-hand.is-face-up-opponent .hand-card {
+    margin: 0 -6px;
+}
+
+/* ==========================================================================
+   4. Right-Center Aligned Tactical Console (#battle-right-dock)
+      Horizontally centered with Central TURN INFO & frees bottom-right for Chat
+   ========================================================================== */
+.battle-right-dock {
     position: absolute;
-    bottom: 30px;
-    right: 40px;
-    width: 140px;
-    height: 54px;
+    right: 18px;
+    top: calc(50% - 52px);
+    transform: translateY(-50%);
+    width: 200px;
+    padding: 11px;
+    background: linear-gradient(180deg, rgba(13, 15, 21, 0.95) 0%, rgba(8, 10, 15, 0.98) 100%);
+    border: 1px solid rgba(196, 210, 228, 0.16);
+    border-radius: 6px;
+    box-shadow:
+        0 12px 28px rgba(0, 0, 0, 0.78),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 55;
+    font-family: var(--font-mono);
+}
+
+.battle-dock-divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    margin: -1px 0;
+}
+
+/* Brushed Obsidian Metal END TURN Button */
+#end-turn-button {
+    position: relative;
+    bottom: auto;
+    right: auto;
+    width: 100%;
+    height: 52px;
     padding: 0;
-    display: grid;
-    place-items: center;
-    font-size: var(--text-base);
-    font-family: 'Orbitron', 'JetBrains Mono', monospace;
+    display: block;
     background: transparent;
-    color: #0a0a0a;
-    font-weight: 900;
-    z-index: 50;
     border: none;
     cursor: pointer;
-    overflow: visible;
+    overflow: hidden;
+    z-index: 2;
 }
 
 #end-turn-button::before,
@@ -513,66 +568,72 @@
     content: none;
 }
 
-#end-turn-button:hover .end-turn-surface {
-    transform: none;
-}
-
-#end-turn-button:active .end-turn-surface {
-    transform: none;
-}
-
 #end-turn-button .end-turn-surface {
     position: relative;
     width: 100%;
     height: 100%;
-    background: linear-gradient(135deg, #ffffff 0%, #f5f5f5 48%, #e0e0e0 52%, #f5f5f5 100%);
-    background-size: 200% 200%;
-    border: 1px solid rgba(0, 0, 0, 0.05);
+    padding: 0 10px 6px;
+    border-radius: 5px;
+    border: 1px solid rgba(86, 176, 208, 0.58);
+    background:
+        repeating-linear-gradient(
+            -45deg,
+            rgba(255, 255, 255, 0.018) 0px,
+            rgba(255, 255, 255, 0.018) 2px,
+            transparent 2px,
+            transparent 6px
+        ),
+        linear-gradient(165deg, rgba(20, 34, 48, 0.95) 0%, rgba(11, 16, 25, 0.98) 54%, rgba(16, 30, 46, 0.96) 100%);
     box-shadow:
-        inset 2px 2px 0 rgba(255, 255, 255, 0.9),
-        inset -1px -1px 3px rgba(0, 0, 0, 0.12),
-        0 20px 40px rgba(0, 0, 0, 0.6);
-    overflow: hidden;
+        0 6px 16px rgba(0, 0, 0, 0.72),
+        inset 0 1px 0 rgba(186, 230, 253, 0.22);
     display: flex;
     align-items: center;
     justify-content: center;
-    padding-bottom: 6px;
-    transition: transform 0.3s ease;
+    overflow: hidden;
+    transition: transform 0.12s ease, border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
-#end-turn-button .end-turn-surface::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background-image: repeating-linear-gradient(
-        45deg,
-        rgba(0, 0, 0, 0.03) 0px,
-        rgba(0, 0, 0, 0.03) 1px,
-        transparent 1px,
-        transparent 2px
-    );
-    opacity: 0.55;
-    pointer-events: none;
-    z-index: 1;
+#end-turn-button:hover:not(:disabled) .end-turn-surface {
+    transform: translateY(-1px);
+    border-color: rgba(147, 213, 248, 0.88);
+    box-shadow:
+        0 8px 20px rgba(0, 0, 0, 0.8),
+        0 0 12px rgba(86, 176, 208, 0.25),
+        inset 0 1px 0 rgba(224, 242, 254, 0.34);
 }
 
-#end-turn-button .end-turn-dot {
-    position: absolute;
-    top: 4px;
-    width: 4px;
-    height: 4px;
-    background: rgba(0, 0, 0, 0.12);
-    border-radius: 999px;
-    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
-    z-index: 3;
+#end-turn-button:active:not(:disabled) .end-turn-surface {
+    transform: translateY(0) scale(0.985);
 }
 
-#end-turn-button .end-turn-dot-left {
-    left: 8px;
+#end-turn-button.is-enemy-turn .end-turn-surface,
+#end-turn-button:disabled .end-turn-surface {
+    border-color: rgba(148, 163, 184, 0.22);
+    background: linear-gradient(165deg, #15171d 0%, #0d0e12 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    cursor: not-allowed;
 }
 
-#end-turn-button .end-turn-dot-right {
-    right: 8px;
+#end-turn-button.is-mirage-recruit .end-turn-surface {
+    border-color: rgba(217, 154, 48, 0.68);
+    background:
+        repeating-linear-gradient(
+            -45deg,
+            rgba(255, 255, 255, 0.018) 0px,
+            rgba(255, 255, 255, 0.018) 2px,
+            transparent 2px,
+            transparent 6px
+        ),
+        linear-gradient(165deg, rgba(46, 30, 12, 0.95) 0%, rgba(16, 13, 10, 0.98) 54%, rgba(38, 24, 9, 0.96) 100%);
+    box-shadow:
+        0 6px 16px rgba(0, 0, 0, 0.72),
+        inset 0 1px 0 rgba(254, 243, 199, 0.2);
+}
+
+#end-turn-button.is-mirage-locked .end-turn-surface {
+    border-color: rgba(217, 154, 48, 0.32);
+    background: linear-gradient(165deg, rgba(28, 20, 12, 0.94) 0%, rgba(13, 14, 18, 0.98) 100%);
 }
 
 #end-turn-button .end-turn-text {
@@ -581,96 +642,105 @@
     display: flex;
     flex-direction: column;
     align-items: center;
+    gap: 2px;
     pointer-events: none;
-    margin-top: 0;
 }
 
 #end-turn-button .end-turn-label {
-    font-size: 0.95rem;
+    font-family: 'Orbitron', 'JetBrains Mono', monospace;
+    font-size: 12.5px;
     font-weight: 900;
-    font-style: italic;
-    letter-spacing: -0.03em;
-    text-shadow: 2px 2px 0 rgba(255, 255, 255, 0.95), -1px -1px 0 rgba(0, 0, 0, 0.1);
-    transition: color 0.3s ease;
+    letter-spacing: 0.09em;
+    color: #eef2f6;
+    line-height: 1.1;
+    transition: color 0.2s ease, text-shadow 0.2s ease;
+}
+
+#end-turn-button.is-enemy-turn .end-turn-label,
+#end-turn-button:disabled .end-turn-label {
+    color: #71717a;
+    text-shadow: none;
+}
+
+#end-turn-button.is-mirage-locked .end-turn-label {
+    color: #fde68a;
 }
 
 #end-turn-button .end-turn-countdown {
-    margin-top: 2px;
-    font-size: 0.55rem;
-    letter-spacing: 0.3em;
-    text-transform: uppercase;
-    color: rgba(10, 10, 10, 0.6);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #93c5fd;
     opacity: 0;
     line-height: 1;
-    transition: opacity 0.2s ease, transform 0.3s ease, color 0.3s ease;
+    transition: opacity 0.2s ease, color 0.2s ease;
 }
 
 #end-turn-button.turn-timer-active .end-turn-countdown {
     opacity: 1;
 }
 
-#end-turn-button.turn-timer-warning .end-turn-countdown {
-    color: #f97316;
-    transform: scale(1.08);
+#end-turn-button.is-mirage-recruit .end-turn-countdown {
+    color: #fcd34d;
 }
 
+#end-turn-button.turn-timer-warning .end-turn-countdown,
 #end-turn-button.turn-timer-warning .end-turn-label {
-    color: #f97316;
+    color: #fbbf24;
+    text-shadow: 0 0 8px rgba(251, 191, 36, 0.45);
 }
 
 #end-turn-button.turn-timer-critical .end-turn-label {
-    color: #ff003c;
+    color: #fda4af;
+    text-shadow: 0 0 10px rgba(244, 63, 94, 0.78);
     animation: end-turn-text-pulse 0.9s ease-in-out infinite;
 }
 
 #end-turn-button.turn-timer-critical .end-turn-countdown {
-    color: #ff003c;
+    color: #fb7185;
 }
 
-#end-turn-button .end-turn-indicator-trench,
-#end-turn-button .indicator-trench-bottom {
+#end-turn-button .end-turn-indicator-trench {
     position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 5px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    left: 8px;
+    right: 8px;
+    bottom: 4px;
+    height: 3.5px;
+    padding: 0.5px;
+    background: rgba(5, 6, 10, 0.88);
+    border-radius: 1px;
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
     gap: 2px;
-    padding: 0 4px;
-    background: #000000;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.8), 0 1px 0 rgba(255, 255, 255, 0.6);
     z-index: 2;
     pointer-events: none;
 }
 
 #end-turn-button .end-turn-indicator-light {
-    flex: 1 1 0%;
-    min-width: 5px;
-    height: 2px;
+    background: rgba(255, 255, 255, 0.07);
     border-radius: 1px;
-    background: rgba(255, 255, 255, 0.2);
-    transition: background-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
-    opacity: 0.4;
-    transform: scaleY(0.85);
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 #end-turn-button .end-turn-indicator-light.is-active {
-    background: rgba(255, 255, 255, 0.8);
-    box-shadow: 0 0 3px rgba(255, 255, 255, 0.3);
-    opacity: 1;
-    transform: scaleY(1);
+    background: #56b0d0;
+    box-shadow: 0 0 3px rgba(86, 176, 208, 0.65);
+}
+
+#end-turn-button.is-mirage-recruit .end-turn-indicator-light.is-active {
+    background: #d99b32;
+    box-shadow: 0 0 3px rgba(217, 155, 50, 0.65);
 }
 
 #end-turn-button.turn-timer-warning .end-turn-indicator-light.is-active {
-    background: #f97316;
-    box-shadow: 0 0 5px rgba(249, 115, 22, 0.5);
+    background: #f59e0b;
+    box-shadow: 0 0 5px rgba(245, 158, 11, 0.75);
 }
 
 #end-turn-button.turn-timer-critical .end-turn-indicator-light.is-active {
-    background: #ff003c;
-    box-shadow: 0 0 10px #ff003c;
+    background: #f43f5e;
+    box-shadow: 0 0 8px #f43f5e;
 }
 
 #end-turn-button .end-turn-sweep {
@@ -679,40 +749,34 @@
     left: 0;
     width: 100%;
     height: 100%;
-    background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.5) 50%, transparent 100%);
-    transform: translateX(-120%) skewX(-25deg);
-    transition: transform 1s ease;
-    opacity: 0.6;
-    z-index: 2;
+    background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.22) 50%, transparent 100%);
+    transform: translateX(-130%) skewX(-25deg);
+    transition: transform 0.75s ease;
+    z-index: 3;
     pointer-events: none;
 }
 
-#end-turn-button:hover .end-turn-sweep {
-    transform: translateX(120%) skewX(-25deg);
+#end-turn-button:hover:not(:disabled) .end-turn-sweep {
+    transform: translateX(130%) skewX(-25deg);
 }
-
 
 @keyframes end-turn-text-pulse {
-    0%,
-    100% {
-        transform: scale(1);
-    }
-    50% {
-        transform: scale(1.02);
-    }
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.04); }
 }
 
+/* Original Floating Overlay Buttons (Mulligan / Reconnect / Rematch / Spectator) */
 #spectator-toggle-view {
     position: absolute;
-    bottom: 40px;
-    right: 50px;
+    top: 96px;
+    right: 18px;
     width: 120px;
     height: 50px;
     font-size: var(--text-base);
     background: rgba(255, 255, 255, 0.08);
     color: var(--color-text);
     font-weight: 900;
-    z-index: 50;
+    z-index: 65;
     border: 1px solid rgba(255, 255, 255, 0.2);
     box-shadow: 0 0 20px rgba(255, 255, 255, 0.12);
 }
@@ -723,14 +787,9 @@
     box-shadow: 0 0 30px rgba(255, 255, 255, 0.22);
 }
 
-#end-turn-button:hover, #end-turn-btn:hover {
-    transform: none;
-    box-shadow: none;
-}
-
 #confirm-mulligan-button {
     position: absolute;
-    top: 50%;
+    top: var(--battle-horizon-y, 50%);
     left: 50%;
     transform: translate(-50%, -50%);
     z-index: 100;
@@ -747,7 +806,7 @@
 
 #reconnect-button {
     position: absolute;
-    top: 50%;
+    top: var(--battle-horizon-y, 50%);
     left: 50%;
     transform: translate(-50%, -50%);
     z-index: 110;
@@ -776,66 +835,298 @@
     transform: translate(-50%, -50%) scale(1.05);
 }
 
-/* Turn Info Display (Center Screen) */
-#turn-info {
+#rematch-room-button {
     position: absolute;
-    top: 50%;
+    top: calc(var(--battle-horizon-y, 50%) + 68px);
     left: 50%;
     transform: translate(-50%, -50%);
-    font-size: 4rem;
+    z-index: 120;
+    padding: var(--space-3) var(--space-6);
+    font-size: var(--text-base);
+    background-color: var(--color-primary);
+    color: var(--color-background);
+    border: 2px solid var(--color-primary);
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
     font-weight: 900;
-    color: rgba(255, 255, 255, 0.1); /* Subtle background text */
-    pointer-events: none;
-    z-index: 0; /* Behind cards but visible if not covered */
+    letter-spacing: 0.05em;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    white-space: nowrap;
-    text-shadow: 0 0 20px rgba(0,0,0,0.5);
-    transition: all 0.5s ease;
-    user-select: none;
-    -webkit-user-select: none;
-
 }
 
-/* When active/changing, pop out */
-#turn-info.active {
-    color: rgba(255, 255, 255, 0.8);
-    transform: translate(-50%, -50%) scale(1.2);
-    z-index: 100; /* Bring to front briefly */
-    text-shadow: 0 0 30px var(--color-primary);
+#rematch-room-button:hover {
+    background-color: var(--color-background);
+    color: var(--color-primary);
+    box-shadow: 0 0 30px rgba(255, 255, 255, 0.5);
+    transform: translate(-50%, -50%) scale(1.05);
 }
 
-/* Turn Start Banner (uses turn-info element) */
-#turn-info.turn-start-friendly {
-    color: var(--color-success);
-    text-shadow: 0 0 22px rgba(0, 0, 0, 0.45);
-}
-
-#turn-info.turn-start-enemy {
-    color: var(--color-accent);
-    text-shadow: 0 0 22px rgba(0, 0, 0, 0.45);
-}
-
-#turn-info.turn-start-active {
-    animation: turn-start-wipe 1.3s ease-out forwards;
-    will-change: clip-path, opacity;
-}
-
-@keyframes turn-start-wipe {
-    0% {
-        opacity: 0;
-        clip-path: inset(0 100% 0 0);
+/* Short Viewport Adaptation (<= 860px height) */
+@media (max-height: 860px) {
+    #game-container {
+        --battle-horizon-y: calc(50% - 58px);
     }
-    15% {
-        opacity: 1;
-        clip-path: inset(0 0 0 0);
+
+    .battle-center-stack {
+        top: 4px;
+        bottom: 118px;
+        gap: 10px;
     }
-    80% {
-        opacity: 1;
-        clip-path: inset(0 0 0 0);
+
+    .player-info.leader-rpg-hud {
+        transform: translateX(6px) scale(0.9);
+        transform-origin: center center;
     }
-    100% {
-        opacity: 0;
-        clip-path: inset(0 0 0 100%);
+
+    .player-info.leader-rpg-hud.is-self {
+        margin-top: 2px;
+    }
+
+    .battle-field-zone {
+        height: 142px;
+    }
+
+    .battle-field-divider {
+        height: 36px;
+    }
+
+    #turn-info {
+        font-size: 2.8rem;
+    }
+
+    .opponent-hand {
+        top: 4px;
+    }
+
+    .opponent-hand .card-back {
+        width: 24px;
+        height: 33px;
+    }
+
+    .battle-right-dock {
+        top: calc(50% - 46px);
+    }
+}
+
+/* ==========================================================================
+   Tablet & Compact Landscape Adaptation (<= 1240px width)
+   Eliminates horizontal overlap between 700px center board and 200px right dock
+   ========================================================================== */
+@media (max-width: 1240px) {
+    .battle-center-stack {
+        left: calc(50% - 56px);
+        width: min(680px, calc(100% - 236px));
+    }
+
+    .battle-right-dock {
+        right: 12px;
+        width: 172px;
+        padding: 9px;
+    }
+}
+
+/* ==========================================================================
+   Mobile Landscape Compact Arena (<= 540px height, e.g. 844x390 / 915x412)
+   Reclaims 73px top header height & scales all 5 zones + pull-up hand cleanly
+   ========================================================================== */
+@media (max-height: 540px) and (orientation: landscape) {
+    #game-container {
+        --battle-horizon-y: calc(50% - 11px);
+    }
+
+    .opponent-hand {
+        top: 3px;
+    }
+
+    .opponent-hand .card-back {
+        width: 20px;
+        height: 27px;
+        margin: 0 -2px;
+    }
+
+    .battle-center-stack {
+        top: 26px;
+        bottom: 48px;
+        left: calc(50% - 54px);
+        width: min(560px, calc(100% - 196px));
+        gap: 3px;
+    }
+
+    .player-info.leader-rpg-hud {
+        width: 290px;
+        height: 46px;
+        transform: none;
+        justify-content: center;
+    }
+
+    .player-info.leader-rpg-hud.is-self {
+        margin-top: 0;
+    }
+
+    .player-info.leader-rpg-hud .leader-rpg-inner {
+        width: 468px;
+        height: 76px;
+        flex-shrink: 0;
+        transform: scale(0.62);
+        transform-origin: center center;
+    }
+
+    .battle-field-zone {
+        height: 94px;
+    }
+
+    #player2-field,
+    #player1-field {
+        padding: 4px 10px;
+        gap: 8px;
+    }
+
+    .battle-field-divider {
+        height: 20px;
+    }
+
+    #turn-info {
+        font-size: 1.55rem;
+    }
+
+    #turn-info[data-turn-owner="mirage"] {
+        font-size: 1.25rem;
+    }
+
+    /* Mobile CCG Pull-Up Hand: peek upper half by default, pop up when selected or in Mulligan */
+    .player-hand {
+        bottom: -52px;
+        left: calc(50% - 54px);
+        padding: 6px 12px 4px;
+        transform: translateX(-50%) scale(0.72);
+        transform-origin: bottom center;
+    }
+
+    .player-hand:hover {
+        bottom: -52px;
+    }
+
+    #game-container.mulligan-active .player-hand,
+    .player-hand:has(.hand-card-floated) {
+        bottom: 4px;
+        transform: translateX(-50%) scale(0.84);
+        z-index: 72;
+    }
+
+    .battle-right-dock {
+        right: 10px;
+        top: 50%;
+        width: 196px;
+        transform: translateY(-50%) scale(0.76);
+        transform-origin: right center;
+    }
+
+    .battle-corner-pod.is-top-right {
+        top: 6px;
+        right: 10px;
+        transform: scale(0.82);
+        transform-origin: top right;
+    }
+
+    .battle-corner-pod.is-bottom-left {
+        bottom: 6px;
+        left: 10px;
+        transform: scale(0.82);
+        transform-origin: bottom left;
+    }
+
+    #confirm-mulligan-button,
+    #reconnect-button {
+        left: calc(50% - 54px);
+        padding: 8px 18px;
+        font-size: 14px;
+    }
+
+    #rematch-room-button {
+        left: calc(50% - 54px);
+        top: calc(var(--battle-horizon-y, 50%) + 42px);
+        padding: 6px 14px;
+        font-size: 12px;
+    }
+
+    #spectator-toggle-view {
+        top: 38px;
+        right: 10px;
+        width: 88px;
+        height: 32px;
+        font-size: 11px;
+    }
+}
+
+/* ==========================================================================
+   Mobile Portrait Fallback Layout (when user clicks "仍以竖屏查看")
+   ========================================================================== */
+@media (max-width: 720px) and (orientation: portrait) {
+    .battle-center-stack {
+        left: 50%;
+        top: 36px;
+        bottom: 136px;
+        width: calc(100% - 16px);
+        gap: 8px;
+    }
+
+    .player-info.leader-rpg-hud {
+        width: 346px;
+        height: 56px;
+        transform: none;
+        justify-content: center;
+    }
+
+    .player-info.leader-rpg-hud .leader-rpg-inner {
+        width: 468px;
+        height: 76px;
+        flex-shrink: 0;
+        transform: scale(0.74);
+        transform-origin: center center;
+    }
+
+    .battle-field-zone {
+        height: 124px;
+    }
+
+    #player2-field,
+    #player1-field {
+        padding: 6px 6px;
+        gap: 5px;
+    }
+
+    .battle-field-divider {
+        height: 28px;
+    }
+
+    #turn-info {
+        font-size: 2rem;
+    }
+
+    .player-hand {
+        bottom: 36px;
+        transform: translateX(-50%) scale(0.68);
+        transform-origin: bottom center;
+    }
+
+    .battle-right-dock {
+        top: auto;
+        bottom: 38px;
+        right: 6px;
+        width: 176px;
+        transform: scale(0.68);
+        transform-origin: bottom right;
+    }
+
+    .battle-corner-pod.is-top-right {
+        top: 4px;
+        right: 8px;
+        transform: scale(0.78);
+        transform-origin: top right;
+    }
+
+    .battle-corner-pod.is-bottom-left {
+        bottom: 6px;
+        left: 8px;
+        transform: scale(0.78);
+        transform-origin: bottom left;
     }
 }

@@ -10,5 +10,7 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
     public interface IEnvironmentScopedGameDataProvider
     {
         IReadOnlyCollection<CardDefinition> GetCardDefinitionsForEnvironment(DeckEnvironment environment);
+        IReadOnlyCollection<CardDefinition> GetMirageCardDefinitions() => System.Array.Empty<CardDefinition>();
+        IReadOnlyCollection<CardDefinition> GetMirageLeaderDefinitions() => System.Array.Empty<CardDefinition>();
     }
 }

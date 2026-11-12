@@ -299,5 +299,10 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// Notifies clients that an ability has been triggered.
         /// </summary>
         Task AbilityTriggered(AbilityTriggeredEventDto eventDto);
+
+        /// <summary>
+        /// Sends the Mirage auto-combat replay package to clients before committing the combat result.
+        /// </summary>
+        Task ReceiveMirageCombatReplay(MirageCombatReplayDto combatReplay);
     }
 }

@@ -60,18 +60,16 @@ export function createCardAnimationSystem(config = {}) {
         exitMs: config?.durations?.exitMs ?? 190
     };
     const sequencing = {
-        // If a container has exit events in the same batch, delay enter events by this amount.
-        enterAfterExitMs: Math.max(0, Number(config?.sequencing?.enterAfterExitMs ?? durations.exitMs) || 0)
+        enterAfterExitMs: Math.max(0, Number(config?.sequencing?.enterAfterExitMs ?? 0) || 0)
     };
     const stagger = {
-        enterMs: Math.max(0, Number(config?.stagger?.enterMs ?? 0) || 0),
+        enterMs: Math.max(0, Number(config?.stagger?.enterMs ?? 45) || 0),
         moveMs: Math.max(0, Number(config?.stagger?.moveMs ?? 0) || 0),
         exitMs: Math.max(0, Number(config?.stagger?.exitMs ?? 0) || 0),
-        maxMs: Math.max(0, Number(config?.stagger?.maxMs ?? 0) || 0)
+        maxMs: Math.max(0, Number(config?.stagger?.maxMs ?? 240) || 0)
     };
     const moveOptions = {
-        epsilon: config?.move?.epsilon ?? 0.5,
-        opacity: config?.move?.opacity ?? '0.82'
+        epsilon: config?.move?.epsilon ?? 0.75
     };
 
     const isPageActive = typeof config.isPageActive === 'function'
@@ -101,15 +99,32 @@ export function createCardAnimationSystem(config = {}) {
     const supportsReducedMotion = typeof config.prefersReducedMotion === 'function'
         ? config.prefersReducedMotion
         : () => false;
+    const shouldSkipEnter = typeof config.shouldSkipEnter === 'function'
+        ? config.shouldSkipEnter
+        : () => false;
+    const shouldSkipExit = typeof config.shouldSkipExit === 'function'
+        ? config.shouldSkipExit
+        : () => false;
+    const onElementMounted = typeof config.onElementMounted === 'function'
+        ? config.onElementMounted
+        : () => { };
 
     const renderedContainers = new WeakSet();
     const pendingEnterKeysByContainer = new WeakMap();
     const containerIds = new WeakMap();
+    const moveAnimationsByElement = new WeakMap();
+    const activeWaapiAnimations = new Set();
     let containerIdCounter = 1;
 
     let queuedEvents = [];
-    let frameScheduled = false;
-    let frameHandle = null;
+
+    function trackWaapi(anim) {
+        if (!anim) return null;
+        activeWaapiAnimations.add(anim);
+        const cleanup = () => activeWaapiAnimations.delete(anim);
+        anim.finished?.then(cleanup, cleanup);
+        return anim;
+    }
 
     function getContainerId(container) {
         if (!container) return 'container-unknown';
@@ -130,20 +145,11 @@ export function createCardAnimationSystem(config = {}) {
         return set;
     }
 
-    function scheduleFlush() {
-        if (frameScheduled) return;
-        frameScheduled = true;
-        frameHandle = window.requestAnimationFrame(() => {
-            frameScheduled = false;
-            frameHandle = null;
-            flushQueue();
-        });
-    }
-
+    // 同步执行 FLIP 反演与出入场启动，确保在新 DOM 首次绘制（First Paint）前挂上反向位移，杜绝 1 帧闪烁
     function enqueue(events) {
         if (!Array.isArray(events) || events.length === 0) return;
         queuedEvents.push(...events);
-        scheduleFlush();
+        flushQueue();
     }
 
     function eventSignature(event) {
@@ -207,7 +213,11 @@ export function createCardAnimationSystem(config = {}) {
                 : 0;
             const totalDelayMs = phaseDelayMs + delayMs;
 
-            if (totalDelayMs > 0) {
+            if (totalDelayMs > 0 && event?.type !== 'move') {
+                if (event?.type === 'enter') {
+                    const targetEl = resolveCurrentElement(event);
+                    targetEl?.classList?.add('card-enter-hidden');
+                }
                 scheduleTimeout(() => runEvent(event), totalDelayMs);
                 return;
             }
@@ -230,7 +240,11 @@ export function createCardAnimationSystem(config = {}) {
 
     function runEvent(event) {
         if (!event) return;
-        if (supportsReducedMotion()) return;
+        if (supportsReducedMotion()) {
+            const el = resolveCurrentElement(event);
+            el?.classList?.remove('card-enter-hidden', 'hand-card-enter-hidden');
+            return;
+        }
         if (!isPageActive()) return;
 
         if (event.type === 'enter') {
@@ -258,45 +272,44 @@ export function createCardAnimationSystem(config = {}) {
         scheduleTimeout(cleanup, durations.enterMs + 80);
     }
 
+    // 使用 WAAPI 独立 translate 属性驱动 FLIP，与手牌扇形 transform 及 :hover 完全正交，零内联样式残留
     function runMoveAnimation(element, previousRect) {
         if (!element?.isConnected || !isValidRect(previousRect)) return;
         const nextRect = element.getBoundingClientRect();
-        const deltaX = previousRect.left - nextRect.left;
-        const deltaY = previousRect.top - nextRect.top;
-        if (Math.abs(deltaX) <= moveOptions.epsilon && Math.abs(deltaY) <= moveOptions.epsilon) {
+        if (!isValidRect(nextRect)) return;
+
+        const prevCx = previousRect.left + previousRect.width / 2;
+        const prevCy = previousRect.top + previousRect.height / 2;
+        const nextCx = nextRect.left + nextRect.width / 2;
+        const nextCy = nextRect.top + nextRect.height / 2;
+        const deltaX = prevCx - nextCx;
+        const deltaY = prevCy - nextCy;
+
+        if (Math.hypot(deltaX, deltaY) <= moveOptions.epsilon) {
             return;
         }
 
         clearTransientClasses(element);
-        element.classList.add('card-fade-move');
-        element.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
-        element.style.opacity = moveOptions.opacity;
-        void element.offsetWidth;
+        const prevAnim = moveAnimationsByElement.get(element);
+        if (prevAnim) {
+            try { prevAnim.cancel(); } catch { /* ignore */ }
+        }
 
-        requestAnimationFrame(() => {
-            element.style.transform = '';
-            element.style.opacity = '';
-        });
-
-        const cleanup = () => {
-            element.classList.remove('card-fade-move');
-            if (!element.matches(':hover')) {
-                element.style.transform = '';
+        if (typeof element.animate === 'function') {
+            const anim = trackWaapi(element.animate(
+                [
+                    { translate: `${deltaX.toFixed(1)}px ${deltaY.toFixed(1)}px` },
+                    { translate: '0px 0px' }
+                ],
+                {
+                    duration: durations.moveMs,
+                    easing: 'cubic-bezier(0.22, 1, 0.36, 1)'
+                }
+            ));
+            if (anim) {
+                moveAnimationsByElement.set(element, anim);
             }
-            element.style.opacity = '';
-        };
-
-        const onTransitionEnd = event => {
-            if (event.propertyName !== 'transform') return;
-            cleanup();
-            element.removeEventListener('transitionend', onTransitionEnd);
-        };
-
-        element.addEventListener('transitionend', onTransitionEnd);
-        scheduleTimeout(() => {
-            cleanup();
-            element.removeEventListener('transitionend', onTransitionEnd);
-        }, durations.moveMs + 90);
+        }
     }
 
     function runExitOverlayAnimation(sourceElement, sourceRect) {
@@ -327,7 +340,8 @@ export function createCardAnimationSystem(config = {}) {
     function renderCollection(container, entries = [], options = {}) {
         if (!container) return;
 
-        const suppressMoveOnStructuralChange = options?.suppressMoveOnStructuralChange !== false;
+        // 默认开启结构变化时的存活卡牌 FLIP 让位/聚拢
+        const suppressMoveOnStructuralChange = options?.suppressMoveOnStructuralChange === true;
         const animateEnter = options?.animateEnter !== false;
         const animateExit = options?.animateExit !== false;
         const animateMove = options?.animateMove !== false;
@@ -359,6 +373,7 @@ export function createCardAnimationSystem(config = {}) {
                 pendingEnterKeys.add(key);
             }
             entry.element.dataset.renderKey = key;
+            onElementMounted(key, entry.element);
             nextItems.push({ key, element: entry.element });
             nextKeySet.add(key);
         });
@@ -375,6 +390,7 @@ export function createCardAnimationSystem(config = {}) {
         if (animateExit) {
             oldByKey.forEach((oldElement, key) => {
                 if (nextKeySet.has(key)) return;
+                if (shouldSkipExit(key, oldElement)) return;
                 const oldRect = oldRects.get(key);
                 if (!oldRect) return;
                 events.push({
@@ -397,6 +413,12 @@ export function createCardAnimationSystem(config = {}) {
         renderedContainers.add(container);
 
         nextItems.forEach(item => {
+            const skipEnter = pendingEnterKeys.has(item.key) && shouldSkipEnter(item.key, item.element);
+            if (skipEnter) {
+                pendingEnterKeys.delete(item.key);
+                return;
+            }
+
             const shouldAnimatePendingEnter = animateEnter
                 && pendingEnterKeys.has(item.key)
                 && (animateInitialEnter || containerSeenBefore || oldByKey.size > 0);
@@ -413,7 +435,6 @@ export function createCardAnimationSystem(config = {}) {
                 return;
             }
 
-            // Initial render explicitly disabled: consume pending enter markers.
             pendingEnterKeys.delete(item.key);
 
             const previousRect = oldRects.get(item.key);
@@ -434,22 +455,26 @@ export function createCardAnimationSystem(config = {}) {
 
     function animateEnter(element, key = null, container = null) {
         if (!element) return;
+        const resolvedKey = String(key ?? element?.dataset?.renderKey ?? element?.dataset?.uid ?? 'enter-unknown');
+        if (shouldSkipEnter(resolvedKey, element)) return;
         enqueue([{
             type: 'enter',
             container,
             containerId: getContainerId(container),
-            key: String(key ?? element?.dataset?.renderKey ?? element?.dataset?.uid ?? 'enter-unknown'),
+            key: resolvedKey,
             element
         }]);
     }
 
     function animateLeaveOverlay(element, rect, key = null, container = null) {
         if (!element || !rect) return;
+        const resolvedKey = String(key ?? element?.dataset?.renderKey ?? element?.dataset?.uid ?? 'exit-unknown');
+        if (shouldSkipExit(resolvedKey, element)) return;
         enqueue([{
             type: 'exit',
             container,
             containerId: getContainerId(container),
-            key: String(key ?? element?.dataset?.renderKey ?? element?.dataset?.uid ?? 'exit-unknown'),
+            key: resolvedKey,
             element,
             rect
         }]);
@@ -457,11 +482,10 @@ export function createCardAnimationSystem(config = {}) {
 
     function dispose() {
         queuedEvents = [];
-        if (frameHandle !== null) {
-            window.cancelAnimationFrame(frameHandle);
-            frameHandle = null;
-            frameScheduled = false;
-        }
+        activeWaapiAnimations.forEach(anim => {
+            try { anim.cancel(); } catch { /* ignore */ }
+        });
+        activeWaapiAnimations.clear();
     }
 
     return {

@@ -56,39 +56,70 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: card owner mismatch." };
             }
 
-            if (card.HasUsedActThisTurn())
+            DomainOperationResult ExecuteCoreActCommit()
             {
-                return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: card has already used Act this turn." };
-            }
-
-            var actCost = PaidCost;
-
-            var spendablePp = player.GetSpendablePlayPoints();
-            if (actCost > spendablePp)
-            {
-                return new DomainOperationResult
+                if (card.HasUsedActThisTurn())
                 {
-                    Success = false,
-                    ErrorMessage = $"Not enough PP to use Act. Required: {actCost}, Available: {spendablePp}"
-                };
-            }
-
-            if (actCost > 0)
-            {
-                var ppResult = player.SpendPlayPoints(actCost);
-                if (!ppResult.Success)
-                {
-                    return ppResult;
+                    return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: card has already used Act this turn." };
                 }
-                result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
+
+                var actCost = PaidCost;
+
+                var spendablePp = player.GetSpendablePlayPoints();
+                if (actCost > spendablePp)
+                {
+                    return new DomainOperationResult
+                    {
+                        Success = false,
+                        ErrorMessage = $"Not enough PP to use Act. Required: {actCost}, Available: {spendablePp}"
+                    };
+                }
+
+                if (actCost > 0)
+                {
+                    var ppResult = player.SpendPlayPoints(actCost);
+                    if (!ppResult.Success)
+                    {
+                        return ppResult;
+                    }
+                    result.GeneratedEvents.AddRange(ppResult.GeneratedEvents);
+                }
+
+                card.MarkActUsed();
+                result.Merge(global::ShadowverseBeyond.Server.Domain.Buffs.OneUseModifiers.Consume(card, AbilityKeyword.Act, context));
+
+                result.Success = true;
+                result.GeneratedEvents.Add(new ActStateUpdatedEvent(card, card.ActsThisTurn, card.MaxActsPerTurn));
+                return result;
             }
 
-            card.MarkActUsed();
-            result.Merge(global::ShadowverseBeyond.Server.Domain.Buffs.OneUseModifiers.Consume(card, AbilityKeyword.Act, context));
+            if (context.CurrentGameState.Mode == Dtos.Enums.GameMode.Mirage && !context.CurrentGameState.IsCombatSandbox)
+            {
+                var mirage = context.CurrentGameState.Mirage;
+                if (mirage == null)
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: Mirage state is missing." };
+                }
 
-            result.Success = true;
-            result.GeneratedEvents.Add(new ActStateUpdatedEvent(card, card.ActsThisTurn, card.MaxActsPerTurn));
-            return result;
+                lock (mirage.RoundSyncLock)
+                {
+                    if (context.CurrentGameState.Phase != Dtos.Enums.GamePhase.Recruit
+                        || mirage.ReadyPlayerIds.Contains(player.PlayerId)
+                        || mirage.ClosingRecruitRoundNumber == mirage.RoundNumber)
+                    {
+                        return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: Mirage Recruit phase is already locked or closing." };
+                    }
+
+                    if (!card.IsLeader || player.Leader?.InstanceId != card.InstanceId)
+                    {
+                        return new DomainOperationResult { Success = false, ErrorMessage = "ActInvokedEvent.Commit: Only the active Mirage Leader can use Act during Recruit phase." };
+                    }
+
+                    return ExecuteCoreActCommit();
+                }
+            }
+
+            return ExecuteCoreActCommit();
         }
 
         public string GetAnnouncement(GameState gameState)

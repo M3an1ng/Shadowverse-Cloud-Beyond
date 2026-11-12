@@ -121,15 +121,17 @@ public sealed class AiLearningModel
     public static string DeckKey(IEnumerable<int> ids) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(ids.Select(id=>id.ToString()).OrderBy(id=>id,StringComparer.Ordinal))))).ToLowerInvariant();
     public AiWeights Weights(IEnumerable<int>? initialDeck=null) {
         var m=Current;if(m==null)return new();
-        return initialDeck!=null&&m.Specialists.TryGetValue(DeckKey(initialDeck),out var w)?w:m.Weights;
+        var w=initialDeck!=null&&m.Specialists.TryGetValue(DeckKey(initialDeck),out var s)?s:m.Weights;
+        return new(){Board=w.Board,Face=w.Face,Survival=w.Survival,Cards=w.Cards,Resource=w.Resource,Tempo=w.Tempo,Utility=w.Utility,ValueModel=w.ValueModel,ValueTeacher=w.ValueTeacher,ActionPolicy=w.ActionPolicy,InferenceArtifact=m};
     }
     internal AiWeights Weights(GameState? game,Guid actor)
     {
         AiModelArtifact? artifact = null;
         if (game?.IsLocalAiTraining == true && comparisons.TryGetValue(game.GameId, out var match))
             artifact = match.CandidateSeat == actor ? match.Candidate : match.Incumbent;
+        artifact ??= Current;
         var deck = game?.GetPlayerState(actor)?.InitialDeckDefinitionIds;
-        var weights = artifact == null ? Weights(deck) : deck != null
+        var weights = artifact == null ? new AiWeights() : deck != null
             && artifact.Specialists.TryGetValue(DeckKey(deck), out var specialist) ? specialist : artifact.Weights;
         var legacy = game?.IsLocalAiTraining == true && game.LegacyModelInputsPlayerId == actor;
         if (artifact == null && !legacy) return weights;
@@ -141,11 +143,11 @@ public sealed class AiLearningModel
     {
         var m=weights?.InferenceArtifact??Current;if(m==null)return 0;var w=weights??m.Weights;
         var score=0d;
-        if(w.ActionPolicy!=null)score+=6*Math.Tanh(m.Models[w.ActionPolicy].Predict(AiFeatures.Action(state,actor,kind,source,target,w.LegacyInputs),true)/2);
+        if(w.ActionPolicy!=null&&m.Models.TryGetValue(w.ActionPolicy,out var policyNet))score+=6*Math.Tanh(policyNet.Predict(AiFeatures.Action(state,actor,kind,source,target,w.LegacyInputs),true)/2);
         // A cheap afterstate estimate complements action ranking; the real engine still validates/resolves every action.
-        if (w.ValueModel != null && source != null && kind is "play" or "evolve" or "attack") {
+        if (w.ValueModel != null && source != null && kind is "play" or "evolve" or "attack" && m.Models.TryGetValue(w.ValueModel, out var net)) {
             var after=w.LegacyInputs?LegacyAfterstate(state,actor,kind,source,target):EstimateAfterstate(state,actor,kind,source,target);
-            var net=m.Models[w.ValueModel];score+=8*net.Predict(AiFeatures.Value(after,actor,net.FeatureVersion,w.LegacyInputs));
+            score+=8*net.Predict(AiFeatures.Value(after,actor,net.FeatureVersion,w.LegacyInputs));
         }
         return score;
     }
@@ -201,7 +203,7 @@ public sealed class AiLearningModel
     public double Value(GameStateDto state, Guid actor, AiWeights? weights=null) {
         var m=weights?.InferenceArtifact??Current;if(m==null)return 0;var w=weights??m.Weights;
         // The small distilled value network is the live evaluator; large teacher weights are retained for local training.
-        return w.ValueModel!=null?m.Models[w.ValueModel].Predict(AiFeatures.Value(state,actor,m.Models[w.ValueModel].FeatureVersion,w.LegacyInputs)):0;
+        return w.ValueModel!=null&&m.Models.TryGetValue(w.ValueModel,out var net)?net.Predict(AiFeatures.Value(state,actor,net.FeatureVersion,w.LegacyInputs)):0;
     }
     internal async Task SaveTrialAsync(AiModelArtifact candidate, CancellationToken token) {
         var path = ModelPath + ".candidate"; var temp = path + ".tmp";

@@ -55,7 +55,7 @@ using ShadowverseBeyond.Server.Infrastructure.Data;
 
 namespace ShadowverseBeyond.Server.Services
 {
-    public class GameService : IGameService
+    public partial class GameService : IGameService
     {
         private sealed record PlayerIdentitySnapshot(string DisplayName, string AvatarUrl);
         private sealed record ResolvedDeckSelection(
@@ -90,6 +90,8 @@ namespace ShadowverseBeyond.Server.Services
         private readonly ConcurrentDictionary<string, Task> _gameProcessingLoops = new(); // Stores the running Task for each game's loop
         private readonly ConcurrentDictionary<string, CancellationTokenSource> _gameLoopCancellationTokens = new(); // Stores cancellation tokens for each loop
         private readonly ConcurrentDictionary<string, Timer> _turnTimers = new();
+        private readonly ConcurrentDictionary<string, Guid> _activeTimerIds = new();
+        private readonly object _timerLock = new();
         private readonly ConcurrentDictionary<Guid, string> _trackedEntityGameIds = new();
         private readonly ConcurrentDictionary<string, byte> _retiringGameIds = new();
         private readonly object _gameLoopLock = new();
@@ -135,6 +137,7 @@ namespace ShadowverseBeyond.Server.Services
 
                 var actionQueue = _playerActionQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<PlayerActionWrapper>());
                 actionQueue.Enqueue(actionWrapper);
+                MatchCommandObservation.Admitted(gameId, actionWrapper);
                 _logger.LogTrace("[EnqueuePlayerActionAsync:{GameId}] Action {ActionType} enqueued. Queue size: {QueueSize}", gameId, actionWrapper.ActionType, actionQueue.Count);
 
                 if (!_gameProcessingLoops.TryGetValue(gameId, out var existingLoop) || existingLoop.IsCompleted)
@@ -149,12 +152,81 @@ namespace ShadowverseBeyond.Server.Services
             return Task.FromResult(true);
         }
 
+        public void TriggerMirageAiRecruitIfNeeded(string gameId, int expectedRoundNumber,
+            Task<PlayerActionCompletion>? prerequisiteCompletion = null)
+        {
+            if (!_gameStates.TryGetValue(gameId, out var gameState)
+                || gameState.Mode != GameMode.Mirage || gameState.Mirage == null) return;
+
+            var mirage = gameState.Mirage;
+            foreach (var player in new[] { gameState.Player1, gameState.Player2 })
+            {
+                int expectedTurnNumber;
+                lock (mirage.RoundSyncLock)
+                {
+                    if (gameState.IsGameOver || gameState.Phase != GamePhase.Recruit
+                        || mirage.RoundNumber != expectedRoundNumber || mirage.ClosingRecruitRoundNumber == expectedRoundNumber
+                        || !player.IsAI || player.Mirage == null || mirage.ReadyPlayerIds.Contains(player.PlayerId)
+                        || player.Mirage.LastTriggeredAiRecruitRound >= expectedRoundNumber) continue;
+
+                    player.Mirage.LastTriggeredAiRecruitRound = expectedRoundNumber;
+                    expectedTurnNumber = player.TurnNumber;
+                }
+
+                var aiPlayerId = player.PlayerId;
+                var loopToken = _gameLoopCancellationTokens.TryGetValue(gameId, out var cancellation)
+                    ? cancellation.Token : CancellationToken.None;
+                // 后台决策不能继承当前玩家动作的观测/回放 AsyncLocal 作用域。
+                using (ExecutionContext.SuppressFlow())
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            if (prerequisiteCompletion != null)
+                            {
+                                var completion = await prerequisiteCompletion.WaitAsync(loopToken);
+                                if (completion.Status != PlayerActionCompletionStatus.Completed) return;
+                            }
+
+                            loopToken.ThrowIfCancellationRequested();
+                            if (!ReferenceEquals(GetGameState(gameId), gameState) || gameState.IsGameOver
+                                || gameState.Phase != GamePhase.Recruit || gameState.Mirage == null) return;
+                            lock (gameState.Mirage.RoundSyncLock)
+                            {
+                                if (gameState.Mirage.RoundNumber != expectedRoundNumber
+                                    || gameState.Mirage.ClosingRecruitRoundNumber == expectedRoundNumber
+                                    || gameState.Mirage.ReadyPlayerIds.Contains(aiPlayerId)
+                                    || player.TurnNumber != expectedTurnNumber) return;
+                            }
+
+                            await using var aiScope = _serviceScopeFactory.CreateAsyncScope();
+                            var executor = aiScope.ServiceProvider.GetRequiredService<AiTurnExecutor>();
+                            await executor.ExecuteMirageRecruitTurnAsync(gameId, aiPlayerId,
+                                expectedRoundNumber, expectedTurnNumber, loopToken);
+                        }
+                        catch (OperationCanceledException) when (loopToken.IsCancellationRequested)
+                        {
+                            _logger.LogInformation("[MIRAGE_AI:{GameId}:{PlayerId}:{Round}] Recruit task cancelled.",
+                                gameId, aiPlayerId, expectedRoundNumber);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "[MIRAGE_AI:{GameId}:{PlayerId}:{Round}] Recruit task failed.",
+                                gameId, aiPlayerId, expectedRoundNumber);
+                        }
+                    }, loopToken);
+                }
+            }
+        }
+
         private readonly IClientMethodMapper _clientMethodMapper; // Added field declaration
         // Inject IClientMethodMapper, IBuffManager, and IMapper
         // Removed the duplicate field declaration added previously.
         // The original field declaration should exist elsewhere in the class.
 
         private readonly IServiceScopeFactory _serviceScopeFactory;
+        private readonly ReplayRecorder? _replayRecorder;
         public GameService(
             IHubContext<GameHub> hubContext,
             ILogger<GameService> logger,
@@ -165,7 +237,8 @@ namespace ShadowverseBeyond.Server.Services
             IFirstPlayerSelector firstPlayerSelector,
             IServiceScopeFactory serviceScopeFactory,
             IPendingActionService pendingActionService,
-            IGameStatsRuntimeTracker statsRuntimeTracker)
+            IGameStatsRuntimeTracker statsRuntimeTracker,
+            ReplayRecorder? replayRecorder = null)
         {
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -178,6 +251,7 @@ namespace ShadowverseBeyond.Server.Services
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
             _pendingActionService = pendingActionService ?? throw new ArgumentNullException(nameof(pendingActionService));
             _statsRuntimeTracker = statsRuntimeTracker;
+            _replayRecorder = replayRecorder;
         }
 
 
@@ -197,6 +271,9 @@ namespace ShadowverseBeyond.Server.Services
                     if (actionQueue.TryDequeue(out var actionWrapper))
                     {
                         processedItem = true;
+                        using var observedAction = MatchCommandObservation.Begin(gameId, actionWrapper);
+                        using var replayAction = _gameStates.TryGetValue(gameId, out var recordingGame)
+                            ? _replayRecorder?.Begin(recordingGame, actionWrapper) : null;
                         try
                         {
                             cancellationToken.ThrowIfCancellationRequested();
@@ -209,6 +286,21 @@ namespace ShadowverseBeyond.Server.Services
                             await using var scope = _serviceScopeFactory.CreateAsyncScope();
                             var sp = scope.ServiceProvider;
                             var gameContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
+                            if (actionWrapper.ActionType == "CloseReplay")
+                            {
+                                StopTurnTimer(gameId, true);
+                                await _replayRecorder!.CloseAsync(_gameStates[gameId]);
+                                actionWrapper.MarkCompleted();
+                                continue;
+                            }
+                            if (actionWrapper is MatchStateRead read)
+                            {
+                                read.Value = await read.Reader(_gameStates[gameId], sp);
+                                read.MarkCompleted();
+                                continue;
+                            }
+                            if (recordingGame != null && _replayRecorder != null)
+                                await _replayRecorder.RequestedAsync(recordingGame, replayAction);
                             var initialEvents = await ExecutePlayerActionInitialStepAsync(gameId, actionWrapper);
                             if (initialEvents.Count != 0)
                             {
@@ -228,6 +320,52 @@ namespace ShadowverseBeyond.Server.Services
                                     // The transaction service will now handle its own pauses internally by awaiting player choices.
                                     // The GameService loop no longer needs to manage the pause/resume flow.
                                     // --- END: Handle Paused Transaction ---
+
+                                    if (transactionResult.IsSuccess)
+                                    {
+                                        var readyAdvanceEvent = transactionResult.ProcessedEvents
+                                            .OfType<MirageSetReadyRequestedEvent>()
+                                            .FirstOrDefault(e => e.TriggeredRoundAdvance && e.ActivatedCombatId.HasValue);
+
+                                        if (readyAdvanceEvent != null && gameState.Mode == GameMode.Mirage && !gameState.IsGameOver)
+                                        {
+                                            StopTurnTimer(gameId);
+                                            var combatId = readyAdvanceEvent.ActivatedCombatId!.Value;
+                                            var combatRound = readyAdvanceEvent.ActivatedRoundNumber;
+                                            var combatSimulator = sp.GetRequiredService<IMirageCombatSimulator>();
+                                            var combatReplay = await combatSimulator.SimulateCombatAsync(gameState, combatId, cancellationToken);
+                                            if (gameState.Mirage != null)
+                                            {
+                                                gameState.Mirage.LastCombatReplay = combatReplay;
+                                            }
+
+                                            // Contract 6.2 Delivery Order:
+                                            // 1. Broadcast MirageCombatReplayDto to the room so clients start combat playback
+                                            if (_hubContext != null)
+                                            {
+                                                string groupName = SignalRGroupNames.Game(ResolveRoomScopedId(gameId));
+                                                await _hubContext.Clients.Group(groupName).SendAsync("ReceiveMirageCombatReplay", combatReplay, cancellationToken);
+                                            }
+
+                                            // 2. Immediately commit MirageCombatResultCommittedEvent (Two-Phase Infallible Commit) and sync state
+                                            var commitEvent = new MirageCombatResultCommittedEvent(
+                                                combatId,
+                                                combatRound,
+                                                combatReplay.Outcome,
+                                                combatReplay.Steps.Count);
+                                            using var commitContext = new GameContext(sp, mapper, gameContextAccessor, gameState, actionWrapper.PlayerId, cancellationToken, commitEvent);
+                                            var commitResult = await transactionService.ProcessTransactionAsync(commitContext, new IGameEvent[] { commitEvent });
+                                            if (!commitResult.IsSuccess)
+                                            {
+                                                transactionResult = commitResult;
+                                            }
+                                            else
+                                            {
+                                                transactionResult = PausableTransactionResult.Success(
+                                                    transactionResult.ProcessedEvents.Concat(commitResult.ProcessedEvents).ToList());
+                                            }
+                                        }
+                                    }
 
                                     if (transactionResult.IsSuccess)
                                     {
@@ -272,9 +410,21 @@ namespace ShadowverseBeyond.Server.Services
                                             }
                                         }
 
-                                        if (transactionResult.ProcessedEvents.OfType<GameEndEvent>().Any())
+                                        var mirageAdvancedRound = transactionResult.ProcessedEvents
+                                            .OfType<MirageCombatResultCommittedEvent>()
+                                            .LastOrDefault(e => !e.WasNoOpIdempotent && e.AdvancedToRoundNumber.HasValue)?.AdvancedToRoundNumber
+                                            ?? transactionResult.ProcessedEvents
+                                                .OfType<MirageRoundStartedEvent>()
+                                                .LastOrDefault()?.RoundNumber;
+                                        if (mirageAdvancedRound.HasValue && gameState.Mode == GameMode.Mirage && !gameState.IsGameOver)
                                         {
-                                            StopTurnTimer(gameId, true);
+                                            var endsAt = gameState.TurnEndsAtUtc ?? DateTime.UtcNow.AddSeconds(
+                                                gameState.TurnTimeoutSeconds > 0
+                                                    ? gameState.TurnTimeoutSeconds
+                                                    : gameState.Mirage?.Rules.RecruitTimeoutSeconds ?? MirageRuleConfig.DefaultRecruitTimeoutSeconds);
+                                            StartMirageRecruitTimer(gameId, mirageAdvancedRound.Value, endsAt);
+                                            TriggerMirageAiRecruitIfNeeded(gameId, mirageAdvancedRound.Value,
+                                                actionWrapper.Completion.WaitAsync(cancellationToken));
                                         }
 
                                         if (transactionResult.IsCancelled)
@@ -336,6 +486,15 @@ namespace ShadowverseBeyond.Server.Services
                         }
                         finally
                         {
+                            _gameStates.TryGetValue(gameId, out var observedState);
+                            if (observedState?.IsGameOver == true) StopTurnTimer(gameId, true);
+                            if (observedState != null && _replayRecorder != null)
+                                await _replayRecorder.FinishAsync(observedState, replayAction);
+                            await MatchCommandObservation.FinishAsync(observedAction, observedState, _serviceScopeFactory, _mapper, _hubContext);
+                            if (observedState?.IsGameOver == true)
+                            {
+                                _matchService.CompleteGame(gameId, observedState.WinnerId);
+                            }
                             // --- BUG-FIX: Clear the currently processing player ID here ---
                             // This ensures that even if the transaction fails or is paused, we are ready for the next action.
                             _currentlyProcessingPlayerActionId.TryUpdate(gameId, null, actionWrapper.PlayerId.ToString());
@@ -399,6 +558,17 @@ namespace ShadowverseBeyond.Server.Services
             {
                 _retiringGameIds[gameId] = 0;
                 gameState = _gameStates.TryGetValue(gameId, out var state) ? state : null;
+                if (gameState != null && _replayRecorder?.IsOpen(gameId) == true)
+                {
+                    var queue = _playerActionQueues.GetOrAdd(gameId, _ => new ConcurrentQueue<PlayerActionWrapper>());
+                    queue.Enqueue(new PlayerActionWrapper("CloseReplay", Guid.Empty, null));
+                    if (!_gameProcessingLoops.ContainsKey(gameId))
+                    {
+                        var closeCancellation = new CancellationTokenSource();
+                        _gameLoopCancellationTokens[gameId] = closeCancellation;
+                        _gameProcessingLoops[gameId] = Task.Run(() => GameProcessingLoopAsync(gameId, closeCancellation));
+                    }
+                }
                 if (!_gameProcessingLoops.ContainsKey(gameId))
                 {
                     ReleaseDetachedGame(gameId);
@@ -430,7 +600,19 @@ namespace ShadowverseBeyond.Server.Services
 
             StopTurnTimer(gameId);
             _statsRuntimeTracker.Clear(gameId);
+            try
+            {
+                using var scope = _serviceScopeFactory.CreateScope();
+                var eventHistoryService = scope.ServiceProvider.GetService<ShadowverseBeyond.Server.Domain.Events.Services.IEventHistoryService>();
+                eventHistoryService?.ClearHistoryForGameAsync(gameId).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "[GameService:{GameId}] Failed to clear event history during detached game release.", gameId);
+            }
             _gameStates.TryRemove(gameId, out _);
+            _replayRecorder?.Release(gameId);
+            MatchCommandObservation.Release(gameId);
             _playerActionQueues.TryRemove(gameId, out _);
             _currentlyProcessingPlayerActionId.TryRemove(gameId, out _);
             foreach (var tracked in _trackedEntityGameIds)
@@ -495,13 +677,23 @@ namespace ShadowverseBeyond.Server.Services
                 throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Game not found: {gameId}");
             }
 
-            if (gameState.IsGameOver && actionWrapper.ActionType != "DebugCommand")
+            bool isIdempotentMirageCommit = actionWrapper.ActionType == "MirageCommitCombatResult"
+                && actionWrapper.ActionData is MirageCommitCombatActionDto idempotentCommitDto
+                && gameState.Mode == GameMode.Mirage
+                && gameState.Mirage?.CommittedCombatIds.Contains(idempotentCommitDto.CombatId) == true;
+
+            if (gameState.IsGameOver && actionWrapper.ActionType != "DebugCommand" && !isIdempotentMirageCommit)
             {
                 actionWrapper.MarkCancelled("The game has ended.");
                 throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Game is already over.");
             }
 
             playerState = gameState.GetPlayerState(actionWrapper.PlayerId);
+            if (actionWrapper.ExpectedStateRevision is long expectedRevision && expectedRevision != gameState.StateRevision)
+            {
+                actionWrapper.RejectionCode = "stale_state";
+                throw new GameLogicException($"stale_state: expected {expectedRevision}, actual {gameState.StateRevision}.");
+            }
             if (playerState == null)
             {
                 throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Player state not found for {actionWrapper.PlayerId} in game {gameId}.");
@@ -521,7 +713,58 @@ namespace ShadowverseBeyond.Server.Services
 
             if (!isDebugAction)
             {
-                if (isMulliganAction)
+                if (gameState.Mode == GameMode.Mirage)
+                {
+                    if (isAlwaysAllowedAction)
+                    {
+                        _logger.LogDebug("[InitialStep:{ActionType}] Always-allowed action accepted in Mirage mode for Player {PlayerId} (Phase: {Phase}).",
+                            actionWrapper.ActionType, actionWrapper.PlayerId, gameState.Phase);
+                    }
+                    else if (actionWrapper.ActionType == "MirageForceStartCombat")
+                    {
+                        if (gameState.Phase != GamePhase.Recruit)
+                        {
+                            throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Recruit timeout only valid during Recruit phase (Current: {gameState.Phase}).");
+                        }
+                    }
+                    else if (actionWrapper.ActionType == "MirageCommitCombatResult")
+                    {
+                        // Phase A of MirageCombatResultCommittedEvent validates idempotency, ActiveCombatId, Phase, and RoundNumber.
+                    }
+                    else
+                    {
+                        if (gameState.Phase != GamePhase.Recruit)
+                        {
+                            throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Action only allowed during Recruit phase in Mirage mode (Current: {gameState.Phase}).");
+                        }
+
+                        if (gameState.Mirage != null
+                            && (gameState.Mirage.ReadyPlayerIds.Contains(actionWrapper.PlayerId)
+                                || gameState.Mirage.ClosingRecruitRoundNumber == gameState.Mirage.RoundNumber))
+                        {
+                            throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Player {actionWrapper.PlayerId} has already locked lineup or recruit time has expired for this round.");
+                        }
+
+                        bool isAllowedMirageRecruitAction = actionWrapper.ActionType is
+                            "PlayCard"
+                            or "MirageSelectLeader"
+                            or "RequestAct"
+                            or "MirageSetReady"
+                            or "MirageBuyOffer"
+                            or "MirageSellCard"
+                            or "MirageRefreshShop"
+                            or "MirageUpgradeTier"
+                            or "MirageToggleFreeze"
+                            or "MirageReorderField"
+                            or "MirageRedeemTicket";
+
+                        if (!isAllowedMirageRecruitAction)
+                        {
+                            throw new GameLogicException($"[InitialStep:{actionWrapper.ActionType}] Action '{actionWrapper.ActionType}' is forbidden during Mirage Recruit phase.");
+                        }
+                    }
+                }
+                else if (isMulliganAction)
                 {
                     // Mulligan validation: Only check phase, not turn (mulligan is simultaneous for both players)
                     if (gameState.Phase != GamePhase.Mulligan)
@@ -732,6 +975,101 @@ namespace ShadowverseBeyond.Server.Services
                     }
                     break;
 
+                case "MirageSelectLeader":
+                    {
+                        int leaderCardDefinitionId = 0;
+                        if (actionWrapper.ActionData is int directId)
+                        {
+                            leaderCardDefinitionId = directId;
+                        }
+                        else if (actionWrapper.ActionData is JsonElement je && je.ValueKind == JsonValueKind.Number && je.TryGetInt32(out var parsedId))
+                        {
+                            leaderCardDefinitionId = parsedId;
+                        }
+                        if (leaderCardDefinitionId > 0)
+                        {
+                            initialEvents.Add(new MirageSelectLeaderRequestedEvent(actionWrapper.PlayerId, leaderCardDefinitionId));
+                        }
+                        else
+                        {
+                            throw new ArgumentException($"Invalid ActionData for {actionWrapper.ActionType}. Expected positive LeaderCardDefinitionId.");
+                        }
+                        break;
+                    }
+
+                case "MirageSetReady":
+                    initialEvents.Add(new MirageSetReadyRequestedEvent(actionWrapper.PlayerId));
+                    break;
+
+                case "MirageRefreshShop":
+                    initialEvents.Add(new MirageRefreshShopRequestedEvent(actionWrapper.PlayerId));
+                    break;
+
+                case "MirageUpgradeTier":
+                    initialEvents.Add(new MirageUpgradeTierRequestedEvent(actionWrapper.PlayerId));
+                    break;
+
+                case "MirageToggleFreeze":
+                    initialEvents.Add(new MirageToggleFreezeRequestedEvent(actionWrapper.PlayerId));
+                    break;
+
+                case "MirageBuyOffer":
+                    if (actionWrapper.ActionData is Guid offerIdGuid && offerIdGuid != Guid.Empty)
+                    {
+                        initialEvents.Add(new MirageBuyOfferRequestedEvent(actionWrapper.PlayerId, offerIdGuid));
+                    }
+                    else throw new ArgumentException($"Invalid ActionData for {actionWrapper.ActionType}. Expected non-empty OfferId Guid.");
+                    break;
+
+                case "MirageSellCard":
+                    if (actionWrapper.ActionData is Guid sellCardGuid && sellCardGuid != Guid.Empty)
+                    {
+                        initialEvents.Add(new CardSoldEvent(actionWrapper.PlayerId, sellCardGuid));
+                    }
+                    else throw new ArgumentException($"Invalid ActionData for {actionWrapper.ActionType}. Expected non-empty CardUid Guid.");
+                    break;
+
+                case "MirageReorderField":
+                    if (actionWrapper.ActionData is IReadOnlyList<Guid> orderedFieldIds)
+                    {
+                        initialEvents.Add(new FieldReorderedEvent(actionWrapper.PlayerId, orderedFieldIds));
+                    }
+                    else throw new ArgumentException($"Invalid ActionData for {actionWrapper.ActionType}. Expected IReadOnlyList<Guid>.");
+                    break;
+
+                case "MirageRedeemTicket":
+                    if (actionWrapper.ActionData is MirageRedeemTicketActionDto redeemDto && redeemDto.TicketId != Guid.Empty)
+                    {
+                        initialEvents.Add(new MirageRedeemTicketRequestedEvent(
+                            actionWrapper.PlayerId,
+                            redeemDto.TicketId,
+                            redeemDto.ChosenCardDefinitionId));
+                    }
+                    else throw new ArgumentException($"Invalid ActionData for {actionWrapper.ActionType}. Expected MirageRedeemTicketActionDto with non-empty TicketId.");
+                    break;
+
+                case "MirageForceStartCombat":
+                    {
+                        int? expectedRound = actionWrapper.ActionData is int r ? r : null;
+                        initialEvents.Add(new MirageSetReadyRequestedEvent(
+                            actionWrapper.PlayerId,
+                            isForceTimeout: true,
+                            expectedRoundNumber: expectedRound));
+                        break;
+                    }
+
+                case "MirageCommitCombatResult":
+                    if (actionWrapper.ActionData is MirageCommitCombatActionDto commitDto)
+                    {
+                        initialEvents.Add(new MirageCombatResultCommittedEvent(
+                            commitDto.CombatId,
+                            commitDto.RoundNumber,
+                            commitDto.Outcome,
+                            commitDto.StepCount));
+                    }
+                    else throw new ArgumentException($"Invalid ActionData for {actionWrapper.ActionType}. Expected MirageCommitCombatActionDto.");
+                    break;
+
                 case "DebugCommand":
                     if (actionWrapper.ActionData is DebugCommandDto debugDto)
                     {
@@ -739,6 +1077,7 @@ namespace ShadowverseBeyond.Server.Services
                         var parseResult = parser.Parse(gameState, actionWrapper.PlayerId, debugDto);
                         if (!parseResult.Success)
                         {
+                            actionWrapper.RejectionCode = "invalid_event_input";
                             var message = parseResult.ErrorMessage ?? "debug-error: invalid command";
                             _logger.LogWarning("[DebugCommand:{GameId}] Parse failed for Player {PlayerId}: {Message}. Command={Command}",
                                 gameId, actionWrapper.PlayerId, message, debugDto.Command);
@@ -788,6 +1127,42 @@ namespace ShadowverseBeyond.Server.Services
             _gameStates.TryGetValue(gameId, out var existingState);
             return existingState;
         }
+
+        public async Task<System.Text.Json.JsonElement> ReadSnapshotAsync(string gameId, CancellationToken cancellationToken)
+        {
+            var game = GetGameState(gameId) ?? throw new ArgumentException("missing_match: " + gameId);
+            var hasPendingChoice = _pendingActionService.GetPendingChoiceForPlayer(gameId, game.Player1.PlayerId) != null
+                || _pendingActionService.GetPendingChoiceForPlayer(gameId, game.Player2.PlayerId) != null;
+            if (hasPendingChoice || MatchCommandObservation.ActiveAction(gameId) != null)
+            {
+                if (MatchCommandObservation.LastSnapshot(gameId) is { } completedSnapshot) return completedSnapshot;
+                throw new InvalidOperationException("snapshot_boundary_unavailable: inspect pending choices independently");
+            }
+            return await ReadStateAsync(gameId, (snapshotGame, sp) =>
+            {
+                using var context = new GameContext(sp, _mapper, sp.GetRequiredService<IGameContextAccessor>(), snapshotGame,
+                    snapshotGame.CurrentPlayerId ?? snapshotGame.Player1.PlayerId, cancellationToken);
+                var snapshot = System.Text.Json.JsonSerializer.SerializeToElement(MatchCommandObservation.Snapshot(snapshotGame, context), MatchCommandObservation.Json);
+                MatchCommandObservation.RememberSnapshot(gameId, snapshot);
+                return Task.FromResult(snapshot);
+            }, cancellationToken);
+        }
+
+        public async Task<System.Text.Json.JsonElement> ReadStateAsync(string gameId,
+            Func<GameState, IServiceProvider, Task<System.Text.Json.JsonElement>> reader, CancellationToken cancellationToken)
+        {
+            var game = GetGameState(gameId) ?? throw new ArgumentException("missing_match: " + gameId);
+            if (MatchCommandObservation.ActiveAction(gameId) != null
+                || _pendingActionService.GetPendingChoiceForPlayer(gameId, game.Player1.PlayerId) != null
+                || _pendingActionService.GetPendingChoiceForPlayer(gameId, game.Player2.PlayerId) != null)
+                throw new InvalidOperationException("match_busy: complete the current action or inspect pending choices independently");
+            var read = new MatchStateRead(reader) { CancellationToken = cancellationToken };
+            if (!await EnqueuePlayerActionAsync(gameId, read)) throw new ArgumentException("missing_match: " + gameId);
+            var completion = await read.Completion.WaitAsync(cancellationToken);
+            if (completion.Status != PlayerActionCompletionStatus.Completed)
+                throw new InvalidOperationException("snapshot_unavailable: " + completion.Reason);
+            return read.Value;
+        }
         // --- End Added GetGameStateAsync Implementation ---
 
         private async Task<ResolvedDeckSelection?> ResolveDeckSelectionAsync(
@@ -797,7 +1172,15 @@ namespace ShadowverseBeyond.Server.Services
             CancellationToken cancellationToken)
         {
             if (selection.GeneratedDraftCardIds is { Length:30 } draftIds && selection.DeckClass.HasValue)
+            {
+                if (draftIds.Any(id => id <= 0 || _gameDataProvider.GetCardDefinition(id) is not { IsMirageCard: false }))
+                {
+                    _logger.LogWarning("[GameService] Generated draft deck contains invalid or Mirage cards.");
+                    return null;
+                }
+
                 return new ResolvedDeckSelection(draftIds.ToList(), selection.DeckClass.Value, null, DeckEnvironment.Open, DeckRule.Standard, null, true);
+            }
             if (!selection.HasSelection)
             {
                 _logger.LogWarning("[GameService] Deck selection is empty.");
@@ -1091,10 +1474,9 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 var room = roomResult.Room;
-
                 var devConfig = room.DevMatchConfig;
                 var benchmark = devConfig?.IsLocalAiTraining == true ? devConfig : null;
-                bool player1IsFirst = benchmark?.BenchmarkHostGoesFirst ?? _firstPlayerSelector.IsPlayer1First();
+                bool player1IsFirst = benchmark?.BenchmarkHostGoesFirst ?? ResolvePlayer1IsFirst(devConfig);
                 var player1State = new PlayerState(player1Id) { IsFirst = player1IsFirst };
                 var player2State = new PlayerState(player2Id) { IsFirst = !player1IsFirst, IsAI = createAi };
                 await ApplyPlayerIdentityAsync(scopeServiceProvider, player1State, player2State);
@@ -1168,153 +1550,273 @@ namespace ShadowverseBeyond.Server.Services
                 {
                     secondPlayerState.PpBoostUsesAvailable = GameConstants.PlayPoints.PpBoostUsesPerPhase;
                 }
-                var hostDeck = await ResolveDeckSelectionAsync(
-                    room.HostDeckSelection,
-                    scopeServiceProvider,
-                    requireCompleteDecks,
-                    CancellationToken.None);
-                if (hostDeck == null)
-                {
-                    _logger.LogWarning(
-                        "[GameService] Host deck selection invalid. GameId={GameId}, RequireComplete={RequireComplete}",
-                        gameId,
-                        requireCompleteDecks);
-                    return null;
-                }
-
+                bool isMirageMode = room.Mode == GameMode.Mirage;
                 var opponentSelection = room.GuestPlayerId.HasValue ? room.GuestDeckSelection : room.AiDeckSelection;
-                var opponentDeck = await ResolveDeckSelectionAsync(
-                    opponentSelection,
-                    scopeServiceProvider,
-                    requireCompleteDecks,
-                    CancellationToken.None);
-                if (opponentDeck == null)
+
+                if (isMirageMode)
                 {
-                    _logger.LogWarning(
-                        "[GameService] Opponent deck selection invalid. GameId={GameId}, RequireComplete={RequireComplete}",
-                        gameId,
-                        requireCompleteDecks);
-                    return null;
+                    player1State.Class = room.HostDeckSelection.DeckClass ?? CardClass.Neutral;
+                    player1State.SecondaryClass = room.HostDeckSelection.SecondaryClass;
+                    player2State.Class = opponentSelection.DeckClass ?? CardClass.Neutral;
+                    player2State.SecondaryClass = opponentSelection.SecondaryClass;
+                    player1State.Environment = DeckEnvironment.Open;
+                    player2State.Environment = DeckEnvironment.Open;
+                    player1State.Rule = DeckRule.Standard;
+                    player2State.Rule = DeckRule.Standard;
+                    player1State.IsTakeTwo = false;
+                    player2State.IsTakeTwo = false;
+                    player1State.UserDeckId = null;
+                    player2State.UserDeckId = null;
                 }
-
-                var ignoreDeckFormatConsistency = devConfig?.IgnoreDeckFormatConsistency == true;
-                if (!ignoreDeckFormatConsistency && hostDeck.Environment != opponentDeck.Environment)
+                else
                 {
-                    _logger.LogWarning(
-                        "[GameService] Deck environment mismatch. GameId={GameId} Host={HostEnv} Opponent={OpponentEnv}",
-                        gameId,
-                        hostDeck.Environment,
-                        opponentDeck.Environment);
-                    return null;
-                }
-
-                if (!ignoreDeckFormatConsistency && hostDeck.Rule != opponentDeck.Rule)
-                {
-                    _logger.LogWarning(
-                        "[GameService] Deck rule mismatch. GameId={GameId} Host={HostRule} Opponent={OpponentRule}",
-                        gameId,
-                        hostDeck.Rule,
-                        opponentDeck.Rule);
-                    return null;
-                }
-
-                player1State.Class = hostDeck.DeckClass;
-                player1State.SecondaryClass = hostDeck.SecondaryClass;
-                player2State.Class = opponentDeck.DeckClass;
-                player2State.SecondaryClass = opponentDeck.SecondaryClass;
-                player1State.Environment = hostDeck.Environment;
-                player2State.Environment = opponentDeck.Environment;
-                player1State.Rule = hostDeck.Rule;
-                player1State.IsTakeTwo = hostDeck.IsTakeTwo;
-                player2State.Rule = opponentDeck.Rule;
-                player2State.IsTakeTwo = opponentDeck.IsTakeTwo;
-                player1State.UserDeckId = hostDeck.UserDeckId;
-                player2State.UserDeckId = opponentDeck.UserDeckId;
-
-                foreach (var cardId in hostDeck.ExpandedCardIds)
-                {
-                    cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player1Id, CardZone.Deck);
-                }
-
-                foreach (var cardId in opponentDeck.ExpandedCardIds)
-                {
-                    cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player2Id, CardZone.Deck);
-                }
-
-                var benchmarkRandom = benchmark?.BenchmarkShuffleSeed is { } seed ? new Random(seed) : null;
-                ShuffleDeck(player1State.Deck, benchmarkRandom);
-                ShuffleDeck(player2State.Deck, benchmarkRandom);
-                if (benchmarkRandom != null)
-                {
-                    // Distinct seat seeds make simultaneous mulligans independent of submission order.
-                    player1State.BenchmarkMulliganSeed = benchmarkRandom.Next();
-                    player2State.BenchmarkMulliganSeed = benchmarkRandom.Next();
-                    newGameState.BenchmarkRandom = new BenchmarkBattleRandom(benchmarkRandom.Next());
-                }
-
-                player1State.InitialDeck = new List<CardInstance>(player1State.Deck);
-                player2State.InitialDeck = new List<CardInstance>(player2State.Deck);
-                player1State.InitialDeckDefinitionIds = player1State.InitialDeck.Select(card => card.BaseDefinitionId).ToList();
-                player2State.InitialDeckDefinitionIds = player2State.InitialDeck.Select(card => card.BaseDefinitionId).ToList();
-
-                // 【最终修复】根据领域规则，初始发牌不属于“抽牌”，不应触发抽牌事件。
-                // 因此，回归到直接操作列表的方式。
-                // 此操作现在是安全的，因为CardFactory的BUG已被修复，能确保Deck列表被正确填充。
-                var player1InitialHandSize = GameConstants.Hand.InitialHandSizeFirstPlayer;
-                var player2InitialHandSize = GameConstants.Hand.InitialHandSizeSecondPlayer;
-                if (devConfig?.StartingHandSize.HasValue == true)
-                {
-                    var overrideHand = Math.Clamp(devConfig.StartingHandSize.Value, 0, GameConstants.Hand.MaxHandSize);
-                    player1InitialHandSize = overrideHand;
-                    player2InitialHandSize = overrideHand;
-                }
-                var maxInitialHandSize = Math.Max(player1InitialHandSize, player2InitialHandSize);
-
-                for (int i = 0; i < maxInitialHandSize; i++)
-                {
-                    if (i < player1InitialHandSize && player1State.Deck.Any())
+                    var hostDeck = await ResolveDeckSelectionAsync(
+                        room.HostDeckSelection,
+                        scopeServiceProvider,
+                        requireCompleteDecks,
+                        CancellationToken.None);
+                    if (hostDeck == null)
                     {
-                        var card = player1State.Deck[0];
-                        player1State.Deck.RemoveAt(0);
-                        card.CurrentZone = CardZone.Hand;
-                        card.ZoneStayTurn = 0;
-                        player1State.Hand.Add(card);
+                        _logger.LogWarning(
+                            "[GameService] Host deck selection invalid. GameId={GameId}, RequireComplete={RequireComplete}",
+                            gameId,
+                            requireCompleteDecks);
+                        return null;
                     }
 
-                    if (i < player2InitialHandSize && player2State.Deck.Any())
+                    var opponentDeck = await ResolveDeckSelectionAsync(
+                        opponentSelection,
+                        scopeServiceProvider,
+                        requireCompleteDecks,
+                        CancellationToken.None);
+                    if (opponentDeck == null)
                     {
-                        var card = player2State.Deck[0];
-                        player2State.Deck.RemoveAt(0);
-                        card.CurrentZone = CardZone.Hand;
-                        card.ZoneStayTurn = 0;
-                        player2State.Hand.Add(card);
+                        _logger.LogWarning(
+                            "[GameService] Opponent deck selection invalid. GameId={GameId}, RequireComplete={RequireComplete}",
+                            gameId,
+                            requireCompleteDecks);
+                        return null;
+                    }
+
+                    var ignoreDeckFormatConsistency = devConfig?.IgnoreDeckFormatConsistency == true;
+                    if (!ignoreDeckFormatConsistency && hostDeck.Environment != opponentDeck.Environment)
+                    {
+                        _logger.LogWarning(
+                            "[GameService] Deck environment mismatch. GameId={GameId} Host={HostEnv} Opponent={OpponentEnv}",
+                            gameId,
+                            hostDeck.Environment,
+                            opponentDeck.Environment);
+                        return null;
+                    }
+
+                    if (!ignoreDeckFormatConsistency && hostDeck.Rule != opponentDeck.Rule)
+                    {
+                        _logger.LogWarning(
+                            "[GameService] Deck rule mismatch. GameId={GameId} Host={HostRule} Opponent={OpponentRule}",
+                            gameId,
+                            hostDeck.Rule,
+                            opponentDeck.Rule);
+                        return null;
+                    }
+
+                    player1State.Class = hostDeck.DeckClass;
+                    player1State.SecondaryClass = hostDeck.SecondaryClass;
+                    player2State.Class = opponentDeck.DeckClass;
+                    player2State.SecondaryClass = opponentDeck.SecondaryClass;
+                    player1State.Environment = hostDeck.Environment;
+                    player2State.Environment = opponentDeck.Environment;
+                    player1State.Rule = hostDeck.Rule;
+                    player1State.IsTakeTwo = hostDeck.IsTakeTwo;
+                    player2State.Rule = opponentDeck.Rule;
+                    player2State.IsTakeTwo = opponentDeck.IsTakeTwo;
+                    player1State.UserDeckId = hostDeck.UserDeckId;
+                    player2State.UserDeckId = opponentDeck.UserDeckId;
+
+                    foreach (var cardId in hostDeck.ExpandedCardIds)
+                    {
+                        cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player1Id, CardZone.Deck);
+                    }
+
+                    foreach (var cardId in opponentDeck.ExpandedCardIds)
+                    {
+                        cardFactory.CreateAndRegisterNewCard(newGameState, cardId, player2Id, CardZone.Deck);
+                    }
+
+                    var benchmarkRandom = benchmark?.BenchmarkShuffleSeed is { } seed ? new Random(seed) : null;
+                    ShuffleDeck(player1State.Deck, benchmarkRandom);
+                    ShuffleDeck(player2State.Deck, benchmarkRandom);
+                    if (benchmarkRandom != null)
+                    {
+                        // Distinct seat seeds make simultaneous mulligans independent of submission order.
+                        player1State.BenchmarkMulliganSeed = benchmarkRandom.Next();
+                        player2State.BenchmarkMulliganSeed = benchmarkRandom.Next();
+                        newGameState.BenchmarkRandom = new BenchmarkBattleRandom(benchmarkRandom.Next());
+                    }
+
+                    player1State.InitialDeck = new List<CardInstance>(player1State.Deck);
+                    player2State.InitialDeck = new List<CardInstance>(player2State.Deck);
+                    player1State.InitialDeckDefinitionIds = player1State.InitialDeck.Select(card => card.BaseDefinitionId).ToList();
+                    player2State.InitialDeckDefinitionIds = player2State.InitialDeck.Select(card => card.BaseDefinitionId).ToList();
+                }
+
+                if (isMirageMode)
+                {
+                    var mirageState = new MirageMatchState { RoundNumber = 1 };
+                    newGameState.Mode = GameMode.Mirage;
+                    newGameState.Mirage = mirageState;
+                    newGameState.Status = GameStatus.InProgress;
+                    newGameState.Phase = GamePhase.Recruit;
+
+                    var leaderCandidates = (_gameDataProvider as IEnvironmentScopedGameDataProvider)?
+                        .GetMirageLeaderDefinitions()
+                        .Select(c => c.Id)
+                        .Distinct()
+                        .ToList() ?? new List<int>();
+
+                    static List<int> DealMirageLeaderCandidates(IReadOnlyList<int> pool)
+                    {
+                        if (pool.Count == 0) return new List<int>();
+                        return pool.OrderBy(_ => Random.Shared.Next()).Take(3).ToList();
+                    }
+
+                    var p1Candidates = DealMirageLeaderCandidates(leaderCandidates);
+                    var p2Candidates = DealMirageLeaderCandidates(leaderCandidates);
+
+                    player1State.Mirage = new MiragePlayerState
+                    {
+                        TavernTier = 1,
+                        UpgradeCost = mirageState.Rules.GetBaseUpgradeCostForNextTier(1),
+                        HardGoldCap = mirageState.Rules.HardGoldCap,
+                        LeaderCandidateCardIds = p1Candidates,
+                        HasSelectedLeader = p1Candidates.Count == 0
+                    };
+                    player2State.Mirage = new MiragePlayerState
+                    {
+                        TavernTier = 1,
+                        UpgradeCost = mirageState.Rules.GetBaseUpgradeCostForNextTier(1),
+                        HardGoldCap = mirageState.Rules.HardGoldCap,
+                        LeaderCandidateCardIds = p2Candidates,
+                        HasSelectedLeader = p2Candidates.Count == 0
+                    };
+
+                    player1State.HasCompletedMulligan = true;
+                    player2State.HasCompletedMulligan = true;
+                    player1State.HasTakenFirstTurn = true;
+                    player2State.HasTakenFirstTurn = true;
+                    player1State.TurnNumber = 1;
+                    player2State.TurnNumber = 1;
+                    player1State.PpBoostUsesAvailable = 0;
+                    player2State.PpBoostUsesAvailable = 0;
+
+                    var round1Gold = mirageState.Rules.GetRoundBaseGold(1);
+                    var mirageMaxPp = devConfig?.MaxPlayPoints.HasValue == true
+                        ? Math.Clamp(devConfig.MaxPlayPoints.Value, 0, mirageState.Rules.HardGoldCap)
+                        : round1Gold;
+                    var mirageStartPp = devConfig?.StartingPlayPoints.HasValue == true
+                        ? Math.Clamp(devConfig.StartingPlayPoints.Value, 0, mirageState.Rules.HardGoldCap)
+                        : mirageMaxPp;
+
+                    player1State.MaxPlayPoints = mirageMaxPp;
+                    player2State.MaxPlayPoints = mirageMaxPp;
+                    player1State.CurrentPlayPoints = mirageStartPp;
+                    player2State.CurrentPlayPoints = mirageStartPp;
+
+                    var shopService = scopeServiceProvider.GetService<IMirageShopService>();
+                    if (shopService == null
+                        || shopService.GetPoolUpToTier(mirageState.Rules.MaxTavernTier, mirageState.Rules.MaxTavernTier).Count == 0)
+                    {
+                        _logger.LogWarning("[GameService] Cannot start Mirage game {GameId}: Mirage card pool is empty.", gameId);
+                        return null;
+                    }
+
+                    shopService.RefreshShopForNewRound(player1State, mirageState.Rules);
+                    shopService.RefreshShopForNewRound(player2State, mirageState.Rules);
+
+                    var recruitTimeout = devConfig?.TurnTimeoutSeconds is > 0
+                        ? devConfig.TurnTimeoutSeconds.Value
+                        : mirageState.Rules.RecruitTimeoutSeconds;
+                    var now = DateTime.UtcNow;
+                    newGameState.TurnTimeoutSeconds = recruitTimeout;
+                    newGameState.TurnStartedAtUtc = now;
+                    newGameState.TurnEndsAtUtc = now.AddSeconds(recruitTimeout);
+                }
+                else
+                {
+                    // 【最终修复】根据领域规则，初始发牌不属于“抽牌”，不应触发抽牌事件。
+                    // 因此，回归到直接操作列表的方式。
+                    // 此操作现在是安全的，因为CardFactory的BUG已被修复，能确保Deck列表被正确填充。
+                    var player1InitialHandSize = GameConstants.Hand.InitialHandSizeFirstPlayer;
+                    var player2InitialHandSize = GameConstants.Hand.InitialHandSizeSecondPlayer;
+                    if (devConfig?.StartingHandSize.HasValue == true)
+                    {
+                        var overrideHand = Math.Clamp(devConfig.StartingHandSize.Value, 0, GameConstants.Hand.MaxHandSize);
+                        player1InitialHandSize = overrideHand;
+                        player2InitialHandSize = overrideHand;
+                    }
+                    var maxInitialHandSize = Math.Max(player1InitialHandSize, player2InitialHandSize);
+
+                    for (int i = 0; i < maxInitialHandSize; i++)
+                    {
+                        if (i < player1InitialHandSize && player1State.Deck.Any())
+                        {
+                            var card = player1State.Deck[0];
+                            player1State.Deck.RemoveAt(0);
+                            card.CurrentZone = CardZone.Hand;
+                            card.ZoneStayTurn = 0;
+                            player1State.Hand.Add(card);
+                        }
+
+                        if (i < player2InitialHandSize && player2State.Deck.Any())
+                        {
+                            var card = player2State.Deck[0];
+                            player2State.Deck.RemoveAt(0);
+                            card.CurrentZone = CardZone.Hand;
+                            card.ZoneStayTurn = 0;
+                            player2State.Hand.Add(card);
+                        }
                     }
                 }
 
-                const int leaderCardId = GameConstants.Cards.LeaderCardId;
+                var leaderCardId = isMirageMode
+                    ? GameConstants.Cards.MirageLeaderCardId
+                    : GameConstants.Cards.LeaderCardId;
                 player1State.Leader = cardFactory.CreateAndRegisterNewCard(newGameState, leaderCardId, player1Id, CardZone.Field);
                 player2State.Leader = cardFactory.CreateAndRegisterNewCard(newGameState, leaderCardId, player2Id, CardZone.Field);
 
                 if (devConfig?.StartingHealth.HasValue == true)
                 {
-                    var desiredHp = Math.Clamp(devConfig.StartingHealth.Value, 1, GameConstants.Health.PlayerMaxHealth);
-                    player1State.Leader.Damage = Math.Max(0, GameConstants.Health.PlayerMaxHealth - desiredHp);
-                    player2State.Leader.Damage = Math.Max(0, GameConstants.Health.PlayerMaxHealth - desiredHp);
+                    var maxLeaderHp = player1State.Leader.MaxHealth > 0
+                        ? player1State.Leader.MaxHealth
+                        : GameConstants.Health.PlayerMaxHealth;
+                    var desiredHp = Math.Clamp(devConfig.StartingHealth.Value, 1, maxLeaderHp);
+                    player1State.Leader.Damage = Math.Max(0, maxLeaderHp - desiredHp);
+                    player2State.Leader.Damage = Math.Max(0, maxLeaderHp - desiredHp);
                 }
 
                 if (_gameStates.TryAdd(gameId, newGameState))
                 {
+                    if (_replayRecorder != null) await _replayRecorder.StartAsync(newGameState);
                     // Obsolete scope management and GameServiceProvider initialization removed.
                     // Scopes are now created on-demand in the processing loops.
 
-                    // Pass the CancellationToken from the game loop if available, otherwise CancellationToken.None
-                    var loopTokenSource = _gameLoopCancellationTokens.TryGetValue(gameId, out var cts) ? cts.Token : CancellationToken.None;
-                    // 【FIX】Do not pass a scoped service provider to a background task.
-                    // The task will create its own scope.
-                    if (!newGameState.IsLocalAiTraining && player2State.IsAI)
-                        _ = scopeServiceProvider.GetService<AiStrategyPlanner>()?.WarmDeckAsync(
-                            newGameState, player2Id, player1State.Class.ToString());
-                    if (!newGameState.IsLocalAiTraining) _ = Task.Run(() => TriggerAiMulliganIfNeededAsync(gameId, newGameState, loopTokenSource), loopTokenSource);
+                    if (newGameState.Mode == GameMode.Mirage)
+                    {
+                        StartMirageRecruitTimer(
+                            gameId,
+                            newGameState.Mirage?.RoundNumber ?? 1,
+                            newGameState.TurnEndsAtUtc ?? DateTime.UtcNow.AddSeconds(newGameState.TurnTimeoutSeconds));
+                    }
+                    else
+                    {
+                        // Pass the CancellationToken from the game loop if available, otherwise CancellationToken.None
+                        var loopTokenSource = _gameLoopCancellationTokens.TryGetValue(gameId, out var cts) ? cts.Token : CancellationToken.None;
+                        // 【FIX】Do not pass a scoped service provider to a background task.
+                        // The task will create its own scope.
+                        if (!newGameState.IsLocalAiTraining && player2State.IsAI)
+                            _ = scopeServiceProvider.GetService<AiStrategyPlanner>()?.WarmDeckAsync(
+                                newGameState, player2Id, player1State.Class.ToString());
+                        if (!newGameState.IsLocalAiTraining) _ = Task.Run(() => TriggerAiMulliganIfNeededAsync(gameId, newGameState, loopTokenSource), loopTokenSource);
+                    }
                     return newGameState;
                 }
 
@@ -1393,6 +1895,25 @@ namespace ShadowverseBeyond.Server.Services
 
             try
             {
+                if (gameContext.CurrentGameState.Mode == GameMode.Mirage && !gameContext.CurrentGameState.IsCombatSandbox)
+                {
+                    if (gameContext.CurrentGameState.Phase != GamePhase.Recruit)
+                    {
+                        result.IsPlayable = false;
+                        result.FailureReason = "当前不在幻境招募阶段。";
+                        return result;
+                    }
+
+                    if (gameContext.CurrentGameState.Mirage != null
+                        && (gameContext.CurrentGameState.Mirage.ReadyPlayerIds.Contains(playerId)
+                            || gameContext.CurrentGameState.Mirage.ClosingRecruitRoundNumber == gameContext.CurrentGameState.Mirage.RoundNumber))
+                    {
+                        result.IsPlayable = false;
+                        result.FailureReason = "本轮阵容已锁定。";
+                        return result;
+                    }
+                }
+
                 if (cardInHand.HasKeyword(CardKeyword.CannotUse))
                 {
                     result.IsPlayable = false;
@@ -1805,7 +2326,13 @@ namespace ShadowverseBeyond.Server.Services
                     return;
                 }
 
-                foreach (var cardOnField in playerState.Field.ToList())
+                var actCandidates = playerState.Field.ToList();
+                if (playerState.Leader != null)
+                {
+                    actCandidates.Add(playerState.Leader);
+                }
+
+                foreach (var cardOnField in actCandidates)
                 {
                     using (var gameContext = new GameContext(sp, _mapper, gameContextAccessor, gameState, playerId, cancellationToken, null, cardOnField))
                     {
@@ -1844,7 +2371,7 @@ namespace ShadowverseBeyond.Server.Services
             return card.GetActCost(context);
         }
 
-        private static async Task<ActPlayabilityResultDto> CheckActPlayabilityCoreLogicAsync(
+        internal static async Task<ActPlayabilityResultDto> CheckActPlayabilityCoreLogicAsync(
             GameContext gameContext,
             PlayerState playerState,
             CardInstance cardOnField)
@@ -1862,16 +2389,41 @@ namespace ShadowverseBeyond.Server.Services
                 return result;
             }
 
-            if (gameContext.CurrentGameState.CurrentPlayerId != playerState.PlayerId)
+            if (gameContext.CurrentGameState.Mode == GameMode.Mirage && !gameContext.CurrentGameState.IsCombatSandbox)
             {
-                result.FailureReason = "It's not your turn to use Act.";
-                return result;
-            }
+                if (gameContext.CurrentGameState.Phase != GamePhase.Recruit)
+                {
+                    result.FailureReason = "Act can only be used during Mirage Recruit phase.";
+                    return result;
+                }
 
-            if (gameContext.CurrentGameState.Phase != GamePhase.Main)
+                if (gameContext.CurrentGameState.Mirage == null
+                    || gameContext.CurrentGameState.Mirage.ReadyPlayerIds.Contains(playerState.PlayerId)
+                    || gameContext.CurrentGameState.Mirage.ClosingRecruitRoundNumber == gameContext.CurrentGameState.Mirage.RoundNumber)
+                {
+                    result.FailureReason = "Mirage lineup is already locked for this round.";
+                    return result;
+                }
+
+                if (!cardOnField.IsLeader || playerState.Leader?.InstanceId != cardOnField.InstanceId)
+                {
+                    result.FailureReason = "Only the active Mirage Leader can use Act during Recruit phase.";
+                    return result;
+                }
+            }
+            else
             {
-                result.FailureReason = "Act can only be used during Main phase.";
-                return result;
+                if (gameContext.CurrentGameState.CurrentPlayerId != playerState.PlayerId)
+                {
+                    result.FailureReason = "It's not your turn to use Act.";
+                    return result;
+                }
+
+                if (gameContext.CurrentGameState.Phase != GamePhase.Main)
+                {
+                    result.FailureReason = "Act can only be used during Main phase.";
+                    return result;
+                }
             }
 
             if (cardOnField.HasUsedActThisTurn())
@@ -2022,19 +2574,176 @@ namespace ShadowverseBeyond.Server.Services
                 delay = TimeSpan.Zero;
             }
 
-            var timer = new Timer(_ => _ = HandleTurnTimeoutAsync(gameId, playerId, endsAtUtc), null, delay, Timeout.InfiniteTimeSpan);
-            _turnTimers[gameId] = timer;
+            var timerId = Guid.NewGuid();
+            var timer = new Timer(_ => _ = HandleTurnTimeoutAsync(gameId, playerId, endsAtUtc, timerId), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            RegisterAndStartTimer(gameId, timerId, timer, delay);
 
-            _logger.LogInformation("[TurnTimer:{GameId}] Started timer for Player {PlayerId}. EndsAtUtc={EndsAtUtc:o}.",
-                gameId, playerId, endsAtUtc);
+            _logger.LogInformation("[TurnTimer:{GameId}] Started timer {TimerId} for Player {PlayerId}. EndsAtUtc={EndsAtUtc:o}.",
+                gameId, timerId, playerId, endsAtUtc);
+        }
+
+        private void StartMirageRecruitTimer(string gameId, int roundNumber, DateTime endsAtUtc)
+        {
+            StopTurnTimer(gameId);
+
+            if (!TryGetActiveRoom(gameId, out var roomClosedReason))
+            {
+                _logger.LogInformation("[MirageTimer:{GameId}] Match room is not active ({Reason}). Timer not started.", gameId, roomClosedReason);
+                StopTurnTimer(gameId, true);
+                return;
+            }
+
+            if (!_gameStates.TryGetValue(gameId, out var gameState) || gameState == null || gameState.IsGameOver)
+            {
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+            gameState.TurnStartedAtUtc ??= now;
+            gameState.TurnEndsAtUtc = endsAtUtc;
+
+            var delay = endsAtUtc - now;
+            if (delay < TimeSpan.Zero)
+            {
+                delay = TimeSpan.Zero;
+            }
+
+            var timerId = Guid.NewGuid();
+            var timer = new Timer(_ => _ = HandleMirageRecruitTimeoutAsync(gameId, roundNumber, endsAtUtc, timerId), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            RegisterAndStartTimer(gameId, timerId, timer, delay);
+
+            _logger.LogInformation("[MirageTimer:{GameId}] Started recruit timer {TimerId} for Round {RoundNumber}. EndsAtUtc={EndsAtUtc:o}.",
+                gameId, timerId, roundNumber, endsAtUtc);
+        }
+
+        private void RegisterAndStartTimer(string gameId, Guid timerId, Timer timer, TimeSpan delay)
+        {
+            Timer? oldTimer = null;
+            lock (_timerLock)
+            {
+                if (_turnTimers.TryRemove(gameId, out var existing))
+                {
+                    oldTimer = existing;
+                }
+                _activeTimerIds[gameId] = timerId;
+                _turnTimers[gameId] = timer;
+                timer.Change(delay, Timeout.InfiniteTimeSpan);
+            }
+            oldTimer?.Dispose();
+        }
+
+        private bool TryCompleteTimerInstance(string gameId, Guid expectedTimerId)
+        {
+            Timer? matchedTimer = null;
+            lock (_timerLock)
+            {
+                if (!_activeTimerIds.TryGetValue(gameId, out var currentTimerId) || currentTimerId != expectedTimerId)
+                {
+                    return false;
+                }
+
+                _activeTimerIds.TryRemove(gameId, out _);
+                if (_turnTimers.TryRemove(gameId, out var existing))
+                {
+                    matchedTimer = existing;
+                }
+            }
+            matchedTimer?.Dispose();
+            return true;
+        }
+
+        private async Task HandleMirageRecruitTimeoutAsync(string gameId, int roundNumber, DateTime expectedEndUtc, Guid timerId)
+        {
+            try
+            {
+                if (!TryCompleteTimerInstance(gameId, timerId))
+                {
+                    _logger.LogInformation("[MirageTimeout:{GameId}] Timer {TimerId} for Round {RoundNumber} is no longer active. Ignoring.",
+                        gameId, timerId, roundNumber);
+                    return;
+                }
+
+                if (!TryGetActiveRoom(gameId, out var roomClosedReason))
+                {
+                    _logger.LogInformation("[MirageTimeout:{GameId}] Match room is not active ({Reason}). Timeout ignored.", gameId, roomClosedReason);
+                    StopTurnTimer(gameId, true);
+                    return;
+                }
+
+                if (!_gameStates.TryGetValue(gameId, out var gameState) || gameState == null || gameState.IsGameOver || gameState.Mirage == null)
+                {
+                    return;
+                }
+
+                var capturedRequests = new List<PlayerChoiceRequest>(capacity: 2);
+                lock (gameState.Mirage.RoundSyncLock)
+                {
+                    if (gameState.IsGameOver
+                        || gameState.Mode != GameMode.Mirage
+                        || gameState.Phase != GamePhase.Recruit
+                        || gameState.Mirage.RoundNumber != roundNumber)
+                    {
+                        _logger.LogInformation("[MirageTimeout:{GameId}] Round {RoundNumber} is no longer in Recruit phase. Ignoring timeout.",
+                            gameId, roundNumber);
+                        return;
+                    }
+
+                    if (gameState.TurnEndsAtUtc == null || gameState.TurnEndsAtUtc.Value != expectedEndUtc)
+                    {
+                        _logger.LogInformation("[MirageTimeout:{GameId}] Timer is stale. ExpectedEnd={ExpectedEnd:o}, CurrentEnd={CurrentEnd:o}",
+                            gameId, expectedEndUtc, gameState.TurnEndsAtUtc);
+                        return;
+                    }
+
+                    // Atomically mark this recruit round as closing and capture any pending choices belonging to this round.
+                    gameState.Mirage.ClosingRecruitRoundNumber = roundNumber;
+
+                    foreach (var playerId in new[] { gameState.Player1.PlayerId, gameState.Player2.PlayerId })
+                    {
+                        var pendingChoice = _pendingActionService.GetPendingChoiceForPlayer(gameId, playerId);
+                        if (pendingChoice?.Request != null)
+                        {
+                            capturedRequests.Add(pendingChoice.Request);
+                        }
+                    }
+                }
+
+                _logger.LogInformation("[MirageTimeout:{GameId}] Recruit timeout reached for Round {RoundNumber}. Resolving {ChoiceCount} captured choice(s) and locking both players.",
+                    gameId, roundNumber, capturedRequests.Count);
+
+                foreach (var capturedRequest in capturedRequests)
+                {
+                    ResolvePendingChoiceForTimeout(capturedRequest);
+                }
+
+                var wrapper = new PlayerActionWrapper
+                {
+                    ActionType = "MirageForceStartCombat",
+                    Origin = "mirage_recruit_timeout",
+                    PlayerId = gameState.Player1.PlayerId,
+                    ActionData = roundNumber
+                };
+
+                await EnqueuePlayerActionAsync(gameId, wrapper);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[MirageTimeout:{GameId}] Failed to handle Mirage recruit timeout for Round {RoundNumber}.", gameId, roundNumber);
+            }
         }
 
         private void StopTurnTimer(string gameId, bool clearState = false)
         {
-            if (_turnTimers.TryRemove(gameId, out var timer))
+            Timer? removedTimer = null;
+            lock (_timerLock)
             {
-                timer.Dispose();
+                _activeTimerIds.TryRemove(gameId, out _);
+                if (_turnTimers.TryRemove(gameId, out var timer))
+                {
+                    removedTimer = timer;
+                }
             }
+            removedTimer?.Dispose();
 
             if (clearState && _gameStates.TryGetValue(gameId, out var gameState) && gameState != null)
             {
@@ -2043,11 +2752,14 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
-        private async Task HandleTurnTimeoutAsync(string gameId, Guid playerId, DateTime expectedEndUtc)
+        private async Task HandleTurnTimeoutAsync(string gameId, Guid playerId, DateTime expectedEndUtc, Guid timerId)
         {
             try
             {
-                StopTurnTimer(gameId);
+                if (!TryCompleteTimerInstance(gameId, timerId))
+                {
+                    return;
+                }
 
                 if (!TryGetActiveRoom(gameId, out var roomClosedReason))
                 {
@@ -2100,6 +2812,7 @@ namespace ShadowverseBeyond.Server.Services
                 var wrapper = new PlayerActionWrapper
                 {
                     ActionType = "EndTurn",
+                    Origin = "turn_timeout",
                     PlayerId = playerId
                 };
 
@@ -2132,35 +2845,10 @@ namespace ShadowverseBeyond.Server.Services
 
         private void ResolvePendingChoiceForTimeout(PlayerChoiceRequest request)
         {
-            if (request.IsCancellable)
-            {
-                _pendingActionService.ForceResolveChoice(request.PendingChoiceId, PlayerChoiceResult.Cancelled);
-                _logger.LogInformation("[TurnTimeout] Cancelled pending choice {ChoiceId} for Player {PlayerId}.",
-                    request.PendingChoiceId, request.RequestingPlayerId);
-                return;
-            }
-
-            var selectable = request.SelectableTargetIds ?? new List<Guid>();
-            var min = Math.Max(0, request.MinSelectionCount);
-            var max = Math.Max(min, request.MaxSelectionCount);
-            var count = Math.Min(min, selectable.Count);
-
-            if (count < min)
-            {
-                _logger.LogWarning("[TurnTimeout] Not enough selectable targets for choice {ChoiceId}. Min={Min}, Available={Available}.",
-                    request.PendingChoiceId, min, selectable.Count);
-            }
-
-            var chosen = PickRandomTargets(selectable, count);
-            var forcedResult = new PlayerChoiceResult
-            {
-                WasCancelled = false,
-                ChosenTargetIds = chosen
-            };
-
+            var forcedResult = PendingActionService.CreateTimeoutChoiceResult(request);
             _pendingActionService.ForceResolveChoice(request.PendingChoiceId, forcedResult);
-            _logger.LogInformation("[TurnTimeout] Force-resolved pending choice {ChoiceId} with {Count} target(s) (Max={Max}).",
-                request.PendingChoiceId, chosen.Count, max);
+            _logger.LogInformation("[TurnTimeout] Force-resolved pending choice {ChoiceId} (WasCancelled={WasCancelled}, Count={Count}).",
+                request.PendingChoiceId, forcedResult.WasCancelled, forcedResult.ChosenTargetIds?.Count ?? 0);
         }
 
         private static List<Guid> PickRandomTargets(IReadOnlyList<Guid> targets, int count)
@@ -2351,6 +3039,57 @@ namespace ShadowverseBeyond.Server.Services
             Guid cardInstanceId, PlayMode mode, CancellationToken cancellationToken) =>
             CheckCardPlayabilityAsync(gameId, playerId, cardInstanceId, cancellationToken, mode);
 
+        public async Task<ActPlayabilityResultDto> GetActPlayabilityAsync(string gameId, Guid playerId, Guid cardInstanceId, CancellationToken cancellationToken)
+        {
+            var result = new ActPlayabilityResultDto
+            {
+                IsPlayable = false,
+                RequiresTargetSelection = false,
+                HasValidTargets = true
+            };
+
+            try
+            {
+                var gameState = GetGameState(gameId);
+                if (gameState == null)
+                {
+                    result.FailureReason = "游戏不存在。";
+                    return result;
+                }
+
+                var playerState = gameState.GetPlayerState(playerId);
+                if (playerState == null)
+                {
+                    result.FailureReason = "玩家状态未找到。";
+                    return result;
+                }
+
+                var card = playerState.Leader?.InstanceId == cardInstanceId
+                    ? playerState.Leader
+                    : playerState.Field.FirstOrDefault(c => c.InstanceId == cardInstanceId);
+                if (card == null)
+                {
+                    result.FailureReason = "战场上找不到该卡牌。";
+                    return result;
+                }
+
+                await using var scope = _serviceScopeFactory.CreateAsyncScope();
+                var sp = scope.ServiceProvider;
+                var gameContextAccessor = sp.GetRequiredService<IGameContextAccessor>();
+                using (var gameContext = new GameContext(sp, _mapper, gameContextAccessor, gameState, playerId, cancellationToken, null, card))
+                {
+                    result = await CheckActPlayabilityCoreLogicAsync(gameContext, playerState, card);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[GetActPlayabilityAsync:{GameId}] Unexpected error for Player {PlayerId}, Card {CardInstanceId}.", gameId, playerId, cardInstanceId);
+                result.IsPlayable = false;
+                result.FailureReason = "检查启动能力可玩性时发生错误。";
+            }
+
+            return result;
+        }
         // Helper to broadcast a single event to the game group
         private async Task BroadcastEventAsync(string gameId, GameEventDto gameEvent)
         {
@@ -2459,6 +3198,17 @@ namespace ShadowverseBeyond.Server.Services
             return string.IsNullOrWhiteSpace(actionType)
                 ? "操作被阻止。"
                 : $"操作“{actionType}”被阻止。";
+        }
+
+        private bool ResolvePlayer1IsFirst(DevMatchConfig? devConfig)
+        {
+            var mode = devConfig?.FirstPlayerMode?.Trim().ToLowerInvariant();
+            return mode switch
+            {
+                "host" => true,
+                "guest" => false,
+                _ => _firstPlayerSelector.IsPlayer1First()
+            };
         }
 
         private static string NormalizeGameId(string gameId)
@@ -2687,5 +3437,4 @@ namespace ShadowverseBeyond.Server.Services
 
     } // Closing brace for GameService class
 } // Closing brace for ShadowverseBeyond.Server.Services namespace
-
 

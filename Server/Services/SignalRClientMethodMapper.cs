@@ -40,6 +40,7 @@ namespace ShadowverseBeyond.Server.Services
             }
 
             _logger.LogDebug("[Mapper] Executing action for {EventType} targeting {TargetDescription}.", eventDto.GetType().Name, targetDescription);
+            ReplayRecorder.Message(eventDto, targetDescription);
             try
             {
                 // Use switch expression for mapping

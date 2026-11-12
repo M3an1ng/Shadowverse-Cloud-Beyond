@@ -122,8 +122,11 @@ public partial class EconomyService : IEconomyService
         // 获取所有可收集的卡片
         var setDefinitionId = userCardPack.CardPackDefinition!.CardSetDefinitionId;
         var availableCards = await _context.CardDefinitions
-            .Where(cd => cd.IsCollectible && cd.CardSetDefinitionId == setDefinitionId)
+            .Where(cd => !cd.IsMirageCard && cd.IsCollectible && cd.CardSetDefinitionId == setDefinitionId)
             .ToListAsync();
+        availableCards = availableCards
+            .Where(cd => ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.IsCardImplemented(cd.Id))
+            .ToList();
 
         if (availableCards.Count == 0)
         {

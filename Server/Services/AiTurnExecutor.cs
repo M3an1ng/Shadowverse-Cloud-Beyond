@@ -9,6 +9,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Mappings;
 using ShadowverseBeyond.Server.Models;
 using ShadowverseBeyond.Server.Services.Abstractions;
@@ -18,6 +20,7 @@ namespace ShadowverseBeyond.Server.Services;
 public class AiTurnExecutor
 {
     private const int ActionObservationDelayMilliseconds = 1000;
+    private const int MaxMirageActionsPerRound = 20;
     private readonly IGameService _gameService;
     private readonly IAiService _aiService;
     private readonly ILogger<AiTurnExecutor> _logger;
@@ -62,6 +65,12 @@ public class AiTurnExecutor
     {
         cancellationToken.ThrowIfCancellationRequested();
         var game = _gameService.GetGameState(gameId);
+        if (game?.Mode == GameMode.Mirage)
+        {
+            await ExecuteMirageRecruitTurnAsync(gameId, aiPlayerId, game.Mirage!.RoundNumber,
+                game.GetPlayerState(aiPlayerId)!.TurnNumber, cancellationToken);
+            return;
+        }
         if (game == null || game.IsGameOver || game.CurrentPlayerId != aiPlayerId)
         {
             return;
@@ -735,6 +744,92 @@ public class AiTurnExecutor
         if (await _aiService.DecideEvolveAsync(state, actor) is { } evolve) return ("PerformEvolve", evolve);
         if (await _aiService.DecideNextAttackAsync(state, actor) is { } attack) return ("PerformAttack", attack);
         return ("EndTurn", new { });
+    }
+
+    public async Task ExecuteMirageRecruitTurnAsync(string gameId, Guid aiPlayerId,
+        int expectedRoundNumber, int expectedTurnNumber, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var game = _gameService.GetGameState(gameId);
+        if (game == null) return;
+
+        for (var actionCount = 0; actionCount < MaxMirageActionsPerRound; actionCount++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsMirageRecruitActive(game, aiPlayerId, expectedRoundNumber, expectedTurnNumber)) return;
+
+            // 双方并行招募时仍在主队列边界捕获投影，避免读取正在被另一玩家修改的集合。
+            GameStateDto? snapshot = null;
+            var read = new MatchStateRead((state, services) =>
+            {
+                using var context = new GameContext(services, _mapper,
+                    services.GetRequiredService<IGameContextAccessor>(), state, aiPlayerId, cancellationToken);
+                snapshot = GameStateProjection.Create(state, context);
+                return Task.FromResult(System.Text.Json.JsonSerializer.SerializeToElement(snapshot));
+            }) { CancellationToken = cancellationToken };
+            if (!await _gameService.EnqueuePlayerActionAsync(gameId, read)) return;
+            var readCompletion = await read.Completion.WaitAsync(cancellationToken);
+            if (readCompletion.Status == PlayerActionCompletionStatus.Failed)
+                throw new InvalidOperationException(readCompletion.Reason);
+            if (readCompletion.Status != PlayerActionCompletionStatus.Completed
+                || !IsMirageRecruitActive(game, aiPlayerId, expectedRoundNumber, expectedTurnNumber)) return;
+
+            var decision = await _aiService.DecideMirageRecruitActionAsync(snapshot!, aiPlayerId);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsMirageRecruitActive(game, aiPlayerId, expectedRoundNumber, expectedTurnNumber)) return;
+
+            var completion = await SubmitMirageActionAsync(gameId, aiPlayerId, expectedTurnNumber, decision, cancellationToken);
+            if (completion.Status == PlayerActionCompletionStatus.Failed)
+                throw new InvalidOperationException(completion.Reason);
+            if (completion.Status == PlayerActionCompletionStatus.Cancelled || decision.ActionType == "MirageSetReady") return;
+            if (completion.Status != PlayerActionCompletionStatus.Completed)
+            {
+                _logger.LogWarning("[MIRAGE_AI:{GameId}:{PlayerId}:{Round}] Action {ActionType} {Status}: {Reason}",
+                    gameId, aiPlayerId, expectedRoundNumber, decision.ActionType, completion.Status, completion.Reason);
+                break;
+            }
+
+            await Task.Delay(ActionObservationDelayMilliseconds, cancellationToken);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsMirageRecruitActive(game, aiPlayerId, expectedRoundNumber, expectedTurnNumber)) return;
+        var readyCompletion = await SubmitMirageActionAsync(gameId, aiPlayerId, expectedTurnNumber,
+            new MirageAiActionDecision("MirageSetReady", new { }), cancellationToken);
+        if (readyCompletion.Status == PlayerActionCompletionStatus.Failed)
+            throw new InvalidOperationException(readyCompletion.Reason);
+    }
+
+    private async Task<PlayerActionCompletion> SubmitMirageActionAsync(string gameId, Guid playerId,
+        int expectedTurnNumber, MirageAiActionDecision decision, CancellationToken cancellationToken)
+    {
+        var action = new PlayerActionWrapper(decision.ActionType, playerId, decision.ActionData)
+        {
+            ExpectedTurnNumber = expectedTurnNumber,
+            CancellationToken = cancellationToken
+        };
+        _logger.LogInformation("[MIRAGE_AI:{GameId}:{PlayerId}] Submitting {ActionType} for turn {Turn}.",
+            gameId, playerId, decision.ActionType, expectedTurnNumber);
+        await _gameService.EnqueuePlayerActionAsync(gameId, action);
+        return await action.Completion.WaitAsync(cancellationToken);
+    }
+
+    private bool IsMirageRecruitActive(GameState game, Guid playerId, int roundNumber, int turnNumber)
+    {
+        if (!ReferenceEquals(_gameService.GetGameState(game.GameId), game)
+            || game.IsGameOver || game.Mode != GameMode.Mirage || game.Phase != GamePhase.Recruit
+            || game.Mirage == null)
+        {
+            return false;
+        }
+
+        lock (game.Mirage.RoundSyncLock)
+        {
+            return game.Mirage.RoundNumber == roundNumber
+                && game.Mirage.ClosingRecruitRoundNumber != roundNumber
+                && !game.Mirage.ReadyPlayerIds.Contains(playerId)
+                && game.GetPlayerState(playerId)?.TurnNumber == turnNumber;
+        }
     }
 
     private bool IsCurrentTurn(GameState game, Guid playerId, int turnNumber)

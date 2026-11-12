@@ -21,6 +21,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
                 return Array.Empty<CardDefinition>();
             }
 
+            if (gameContext?.CurrentGameState?.Mode == GameMode.Mirage)
+            {
+                if (!DslEnvironmentCardPoolNames.IsCurrentEnvironmentProperty(memberName))
+                {
+                    throw new InvalidOperationException(
+                        $"Classic environment pool '{memberName}' is not accessible in Mirage mode. Use 'db.{DslEnvironmentCardPoolNames.CurrentEnvironmentCardsPropertyName}'.");
+                }
+
+                if (provider is IEnvironmentScopedGameDataProvider mirageScopedProvider)
+                {
+                    return mirageScopedProvider.GetMirageCardDefinitions();
+                }
+
+                return (provider.Cards ?? Array.Empty<CardDefinition>())
+                    .Where(card => card != null && card.IsMirageCard && card.Id > 0 && card.Type != CardType.Leader)
+                    .ToList();
+            }
+
             if (!TryResolveEnvironment(memberName, gameContext, out var environment))
             {
                 return Array.Empty<CardDefinition>();
@@ -44,7 +62,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.DSL.Evaluation
             }
 
             return cards
-                .Where(card => (card.CardSetDefinition?.Environments ?? new List<DeckEnvironment>()).Contains(environment))
+                .Where(card => card != null && !card.IsMirageCard && (card.CardSetDefinition?.Environments ?? new List<DeckEnvironment>()).Contains(environment))
                 .ToList();
         }
 

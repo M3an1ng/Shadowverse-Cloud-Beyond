@@ -42,7 +42,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
     /// 【架构最终版】职责：作为效果链（Effect Chain）的模板和工厂。
     /// </summary>
     [DslExposable("能力", Description = "运行时能力实例")]
-    public class Ability : IAbility
+    public partial class Ability : IAbility
     {
         /// <summary>
         /// 静态配置引用
@@ -171,7 +171,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
         /// Gets the card instance that is the source of this ability by looking it up in the current game context.
         /// This is a computed property and may be null if the card is not found or if SourceCardId is null.
         /// </summary>
-        public CardInstance? SourceCard { get; }
+        public CardInstance? SourceCard { get; private set; }
 
         /// <summary>
         /// 总触发次数
@@ -274,9 +274,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             ITargetFactory targetFactory,
             TargetSelectionService targetSelectionService,
             CardInstance? sourceCard = null,
-            Guid? sourceBuffId = null)
+            Guid? sourceBuffId = null,
+            Guid? runtimeId = null)
         {
-            RuntimeId = Guid.NewGuid(); // Initialize RuntimeId here as it's part of the interface
+            RuntimeId = runtimeId ?? Guid.NewGuid();
             SummaryRootAbilityId = RuntimeId;
             SequenceScopePathPrefix = $"ability/{RuntimeId:N}";
             Config = config ?? throw new ArgumentNullException(nameof(config));
@@ -315,7 +316,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             {
                 return Task.FromResult(false); // 被沉默的卡牌能力不能触发
             }
-            return Task.FromResult(Trigger.CanTrigger(gameEvent, SourceCard));
+            // 三连仍在手牌时先收集进化选择，区域资格按登场后的状态检查。
+            var sourceZone = context.IsCancellable
+                && gameEvent is EvolveEvent { EvolvedCard: { IsMirageTriple: true, CurrentZone: CardZone.Hand } triple }
+                && SourceCard?.InstanceId == triple.InstanceId
+                    ? CardZone.Field
+                    : (CardZone?)null;
+            return Task.FromResult(Trigger.CanTrigger(gameEvent, SourceCard, sourceZone));
         }
 
         public bool HasKeyword(AbilityKeyword keyword)

@@ -1,0 +1,1338 @@
+﻿mse version: 2.0.0
+game: shadowverse
+short name: SVBYD
+full name: 超凡世界模板
+icon: back.png
+position hint: 000
+installer group: shadowverse/BYD
+
+version: 1.0.0
+depends on:
+	package: shadowverse.mse-game
+	version: 1.0.0
+
+card width: 1269
+card height: 715
+card dpi: 300
+
+############################################################## Constants
+
+############################################################## Extra style options
+
+
+styling field:
+	type: choice
+	name: token
+	choice: yes
+	choice: no
+	initial: no
+
+styling field:
+	type: choice
+	name: 繪師
+	choice: on
+	choice: off
+	initial: on
+
+styling field:
+	type: choice
+	name: 费用文字字体
+	choice: 1
+	choice: 2
+	choice: 3
+	initial: 1
+
+styling field:
+	type: choice
+	name: 手动更换背景
+	choice: on
+	choice: off
+	initial: off
+
+styling field:
+	type: choice
+	name: 简繁切换
+	choice: 简体
+	choice: 繁体
+	initial: 繁体
+	
+styling field:
+	type: choice
+	name: 自定义卡包
+	choice: on
+	choice: off
+	initial: off
+
+styling field:
+	type: text
+	name: 字号选择
+	default: 16.8
+
+
+############################################################## Card fields
+	
+card style:
+	type:
+		left: 81
+		top: 131
+		width: 391
+		height: 513
+		popup style: in place
+		render style: image
+		choice images:
+			從者: 
+				script:
+					if card.BYD_rarity == "铜" then "card_minion_bronze.png"
+					else if card.BYD_rarity == "银" then "card_minion_silver.png"
+					else if card.BYD_rarity == "金" then "card_minion_gold.png"
+					else if card.BYD_rarity == "虹" then "card_minion_legend.png"
+					else if card.BYD_rarity == "异画" then "card_minion_special.png"
+			法術:
+				script:
+					if card.BYD_rarity == "铜" then "card_spell_bronze.png"
+					else if card.BYD_rarity == "银" then "card_spell_silver.png"
+					else if card.BYD_rarity == "金" then "card_spell_gold.png"
+					else if card.BYD_rarity == "虹" then "card_spell_legend.png"
+					else if card.BYD_rarity == "异画" then "card_spell_special.png"
+			護符:
+				script:
+					if card.BYD_rarity == "铜" then "card_amulet_bronze.png"
+					else if card.BYD_rarity == "银" then "card_amulet_silver.png"
+					else if card.BYD_rarity == "金" then "card_amulet_gold.png"
+					else if card.BYD_rarity == "虹" then "card_amulet_legend.png"
+					else if card.BYD_rarity == "异画" then "card_amulet_special.png"
+		mask: card_mask.png
+	
+	image:
+		left: 136
+		top: 230
+		width: 293
+		height: 363
+		z index: -2
+	
+	changebackground:
+		left: 0
+		top: 0
+		width: { if contains(styling.手动更换背景, match:"on") then 1269 else 0 }
+		height: { if contains(styling.手动更换背景, match:"on") then 715 else 0 }
+		z index: -998
+	
+	BYD_rarity:
+		left: 0
+		top: 0
+		width: { if contains(styling.手动更换背景, match:"off") then 1269 else 495 }
+		height: 715
+		z index: -900
+		popup style: in place
+		render style: image
+		choice images:
+			铜: 0.png
+			银: 0.png
+			金: 0.png
+			虹: 0.png
+			异画: 0.png
+
+	BYD_cardpack:
+		left: 1035
+		top: 32
+		width: { if contains(styling.自定义卡包, match:"off") then 160 else 0 }
+		height: { if contains(styling.自定义卡包, match:"off") then 80 else 0 }
+		popup style: in place
+		render style: image
+		choice images:
+			默認: 0.png
+			傳說揭幕: 0.png
+			無限進化: 0.png
+			絕傑的繼承者: 0.png
+			蒼空六龍: 0.png
+			
+	BYD_cardpack_custom:
+		left: 1035
+		top: 32
+		width: { if contains(styling.自定义卡包, match:"on") then 160 else 0 }
+		height: { if contains(styling.自定义卡包, match:"on") then 80 else 0 }
+		z index: 1
+		visible: {contains(styling.自定义卡包, match:"on")}
+	
+	BYD_class:
+		left: 268
+		top: 572
+		width: 25
+		height: 26
+		z index: 1
+		popup style: in place
+		render style: image
+		choice images:
+			精靈: gem_forestcraft.png
+			皇家護衛: gem_swordcraft.png
+			巫師: gem_runecraft.png
+			龍族: gem_dragoncraft.png
+			夢魘: gem_abysscraft.png
+			主教: gem_havencraft.png
+			復仇者: gem_portalcraft.png
+			中立卡片: gem_neutral.png
+
+	   
+#=====================================================================
+#####更换背景附加#########################################################
+#=====================================================================
+
+extra card field:
+	type: choice
+	name: background_ground
+	choice: default
+	editable: false
+extra card style:
+	background_ground:
+		left:	0
+		top: 	0
+		width:	1269
+		height:	715
+		z index: 	-997
+		render style: image
+		image:
+			script:
+				if contains(styling.手动更换背景, match:"on") then "background.png"
+
+#=====================================================================
+#####卡牌名字#############################################################
+#=====================================================================
+
+card style:
+	name:
+		left: 167
+		bottom: 226
+		width: { if length(card.name) <= 5 then 231 else if length(card.name) <= 6 then 247 else 263 }
+		height: 36
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			italic name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: { if length(card.name) <= 5 then 22 else 28-length(card.name) }
+			scale down to: 15
+			color: rgb(255, 255, 255)
+		alignment: middle center shrink-overflow
+		z index: 11
+
+extra card field:
+	type: text
+	name: 卡牌名字
+	editable: false
+	save value: false
+	script: card.name
+extra card style:
+	卡牌名字:
+		left: 86
+		top: 76
+		width: 100
+		height: 50
+		z index: 3
+		alignment: left top
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: 28.6
+			color: white
+
+#=====================================================================
+#####卡牌消費#############################################################
+#=====================================================================
+
+card style:	
+	mana:
+		left: 90
+		top: 163
+		width: 85
+		height: 85
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: 45
+			color: rgb(255, 255, 255)
+		symbol font:
+			name: { if styling.费用文字字体 == "1" then "shadowverse-symd" else if styling.费用文字字体 == "2" then "shadowverse-symp" else "shadowverse-syms" }
+			size: 28
+		alignment: middle center
+		z index: 11
+
+#=====================================================================
+#####內文文字排版#########################################################
+#=====================================================================
+
+card style:
+	rule_text:
+		left: 527
+		top: { 180 + if to_string(card.rule_style) == "纹章" or to_string(card.rule_style) == "信仰" then 60 else 0 }
+		right: 1141
+		height: { max(22, card_style.rule_text.content_height) + 6}
+		visible: true
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			italic name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: { if styling.字号选择 == "" then 16.8 else (to_number(styling.字号选择) or else 16.8) }
+			color: rgb(255, 255, 255)
+			shadow color: rgba(0,0,0,102)
+			shadow displacement x: 0.5
+			shadow displacement y: 0.5
+			shadow blur: 3
+		symbol font:
+			name: shadowverse-beyond-symp
+			size: 88
+		alignment: middle left
+		z index: 3
+		line height hard: 1.4
+		line height line: 1.4
+		line height soft: 1.4
+card style:
+	rule_style:
+		left: 514
+		top: { (180 + if to_string(card.rule_style) == "纹章" or to_string(card.rule_style) == "信仰" then 60 else 0) + 9 }
+		width: 10
+		height: 10
+		z index: 4
+		render style: image hidden
+		image: style_icon.png
+extra card field:
+	type: choice
+	name: paragraph_background_1
+	editable: false
+	choice: default
+extra card style:
+	paragraph_background_1:
+		left: 513
+		top: { 180 - 5 }
+		right: 1155
+		height: { max(22, card_style.rule_text.content_height) + 6 + 10 + if to_string(card.rule_style) == "纹章" or to_string(card.rule_style) == "信仰" then 60 else 0 }
+		z index: 1
+		render style: image
+		image:
+			script:
+				if to_string(card.rule_style) == "进化" then "bg_ev_" + max(1, min(5, card_style.rule_text.content_lines)) + ".png"
+				else if to_string(card.rule_style) == "超进化" then "bg_sev_" + max(1, min(5, card_style.rule_text.content_lines)) + ".png"
+				else if to_string(card.rule_style) == "纹章" or to_string(card.rule_style) == "信仰" then "bg_crest_" + max(1, min(5, card_style.rule_text.content_lines)) + ".png"
+				else "0.png"
+		visible: true
+
+
+extra card field:
+	type: choice
+	name: icon_crest_1
+	editable: false
+	choice: default
+extra card style:
+	icon_crest_1:
+		left: 523
+		top: { 180 + 7 }
+		width: 449
+		height: 48
+		z index: 3
+		render style: image
+		image: { if to_string(card.rule_style) == "纹章" then "Crest.png" else "Faith.png" }
+		visible: { to_string(card.rule_style) == "纹章" or to_string(card.rule_style) == "信仰" }
+
+extra card field:
+	type: choice
+	name: crest_mark_1
+	editable: false
+	choice: default
+extra card style:
+	crest_mark_1:
+		left: 544
+		top: { 180 + 7 + 4 }
+		width: 36
+		height: 40
+		z index: 5
+		render style: image
+		image: { if to_string(card.rule_style) == "纹章" then "Crest_mark.png" else "Faith_mark.png" }
+		visible: { to_string(card.rule_style) == "纹章" or to_string(card.rule_style) == "信仰" }
+	
+extra card field:
+	type: text
+	name: crest_label_1
+	default: if to_string(card.rule_style) == "信仰" then (if contains(styling.简繁切换, match:"繁体") then "信仰" else "信仰") else if to_string(card.rule_style) == "纹章" then (if contains(styling.简繁切换, match:"繁体") then "紋章" else "纹章") else ""
+extra card style:
+	crest_label_1:
+		left: { 523 + 107 }
+		top: { 180 + 7 }
+		width: 100
+		height: { if to_string(card.rule_style) == "纹章" or to_string(card.rule_style) == "信仰" then 48 else 0 }
+		z index: 6
+		alignment: left middle
+		visible: { to_string(card.rule_style) == "纹章" or to_string(card.rule_style) == "信仰" }
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: 16.8
+			color: rgb(236, 207, 113)
+
+card style:
+	card_crest:
+		left: { 523 + 60 }
+		top: { 180 + 7 + 4 }
+		width: { if to_string(card.rule_style) == "纹章" or to_string(card.rule_style) == "信仰" then 40 else 0 }
+		height: { if to_string(card.rule_style) == "纹章" or to_string(card.rule_style) == "信仰" then 40 else 0 }
+		mask:crest_mask.png
+		z index: 5
+		visible: { to_string(card.rule_style) == "纹章" or to_string(card.rule_style) == "信仰" }
+extra card field:
+	type: choice
+	name: card_crest_default_1
+	editable: false
+	choice: default
+extra card style:
+	card_crest_default_1:
+		left: { 523 + 60 + 1 }
+		top: { 180 + 7 + 5 }
+		width: 38
+		height: 38
+		z index: 4
+		render style: image
+		mask:crest_mask.png
+		image: Crest_default.png
+		visible: { to_string(card.rule_style) == "纹章" or to_string(card.rule_style) == "信仰"}
+extra card field:
+	type: choice
+	name: separator_1
+	editable: false
+	choice: default
+extra card style:
+	separator_1:
+		left: 507
+		top: { card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 20 }
+		width: 653
+		height: 2
+		z index: 2
+		render style: image
+		image: { set_alpha("detail_spit.png", alpha: 0.3) }
+		visible: { to_string(card.rule_text) != "" and to_string(card.rule_style) == "普通（分割线）" }
+
+card style:
+	rule_text_2:
+		left: 527
+		top: { ((if to_string(card.rule_style) == "普通（分割线）" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 22) else if to_string(card.rule_style) == "普通" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height)) else (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 11)) + 20) + (if to_string(card.rule_style_2) == "纹章" or to_string(card.rule_style_2) == "信仰" then 65 else if to_string(card.rule_style_2) == "普通" or to_string(card.rule_style_2) == "普通（分割线）" then -6 else 5) }
+		right: 1141
+		height: { if to_string(card.rule_text) == "" and to_string(card.rule_text_2) == "" then 0 else max(22, card_style.rule_text_2.content_height) + 6 }
+		visible: { to_string(card.rule_text) != "" or to_string(card.rule_text_2) != "" }
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			italic name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: { if styling.字号选择 == "" then 16.8 else (to_number(styling.字号选择) or else 16.8) }
+			color: rgb(255, 255, 255)
+			shadow color: rgba(0,0,0,102)
+			shadow displacement x: 0.5
+			shadow displacement y: 0.5
+			shadow blur: 3
+		symbol font:
+			name: shadowverse-beyond-symp
+			size: 88
+		alignment: middle left
+		z index: 3
+		line height hard: 1.4
+		line height line: 1.4
+		line height soft: 1.4
+card style:
+	rule_style_2:
+		left: 514
+		top: { ((if to_string(card.rule_style) == "普通（分割线）" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 22) else if to_string(card.rule_style) == "普通" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height)) else (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 11)) + 20) + (if to_string(card.rule_style_2) == "纹章" or to_string(card.rule_style_2) == "信仰" then 65 else if to_string(card.rule_style_2) == "普通" or to_string(card.rule_style_2) == "普通（分割线）" then -6 else 5) + 9}
+		width: { if to_string(card.rule_text) != "" or to_string(card.rule_text_2) != "" then 10 else 0 }
+		height: { if to_string(card.rule_text) != "" or to_string(card.rule_text_2) != "" then 10 else 0 }
+		z index: 4
+		render style: image hidden
+		image: style_icon.png
+extra card field:
+	type: choice
+	name: paragraph_background_2
+	editable: false
+	choice: default
+extra card style:
+	paragraph_background_2:
+		left: 513
+		top: { (((if to_string(card.rule_style) == "普通（分割线）" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 22) else if to_string(card.rule_style) == "普通" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height)) else (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 11)) + 20)) + (if to_string(card.rule_style_2) == "普通" or to_string(card.rule_style_2) == "普通（分割线）" then -6 else 0) }
+		right: 1155
+		height: { if to_string(card.rule_text) == "" and to_string(card.rule_text_2) == "" then 0 else max(22, card_style.rule_text_2.content_height) + 6 + 10 + if to_string(card.rule_style_2) == "纹章" or to_string(card.rule_style_2) == "信仰" then 60 else 0 }
+		z index: 1
+		render style: image
+		image:
+			script:
+				if to_string(card.rule_style_2) == "进化" then "bg_ev_" + max(1, min(5, card_style.rule_text_2.content_lines)) + ".png"
+				else if to_string(card.rule_style_2) == "超进化" then "bg_sev_" + max(1, min(5, card_style.rule_text_2.content_lines)) + ".png"
+				else if to_string(card.rule_style_2) == "纹章" or to_string(card.rule_style_2) == "信仰" then "bg_crest_" + max(1, min(5, card_style.rule_text_2.content_lines)) + ".png"
+				else "0.png"
+		visible: { to_string(card.rule_text) != "" or to_string(card.rule_text_2) != "" }
+
+
+extra card field:
+	type: choice
+	name: icon_crest_2
+	editable: false
+	choice: default
+extra card style:
+	icon_crest_2:
+		left: 523
+		top: { ((if to_string(card.rule_style) == "普通（分割线）" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 22) else if to_string(card.rule_style) == "普通" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height)) else (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 11)) + 20) + 12 }
+		width: 449
+		height: 48
+		z index: 3
+		render style: image
+		image: { if to_string(card.rule_style_2) == "纹章" then "Crest.png" else "Faith.png" }
+		visible: { (to_string(card.rule_text) != "" or to_string(card.rule_text_2) != "") and (to_string(card.rule_style_2) == "纹章" or to_string(card.rule_style_2) == "信仰") }
+
+extra card field:
+	type: choice
+	name: crest_mark_2
+	editable: false
+	choice: default
+extra card style:
+	crest_mark_2:
+		left: 544
+		top: { ((if to_string(card.rule_style) == "普通（分割线）" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 22) else if to_string(card.rule_style) == "普通" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height)) else (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 11)) + 20) + 16 }
+		width: 36
+		height: 40
+		z index: 5
+		render style: image
+		image: { if to_string(card.rule_style_2) == "纹章" then "Crest_mark.png" else "Faith_mark.png" }
+		visible: { (to_string(card.rule_text) != "" or to_string(card.rule_text_2) != "") and (to_string(card.rule_style_2) == "纹章" or to_string(card.rule_style_2) == "信仰") }
+	
+extra card field:
+	type: text
+	name: crest_label_2
+	default: if to_string(card.rule_style_2) == "信仰" then (if contains(styling.简繁切换, match:"繁体") then "信仰" else "信仰") else if to_string(card.rule_style_2) == "纹章" then (if contains(styling.简繁切换, match:"繁体") then "紋章" else "纹章") else ""
+extra card style:
+	crest_label_2:
+		left: { 523 + 107 }
+		top: { ((if to_string(card.rule_style) == "普通（分割线）" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 22) else if to_string(card.rule_style) == "普通" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height)) else (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 11)) + 20) + 12 }
+		width: 100
+		height: { if (to_string(card.rule_text) != "" or to_string(card.rule_text_2) != "") and (to_string(card.rule_style_2) == "纹章" or to_string(card.rule_style_2) == "信仰") then 48 else 0 }
+		z index: 6
+		alignment: left middle
+		visible: { (to_string(card.rule_text) != "" or to_string(card.rule_text_2) != "") and (to_string(card.rule_style_2) == "纹章" or to_string(card.rule_style_2) == "信仰") }
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: 16.8
+			color: rgb(236, 207, 113)
+
+card style:
+	card_crest_2:
+		left: { 523 + 60 }
+		top: { ((if to_string(card.rule_style) == "普通（分割线）" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 22) else if to_string(card.rule_style) == "普通" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height)) else (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 11)) + 20) + 16 }
+		width: { if (to_string(card.rule_text) != "" or to_string(card.rule_text_2) != "") and (to_string(card.rule_style_2) == "纹章" or to_string(card.rule_style_2) == "信仰") then 39 else 0 }
+		height: { if (to_string(card.rule_text) != "" or to_string(card.rule_text_2) != "") and (to_string(card.rule_style_2) == "纹章" or to_string(card.rule_style_2) == "信仰") then 39 else 0 }
+		mask:crest_mask.png
+		z index: 5
+		visible: { (to_string(card.rule_text) != "" or to_string(card.rule_text_2) != "") and (to_string(card.rule_style_2) == "纹章" or to_string(card.rule_style_2) == "信仰") }
+extra card field:
+	type: choice
+	name: card_crest_default_2
+	editable: false
+	choice: default
+extra card style:
+	card_crest_default_2:
+		left: { 523 + 60 + 1 }
+		top: { ((if to_string(card.rule_style) == "普通（分割线）" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 22) else if to_string(card.rule_style) == "普通" then (card_style.rule_text.top + max(22, card_style.rule_text.content_height)) else (card_style.rule_text.top + max(22, card_style.rule_text.content_height) + 11)) + 20) + 17 }
+		width: 38
+		height: 38
+		z index: 4
+		render style: image
+		mask:crest_mask.png
+		image: Crest_default.png
+		visible: { (to_string(card.rule_text) != "" or to_string(card.rule_text_2) != "") and (to_string(card.rule_style_2) == "纹章" or to_string(card.rule_style_2) == "信仰")}
+extra card field:
+	type: choice
+	name: separator_2
+	editable: false
+	choice: default
+extra card style:
+	separator_2:
+		left: 507
+		top: { card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 20 }
+		width: 653
+		height: 2
+		z index: 2
+		render style: image
+		image: { set_alpha("detail_spit.png", alpha: 0.3) }
+		visible: { to_string(card.rule_text_2) != "" and to_string(card.rule_style_2) == "普通（分割线）" }
+
+card style:
+	rule_text_3:
+		left: 527
+		top: { ((if to_string(card.rule_style_2) == "普通（分割线）" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 22) else if to_string(card.rule_style_2) == "普通" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height)) else (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 11)) + 20) + (if to_string(card.rule_style_3) == "纹章" or to_string(card.rule_style_3) == "信仰" then 65 else if to_string(card.rule_style_3) == "普通" or to_string(card.rule_style_3) == "普通（分割线）" then -6 else 5) }
+		right: 1141
+		height: { if to_string(card.rule_text_2) == "" and to_string(card.rule_text_3) == "" then 0 else max(22, card_style.rule_text_3.content_height) + 6 }
+		visible: { to_string(card.rule_text_2) != "" or to_string(card.rule_text_3) != "" }
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			italic name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: { if styling.字号选择 == "" then 16.8 else (to_number(styling.字号选择) or else 16.8) }
+			color: rgb(255, 255, 255)
+			shadow color: rgba(0,0,0,102)
+			shadow displacement x: 0.5
+			shadow displacement y: 0.5
+			shadow blur: 3
+		symbol font:
+			name: shadowverse-beyond-symp
+			size: 88
+		alignment: middle left
+		z index: 3
+		line height hard: 1.4
+		line height line: 1.4
+		line height soft: 1.4
+card style:
+	rule_style_3:
+		left: 514
+		top: { ((if to_string(card.rule_style_2) == "普通（分割线）" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 22) else if to_string(card.rule_style_2) == "普通" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height)) else (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 11)) + 20) + (if to_string(card.rule_style_3) == "纹章" or to_string(card.rule_style_3) == "信仰" then 65 else if to_string(card.rule_style_3) == "普通" or to_string(card.rule_style_3) == "普通（分割线）" then -6 else 5) + 9}
+		width: { if to_string(card.rule_text_2) != "" or to_string(card.rule_text_3) != "" then 10 else 0 }
+		height: { if to_string(card.rule_text_2) != "" or to_string(card.rule_text_3) != "" then 10 else 0 }
+		z index: 4
+		render style: image hidden
+		image: style_icon.png
+extra card field:
+	type: choice
+	name: paragraph_background_3
+	editable: false
+	choice: default
+extra card style:
+	paragraph_background_3:
+		left: 513
+		top: { ((if to_string(card.rule_style_2) == "普通（分割线）" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 22) else if to_string(card.rule_style_2) == "普通" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height)) else (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 11)) + 20) + (if to_string(card.rule_style_3) == "普通" or to_string(card.rule_style_3) == "普通（分割线）" then -6 else 0) }
+		right: 1155
+		height: { if to_string(card.rule_text_2) == "" and to_string(card.rule_text_3) == "" then 0 else max(22, card_style.rule_text_3.content_height) + 6 + 10 + if to_string(card.rule_style_3) == "纹章" or to_string(card.rule_style_3) == "信仰" then 60 else 0 }
+		z index: 1
+		render style: image
+		image:
+			script:
+				if to_string(card.rule_style_3) == "进化" then "bg_ev_" + max(1, min(5, card_style.rule_text_3.content_lines)) + ".png"
+				else if to_string(card.rule_style_3) == "超进化" then "bg_sev_" + max(1, min(5, card_style.rule_text_3.content_lines)) + ".png"
+				else if to_string(card.rule_style_3) == "纹章" or to_string(card.rule_style_3) == "信仰" then "bg_crest_" + max(1, min(5, card_style.rule_text_3.content_lines)) + ".png"
+				else "0.png"
+		visible: { to_string(card.rule_text_2) != "" or to_string(card.rule_text_3) != "" }
+
+
+extra card field:
+	type: choice
+	name: icon_crest_3
+	editable: false
+	choice: default
+extra card style:
+	icon_crest_3:
+		left: 523
+		top: { ((if to_string(card.rule_style_2) == "普通（分割线）" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 22) else if to_string(card.rule_style_2) == "普通" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height)) else (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 11)) + 20) + 12}
+		width: 449
+		height: 48
+		z index: 3
+		render style: image
+		image: { if to_string(card.rule_style_3) == "纹章" then "Crest.png" else "Faith.png" }
+		visible: { (to_string(card.rule_text_2) != "" or to_string(card.rule_text_3) != "") and (to_string(card.rule_style_3) == "纹章" or to_string(card.rule_style_3) == "信仰") }
+
+extra card field:
+	type: choice
+	name: crest_mark_3
+	editable: false
+	choice: default
+extra card style:
+	crest_mark_3:
+		left: 544
+		top: { ((if to_string(card.rule_style_2) == "普通（分割线）" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 22) else if to_string(card.rule_style_2) == "普通" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height)) else (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 11)) + 20) + 16 }
+		width: 36
+		height: 40
+		z index: 5
+		render style: image
+		image: { if to_string(card.rule_style_3) == "纹章" then "Crest_mark.png" else "Faith_mark.png" }
+		visible: { (to_string(card.rule_text_2) != "" or to_string(card.rule_text_3) != "") and (to_string(card.rule_style_3) == "纹章" or to_string(card.rule_style_3) == "信仰") }
+	
+extra card field:
+	type: text
+	name: crest_label_3
+	default: if to_string(card.rule_style_3) == "信仰" then (if contains(styling.简繁切换, match:"繁体") then "信仰" else "信仰") else if to_string(card.rule_style_3) == "纹章" then (if contains(styling.简繁切换, match:"繁体") then "紋章" else "纹章") else ""
+extra card style:
+	crest_label_3:
+		left: { 523 + 107 }
+		top: { ((if to_string(card.rule_style_2) == "普通（分割线）" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 22) else if to_string(card.rule_style_2) == "普通" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height)) else (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 11)) + 20) + 12}
+		width: 100
+		height: { if (to_string(card.rule_text_2) != "" or to_string(card.rule_text_3) != "") and (to_string(card.rule_style_3) == "纹章" or to_string(card.rule_style_3) == "信仰") then 48 else 0 }
+		z index: 6
+		alignment: left middle
+		visible: { (to_string(card.rule_text_2) != "" or to_string(card.rule_text_3) != "") and (to_string(card.rule_style_3) == "纹章" or to_string(card.rule_style_3) == "信仰") }
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: 16.8
+			color: rgb(236, 207, 113)
+
+card style:
+	card_crest_3:
+		left: { 523 + 60 }
+		top: { ((if to_string(card.rule_style_2) == "普通（分割线）" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 22) else if to_string(card.rule_style_2) == "普通" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height)) else (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 11)) + 20) + 16 }
+		width: { if (to_string(card.rule_text_2) != "" or to_string(card.rule_text_3) != "") and (to_string(card.rule_style_3) == "纹章" or to_string(card.rule_style_3) == "信仰") then 39 else 0 }
+		height: { if (to_string(card.rule_text_2) != "" or to_string(card.rule_text_3) != "") and (to_string(card.rule_style_3) == "纹章" or to_string(card.rule_style_3) == "信仰") then 39 else 0 }
+		mask:crest_mask.png
+		z index: 5
+		visible: { (to_string(card.rule_text_2) != "" or to_string(card.rule_text_3) != "") and (to_string(card.rule_style_3) == "纹章" or to_string(card.rule_style_3) == "信仰") }
+extra card field:
+	type: choice
+	name: card_crest_default_3
+	editable: false
+	choice: default
+extra card style:
+	card_crest_default_3:
+		left: { 523 + 60 + 1 }
+		top: { ((if to_string(card.rule_style_2) == "普通（分割线）" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 22) else if to_string(card.rule_style_2) == "普通" then (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height)) else (card_style.rule_text_2.top + max(22, card_style.rule_text_2.content_height) + 11)) + 20) + 17}
+		width: 38
+		height: 38
+		z index: 4
+		render style: image
+		mask:crest_mask.png
+		image: Crest_default.png
+		visible: { (to_string(card.rule_text_2) != "" or to_string(card.rule_text_3) != "") and (to_string(card.rule_style_3) == "纹章" or to_string(card.rule_style_3) == "信仰") }
+extra card field:
+	type: choice
+	name: separator_3
+	editable: false
+	choice: default
+extra card style:
+	separator_3:
+		left: 507
+		top: { card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 20 }
+		width: 653
+		height: 2
+		z index: 2
+		render style: image
+		image: { set_alpha("detail_spit.png", alpha: 0.3) }
+		visible: { to_string(card.rule_text_3) != "" and to_string(card.rule_style_3) == "普通（分割线）" }
+
+card style:
+	rule_text_4:
+		left: 527
+		top: { ((if to_string(card.rule_style_3) == "普通（分割线）" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 22) else if to_string(card.rule_style_3) == "普通" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height)) else (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 11)) + 20) + (if to_string(card.rule_style_4) == "纹章" or to_string(card.rule_style_4) == "信仰" then 65 else if to_string(card.rule_style_4) == "普通" or to_string(card.rule_style_4) == "普通（分割线）" then -6 else 5) }
+		right: 1141
+		height: { if to_string(card.rule_text_3) == "" and to_string(card.rule_text_4) == "" then 0 else max(22, card_style.rule_text_4.content_height) + 6 }
+		visible: { to_string(card.rule_text_3) != "" or to_string(card.rule_text_4) != "" }
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			italic name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: { if styling.字号选择 == "" then 16.8 else (to_number(styling.字号选择) or else 16.8) }
+			color: rgb(255, 255, 255)
+			shadow color: rgba(0,0,0,102)
+			shadow displacement x: 0.5
+			shadow displacement y: 0.5
+			shadow blur: 3
+		symbol font:
+			name: shadowverse-beyond-symp
+			size: 88
+		alignment: middle left
+		z index: 3
+		line height hard: 1.4
+		line height line: 1.4
+		line height soft: 1.4
+card style:
+	rule_style_4:
+		left: 514
+		top: { ((if to_string(card.rule_style_3) == "普通（分割线）" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 22) else if to_string(card.rule_style_3) == "普通" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height)) else (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 11)) + 20) + (if to_string(card.rule_style_4) == "纹章" or to_string(card.rule_style_4) == "信仰" then 65 else if to_string(card.rule_style_4) == "普通" or to_string(card.rule_style_4) == "普通（分割线）" then -6 else 5) + 9}
+		width: { if to_string(card.rule_text_3) != "" or to_string(card.rule_text_4) != "" then 10 else 0 }
+		height: { if to_string(card.rule_text_3) != "" or to_string(card.rule_text_4) != "" then 10 else 0 }
+		z index: 4
+		render style: image hidden
+		image: style_icon.png
+extra card field:
+	type: choice
+	name: paragraph_background_4
+	editable: false
+	choice: default
+extra card style:
+	paragraph_background_4:
+		left: 513
+		top: { ((if to_string(card.rule_style_3) == "普通（分割线）" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 22) else if to_string(card.rule_style_3) == "普通" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height)) else (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 11)) + 20) + (if to_string(card.rule_style_4) == "普通" or to_string(card.rule_style_4) == "普通（分割线）" then -6 else 0) }
+		right: 1155
+		height: { if to_string(card.rule_text_3) == "" and to_string(card.rule_text_4) == "" then 0 else max(22, card_style.rule_text_4.content_height) + 6 + 10 + if to_string(card.rule_style_4) == "纹章" or to_string(card.rule_style_4) == "信仰" then 60 else 0 }
+		z index: 1
+		render style: image
+		image:
+			script:
+				if to_string(card.rule_style_4) == "进化" then "bg_ev_" + max(1, min(5, card_style.rule_text_4.content_lines)) + ".png"
+				else if to_string(card.rule_style_4) == "超进化" then "bg_sev_" + max(1, min(5, card_style.rule_text_4.content_lines)) + ".png"
+				else if to_string(card.rule_style_4) == "纹章" or to_string(card.rule_style_4) == "信仰" then "bg_crest_" + max(1, min(5, card_style.rule_text_4.content_lines)) + ".png"
+				else "0.png"
+		visible: { to_string(card.rule_text_3) != "" or to_string(card.rule_text_4) != "" }
+
+
+extra card field:
+	type: choice
+	name: icon_crest_4
+	editable: false
+	choice: default
+extra card style:
+	icon_crest_4:
+		left: 523
+		top: { ((if to_string(card.rule_style_3) == "普通（分割线）" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 22) else if to_string(card.rule_style_3) == "普通" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height)) else (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 11)) + 20) + 12}
+		width: 449
+		height: 48
+		z index: 3
+		render style: image
+		image: { if to_string(card.rule_style_4) == "纹章" then "Crest.png" else "Faith.png" }
+		visible: { (to_string(card.rule_text_3) != "" or to_string(card.rule_text_4) != "") and (to_string(card.rule_style_4) == "纹章" or to_string(card.rule_style_4) == "信仰") }
+
+extra card field:
+	type: choice
+	name: crest_mark_4
+	editable: false
+	choice: default
+extra card style:
+	crest_mark_4:
+		left: 544
+		top: { ((if to_string(card.rule_style_3) == "普通（分割线）" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 22) else if to_string(card.rule_style_3) == "普通" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height)) else (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 11)) + 20) + 16 }
+		width: 36
+		height: 40
+		z index: 5
+		render style: image
+		image: { if to_string(card.rule_style_4) == "纹章" then "Crest_mark.png" else "Faith_mark.png" }
+		visible: { (to_string(card.rule_text_3) != "" or to_string(card.rule_text_4) != "") and (to_string(card.rule_style_4) == "纹章" or to_string(card.rule_style_4) == "信仰") }
+	
+extra card field:
+	type: text
+	name: crest_label_4
+	default: if to_string(card.rule_style_4) == "信仰" then (if contains(styling.简繁切换, match:"繁体") then "信仰" else "信仰") else if to_string(card.rule_style_4) == "纹章" then (if contains(styling.简繁切换, match:"繁体") then "紋章" else "纹章") else ""
+extra card style:
+	crest_label_4:
+		left: { 523 + 107 }
+		top: { ((if to_string(card.rule_style_3) == "普通（分割线）" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 22) else if to_string(card.rule_style_3) == "普通" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height)) else (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 11)) + 20) + 12}
+		width: 100
+		height: { if (to_string(card.rule_text_3) != "" or to_string(card.rule_text_4) != "") and (to_string(card.rule_style_4) == "纹章" or to_string(card.rule_style_4) == "信仰") then 48 else 0 }
+		z index: 6
+		alignment: left middle
+		visible: { (to_string(card.rule_text_3) != "" or to_string(card.rule_text_4) != "") and (to_string(card.rule_style_4) == "纹章" or to_string(card.rule_style_4) == "信仰") }
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: 16.8
+			color: rgb(236, 207, 113)
+
+card style:
+	card_crest_4:
+		left: { 523 + 60 }
+		top: { ((if to_string(card.rule_style_3) == "普通（分割线）" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 22) else if to_string(card.rule_style_3) == "普通" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height)) else (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 11)) + 20) + 16}
+		width: { if (to_string(card.rule_text_3) != "" or to_string(card.rule_text_4) != "") and (to_string(card.rule_style_4) == "纹章" or to_string(card.rule_style_4) == "信仰") then 39 else 0 }
+		height: { if (to_string(card.rule_text_3) != "" or to_string(card.rule_text_4) != "") and (to_string(card.rule_style_4) == "纹章" or to_string(card.rule_style_4) == "信仰") then 39 else 0 }
+		mask:crest_mask.png
+		z index: 5
+		visible: { (to_string(card.rule_text_3) != "" or to_string(card.rule_text_4) != "") and (to_string(card.rule_style_4) == "纹章" or to_string(card.rule_style_4) == "信仰") }
+extra card field:
+	type: choice
+	name: card_crest_default_4
+	editable: false
+	choice: default
+extra card style:
+	card_crest_default_4:
+		left: { 523 + 60 + 1 }
+		top: { ((if to_string(card.rule_style_3) == "普通（分割线）" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 22) else if to_string(card.rule_style_3) == "普通" then (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height)) else (card_style.rule_text_3.top + max(22, card_style.rule_text_3.content_height) + 11)) + 20) + 17}
+		width: 38
+		height: 38
+		z index: 4
+		render style: image
+		mask:crest_mask.png
+		image: Crest_default.png
+		visible: { (to_string(card.rule_text_3) != "" or to_string(card.rule_text_4) != "") and (to_string(card.rule_style_4) == "纹章" or to_string(card.rule_style_4) == "信仰")}
+extra card field:
+	type: choice
+	name: separator_4
+	editable: false
+	choice: default
+extra card style:
+	separator_4:
+		left: 507
+		top: { card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 20 }
+		width: 653
+		height: 1
+		z index: 2
+		render style: image
+		image: { set_alpha("detail_spit.png", alpha: 0.5) }
+		visible: { to_string(card.rule_text_4) != "" and to_string(card.rule_style_4) == "普通（分割线）" }
+
+card style:
+	rule_text_5:
+		left: 527
+		top: { ((if to_string(card.rule_style_4) == "普通（分割线）" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 22) else if to_string(card.rule_style_4) == "普通" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height)) else (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 11)) + 20) + (if to_string(card.rule_style_5) == "纹章" or to_string(card.rule_style_5) == "信仰" then 65 else if to_string(card.rule_style_5) == "普通" or to_string(card.rule_style_5) == "普通（分割线）" then -6 else 5) }
+		right: 1141
+		height: { if to_string(card.rule_text_4) == "" and to_string(card.rule_text_5) == "" then 0 else max(22, card_style.rule_text_5.content_height) + 6 }
+		visible: { to_string(card.rule_text_4) != "" or to_string(card.rule_text_5) != "" }
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			italic name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: { if styling.字号选择 == "" then 16.8 else (to_number(styling.字号选择) or else 16.8) }
+			color: rgb(255, 255, 255)
+			shadow color: rgba(0,0,0,102)
+			shadow displacement x: 0.5
+			shadow displacement y: 0.5
+			shadow blur: 3
+		symbol font:
+			name: shadowverse-beyond-symp
+			size: 88
+		alignment: middle left
+		z index: 3
+		line height hard: 1.4
+		line height line: 1.4
+		line height soft: 1.4
+card style:
+	rule_style_5:
+		left: 514
+		top: { ((if to_string(card.rule_style_4) == "普通（分割线）" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 22) else if to_string(card.rule_style_4) == "普通" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height)) else (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 11)) + 20) + (if to_string(card.rule_style_5) == "纹章" or to_string(card.rule_style_5) == "信仰" then 65 else if to_string(card.rule_style_5) == "普通" or to_string(card.rule_style_5) == "普通（分割线）" then -6 else 5) + 9}
+		width: { if to_string(card.rule_text_4) != "" or to_string(card.rule_text_5) != "" then 10 else 0 }
+		height: { if to_string(card.rule_text_4) != "" or to_string(card.rule_text_5) != "" then 10 else 0 }
+		z index: 4
+		render style: image hidden
+		image: style_icon.png
+extra card field:
+	type: choice
+	name: paragraph_background_5
+	editable: false
+	choice: default
+extra card style:
+	paragraph_background_5:
+		left: 513
+		top: { ((if to_string(card.rule_style_4) == "普通（分割线）" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 22) else if to_string(card.rule_style_4) == "普通" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height)) else (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 11)) + 20) + (if to_string(card.rule_style_5) == "普通" or to_string(card.rule_style_5) == "普通（分割线）" then -6 else 0) }
+		right: 1155
+		height: { if to_string(card.rule_text_4) == "" and to_string(card.rule_text_5) == "" then 0 else max(22, card_style.rule_text_5.content_height) + 6 + 10 + if to_string(card.rule_style_5) == "纹章" or to_string(card.rule_style_5) == "信仰" then 60 else 0 }
+		z index: 1
+		render style: image
+		image:
+			script:
+				if to_string(card.rule_style_5) == "进化" then "bg_ev_" + max(1, min(5, card_style.rule_text_5.content_lines)) + ".png"
+				else if to_string(card.rule_style_5) == "超进化" then "bg_sev_" + max(1, min(5, card_style.rule_text_5.content_lines)) + ".png"
+				else if to_string(card.rule_style_5) == "纹章" or to_string(card.rule_style_5) == "信仰" then "bg_crest_" + max(1, min(5, card_style.rule_text_5.content_lines)) + ".png"
+				else "0.png"
+		visible: { to_string(card.rule_text_4) != "" or to_string(card.rule_text_5) != "" }
+
+extra card field:
+	type: choice
+	name: icon_crest_5
+	editable: false
+	choice: default
+extra card style:
+	icon_crest_5:
+		left: 523
+		top: { ((if to_string(card.rule_style_4) == "普通（分割线）" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 22) else if to_string(card.rule_style_4) == "普通" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height)) else (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 11)) + 20) + 12}
+		width: 449
+		height: 48
+		z index: 3
+		render style: image
+		image: { if to_string(card.rule_style_5) == "纹章" then "Crest.png" else "Faith.png" }
+		visible: { (to_string(card.rule_text_4) != "" or to_string(card.rule_text_5) != "") and (to_string(card.rule_style_5) == "纹章" or to_string(card.rule_style_5) == "信仰") }
+
+extra card field:
+	type: choice
+	name: crest_mark_5
+	editable: false
+	choice: default
+extra card style:
+	crest_mark_5:
+		left: 544
+		top: { ((if to_string(card.rule_style_4) == "普通（分割线）" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 22) else if to_string(card.rule_style_4) == "普通" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height)) else (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 11)) + 20) + 16 }
+		width: 36
+		height: 40
+		z index: 5
+		render style: image
+		image: { if to_string(card.rule_style_5) == "纹章" then "Crest_mark.png" else "Faith_mark.png" }
+		visible: { (to_string(card.rule_text_4) != "" or to_string(card.rule_text_5) != "") and (to_string(card.rule_style_5) == "纹章" or to_string(card.rule_style_5) == "信仰") }
+	
+extra card field:
+	type: text
+	name: crest_label_5
+	default: if to_string(card.rule_style_5) == "信仰" then (if contains(styling.简繁切换, match:"繁体") then "信仰" else "信仰") else if to_string(card.rule_style_5) == "纹章" then (if contains(styling.简繁切换, match:"繁体") then "紋章" else "纹章") else ""
+extra card style:
+	crest_label_5:
+		left: { 523 + 107 }
+		top: { ((if to_string(card.rule_style_4) == "普通（分割线）" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 22) else if to_string(card.rule_style_4) == "普通" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height)) else (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 11)) + 20) + 12}
+		width: 100
+		height: { if (to_string(card.rule_text_4) != "" or to_string(card.rule_text_5) != "") and (to_string(card.rule_style_5) == "纹章" or to_string(card.rule_style_5) == "信仰") then 48 else 0 }
+		z index: 6
+		alignment: left middle
+		visible: { (to_string(card.rule_text_4) != "" or to_string(card.rule_text_5) != "") and (to_string(card.rule_style_5) == "纹章" or to_string(card.rule_style_5) == "信仰") }
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: 16.8
+			color: rgb(236, 207, 113)
+
+card style:
+	card_crest_5:
+		left: { 523 + 60 }
+		top: { ((if to_string(card.rule_style_4) == "普通（分割线）" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 22) else if to_string(card.rule_style_4) == "普通" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height)) else (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 11)) + 20) + 16}
+		width: { if (to_string(card.rule_text_4) != "" or to_string(card.rule_text_5) != "") and (to_string(card.rule_style_5) == "纹章" or to_string(card.rule_style_5) == "信仰") then 39 else 0 }
+		height: { if (to_string(card.rule_text_4) != "" or to_string(card.rule_text_5) != "") and (to_string(card.rule_style_5) == "纹章" or to_string(card.rule_style_5) == "信仰") then 39 else 0 }
+		mask:crest_mask.png
+		z index: 5
+		visible: { (to_string(card.rule_text_4) != "" or to_string(card.rule_text_5) != "") and (to_string(card.rule_style_5) == "纹章" or to_string(card.rule_style_5) == "信仰") }
+
+extra card field:
+	type: choice
+	name: card_crest_default_5
+	editable: false
+	choice: default
+extra card style:
+	card_crest_default_5:
+		left: { 523 + 60 + 1 }
+		top: { ((if to_string(card.rule_style_4) == "普通（分割线）" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 22) else if to_string(card.rule_style_4) == "普通" then (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height)) else (card_style.rule_text_4.top + max(22, card_style.rule_text_4.content_height) + 11)) + 20) + 17 }
+		width: 38
+		height: 38
+		z index: 4
+		render style: image
+		mask:crest_mask.png
+		image: Crest_default.png
+		visible: { (to_string(card.rule_text_4) != "" or to_string(card.rule_text_5) != "") and (to_string(card.rule_style_5) == "纹章" or to_string(card.rule_style_5) == "信仰")}
+
+#=====================================================================
+#####內文背景格線#########################################################
+#=====================================================================
+
+extra card field:
+	type: choice
+	name: textbox border
+	choice: default
+	editable: false
+extra card style:
+	textbox border:
+		left:	483
+		top:	145
+		width:	701
+		height:	488
+		z index: -2
+		render style: image
+		image: card_detail_background.png
+
+
+#=====================================================================
+#####攻擊&血量############################################################
+#=====================================================================
+
+card style:
+	attack:
+		left: 94
+		top: 540
+		width:
+			script:	
+				if contains(card.type, match:"從者") then 85
+				else 0
+		height:
+			script:	
+				if contains(card.type, match:"從者") then 102
+				else 0
+		font:
+			name: DFPWeiBei-B5-Modify
+			size: 45
+			color: rgb(255, 255, 255)
+		symbol font:
+			name: 
+				script:
+					if styling.费用文字字体 == 1 then "shadowverse-symd"
+					else if styling.费用文字字体 == 2 then "shadowverse-symp"
+					else if styling.费用文字字体 == 3 then "shadowverse-syms"
+			size: 28
+		alignment: middle center
+		z index: 11
+card style:
+	health:
+		left: 383
+		top: 540
+		width:
+			script:	
+				if contains(card.type, match:"從者") then 85
+				else 0
+		height:
+			script:	
+				if contains(card.type, match:"從者") then 102
+				else 0
+		font:
+			name: DFPWeiBei-B5-Modify
+			size: 45
+			color: rgb(255, 255, 255)
+		symbol font:
+			name: 
+				script:
+					if styling.费用文字字体 == 1 then "shadowverse-symd"
+					else if styling.费用文字字体 == 2 then "shadowverse-symp"
+					else if styling.费用文字字体 == 3 then "shadowverse-syms"
+			size: 28
+		alignment: middle center
+		z index: 11
+
+
+#=====================================================================
+#####右上補充資訊#########################################################
+#=====================================================================
+
+extra card field:
+	type: text
+	name: 杂项文字职业
+	editable: false
+	save value: false
+	script: 
+		if contains(styling.简繁切换, match:"繁体") then "職業"
+		else if contains(styling.简繁切换, match:"简体") then "职业"
+extra card style:
+	杂项文字职业:
+		left: 800
+		top: 48
+		width: 100
+		height: 50
+		z index: 3
+		alignment: left top
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: 18
+			shadow color: black
+			shadow displacement x: 0.5
+			shadow displacement y: 0.5
+			shadow blur: 3
+			color: rgb(217, 190, 151)
+
+extra card field:
+	type: text
+	name: 杂项文字职业2
+	editable: false
+	save value: false
+	script: 
+		if contains(styling.简繁切换, match:"简体") and card.BYD_class=="精靈" then "精灵"
+		else if contains(styling.简繁切换, match:"简体") and card.BYD_class=="皇家護衛" then "皇家护卫"
+		else if contains(styling.简繁切换, match:"简体") and card.BYD_class=="巫師" then "巫师"
+		else if contains(styling.简繁切换, match:"简体") and card.BYD_class=="龍族" then "龙族"
+		else if contains(styling.简繁切换, match:"简体") and card.BYD_class=="夢魘" then "梦魇"
+		else if contains(styling.简繁切换, match:"简体") and card.BYD_class=="主教" then "主教"
+		else if contains(styling.简繁切换, match:"简体") and card.BYD_class=="復仇者" then "超越者"
+		else if contains(styling.简繁切换, match:"简体") and card.BYD_class=="中立卡片" then "中立"
+		else card.BYD_class
+extra card style:
+	杂项文字职业2:
+		left: 894
+		top: 48
+		width: 100
+		height: 50
+		z index: 3
+		alignment: left top
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: 18
+			color: white
+			shadow color: black
+			shadow displacement x: 0.5
+			shadow displacement y: 0.5
+			shadow blur: 3
+		
+extra card field:
+	type: text
+	name: 杂项文字类型
+	editable: false
+	save value: false
+	script: 
+		if contains(styling.简繁切换, match:"繁体") then "類型"
+		else if contains(styling.简繁切换, match:"简体") then "类型"
+extra card style:
+	杂项文字类型:
+		left: 800
+		top: 83
+		width: 100
+		height: 50
+		z index: 3
+		alignment: left top
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: 18
+			shadow color: black
+			shadow displacement x: 0.5
+			shadow displacement y: 0.5
+			shadow blur: 3
+			color: rgb(217, 190, 151)
+
+extra card field:
+	type: text
+	name: 杂项文字类型2
+	default: "-"
+extra card style:
+	杂项文字类型2:
+		left: 864
+		top: 83
+		width: 100
+		height: 30
+		z index: 3
+		alignment: left top
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "DFPWeiBei-B5-Modify" else "华康魏碑W7(P)" }
+			size: 18
+			color: white
+			shadow color: black
+			shadow displacement x: 0.5
+			shadow displacement y: 0.5
+			shadow blur: 3
+
+
+#=====================================================================
+#####下方補充資訊#########################################################
+#=====================================================================
+
+extra card field:
+	type: text
+	name: DIY声明
+	editable: false
+	save value: false
+	script: 
+		if contains(styling.简繁切换, match:"繁体") then "※卡牌能力為開發中內容。"
+		else if contains(styling.简繁切换, match:"简体") then "※卡牌能力为开发中内容。"
+extra card style:
+	DIY声明:
+		left: 1090
+		top: 660
+		width: 100
+		height: 50
+		z index: 3
+		alignment: right middle
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "NotoSansCJKtc-Medium" else "NotoSansCJKsc-Medium" }
+			size: 14
+			color: rgb(225, 225, 225)
+
+
+
+extra card field:
+	type: text
+	name:token
+	editable: false
+	save value: false
+	script:
+		if styling.token=="yes" and contains(styling.简繁切换, match:"繁体") then "※本卡牌為附屬卡牌。"
+		else if styling.token=="yes" and contains(styling.简繁切换, match:"简体") then "※本卡牌为附属卡牌。"
+extra card style:
+	token:
+		left: 1090
+		top: 630
+		width: 100
+		height: 50
+		z index: 3
+		alignment: right middle
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "NotoSansCJKtc-Medium" else "NotoSansCJKsc-Medium" }
+			size: 14
+			color: rgb(225, 225, 225)
+
+extra card field:
+	type: text
+	name: 繪師
+	default:
+		if styling.繪師=="on" and contains(styling.简繁切换, match:"繁体") then "繪師："
+		else if styling.繪師=="on" and contains(styling.简繁切换, match:"简体") then "画师："
+extra card style:
+	繪師:
+		left: 523
+		top: 580
+		width: { if contains(styling.繪師, match:"on") then 200 else 0}
+		height: 30
+		z index: 3
+		alignment: left middle
+		font:
+			name: { if contains(styling.简繁切换, match:"繁体") then "NotoSansCJKtc-Medium" else "NotoSansCJKsc-Medium" }
+			size: 14
+			color: rgb(225, 225, 225)
+
+#=====================================================================
+#####職業背景#############################################################
+#=====================================================================
+
+
+
+extra card field:
+	type: choice
+	name: Background
+	choice: default
+	editable: false
+extra card style:
+	Background:
+		left:	0
+		top: 	0
+		width:	1269
+		height:	715
+		z index: 	-999
+		render style: image
+		image:
+			script:
+				if contains(card.BYD_class, match:"精靈") then "background_forestcraft.png"
+				else if contains(card.BYD_class, match:"皇家護衛") then "background_swordcraft.png"
+				else if contains(card.BYD_class, match:"巫師") then "background_runecraft.png"
+				else if contains(card.BYD_class, match:"龍族") then "background_dragoncraft.png"
+				else if contains(card.BYD_class, match:"夢魘") then "background_abysscraft.png"
+				else if contains(card.BYD_class, match:"主教") then "background_havencraft.png"
+				else if contains(card.BYD_class, match:"復仇者") then "background_portalcraft.png"
+				else if contains(card.BYD_class, match:"中立卡片") then "background_neutral.png"
+
+extra card field:
+	type: choice
+	name: Emblem
+	choice: default
+	editable: false
+extra card style:
+	Emblem:
+		left:	864
+		top: 	48
+		width:	24
+		height:	24
+		z index: 	-950
+		render style: image
+		image:
+			script:
+				if contains(card.BYD_class, match:"精靈") then "Emblem_Forestcraft.png"
+				else if contains(card.BYD_class, match:"皇家護衛") then "Emblem_Swordcraft.png"
+				else if contains(card.BYD_class, match:"巫師") then "Emblem_Runecraft.png"
+				else if contains(card.BYD_class, match:"龍族") then "Emblem_Dragoncraft.png"
+				else if contains(card.BYD_class, match:"夢魘") then "Emblem_Abysscraft.png"
+				else if contains(card.BYD_class, match:"主教") then "Emblem_Havencraft.png"
+				else if contains(card.BYD_class, match:"復仇者") then "Emblem_Portalcraft.png"
+				else if contains(card.BYD_class, match:"中立卡片") then "Emblem_Neutral.png"
+
+
+extra card field:
+	type:	choice
+	name:	title_bg
+	editable: false
+	choice: default
+extra card style:
+	title_bg:
+		left: 0
+		top: 0
+		width: 1269
+		height: 130
+		z index: -998
+		render style: image
+		image: title_bg.png
+
+extra card field:
+	type: choice
+	name: card_pack
+	editable: false
+	choice: default
+	
+extra card style:
+	card_pack:
+		left:1035
+		top: 32
+		width:	160
+		height:	80
+		z index: 2
+		render style: image
+		visible: {contains(styling.自定义卡包, match:"off")}
+		image:
+			script:
+				if contains(card.BYD_cardpack, match:"默認") then "logo_ShadowverseWB.png"
+				else if contains(card.BYD_cardpack, match:"傳說揭幕") then "logo_LegendsRise.png"
+				else if contains(card.BYD_cardpack, match:"無限進化") then "logo_InfinityEvolved.png"
+				else if contains(card.BYD_cardpack, match:"絕傑的繼承者") then "logo_HeirsoftheOmen.png"
+				else if contains(card.BYD_cardpack, match:"蒼空六龍") then "logo_SkyboundDragons.png"
+
+
+#=====================================================================
+#####分割线文本框样式##################################################
+#=====================================================================
+
+
+extra card field:
+	type: text
+	name: debug_style_1
+	editable: false
+	
+extra card style:
+	debug_style_1:
+		left: 10
+		top: 10
+		width: 200
+		height: 30
+		z index: 999
+		font:
+			size: 12
+			color: red

@@ -9,11 +9,15 @@ using ShadowverseBeyond.Server.Services.Abstractions; // For GameActionContext
 
 namespace ShadowverseBeyond.Server.Services
 {
+    public sealed record MirageAiActionDecision(string ActionType, object ActionData);
+
     /// <summary>
     /// Defines the contract for the AI decision-making service.
     /// </summary>
     public interface IAiService
     {
+        Task<MirageAiActionDecision> DecideMirageRecruitActionAsync(GameStateDto gameState, Guid aiPlayerId);
+
         /// <summary>
         /// Decides which cards the AI should replace during the mulligan phase.
         /// </summary>

@@ -25,6 +25,8 @@ namespace ShadowverseBeyond.Server.Services
             public CacheSnapshot(
                 Dictionary<int, CardDefinition> cardDefinitions,
                 IReadOnlyList<CardDefinition> cards,
+                IReadOnlyList<CardDefinition> mirageCards,
+                IReadOnlyList<CardDefinition> mirageLeaders,
                 IReadOnlyDictionary<DeckEnvironment, IReadOnlyList<CardDefinition>> cardDefinitionsByEnvironment,
                 Dictionary<int, List<AbilityConfig>> abilityConfigsByCard,
                 Dictionary<long, AbilityConfig> abilityConfigsById,
@@ -32,6 +34,8 @@ namespace ShadowverseBeyond.Server.Services
             {
                 CardDefinitions = cardDefinitions;
                 Cards = cards;
+                MirageCards = mirageCards;
+                MirageLeaders = mirageLeaders;
                 CardDefinitionsByEnvironment = cardDefinitionsByEnvironment;
                 AbilityConfigsByCard = abilityConfigsByCard;
                 AbilityConfigsById = abilityConfigsById;
@@ -41,6 +45,8 @@ namespace ShadowverseBeyond.Server.Services
             public static CacheSnapshot Empty { get; } = new(
                 new Dictionary<int, CardDefinition>(),
                 Array.Empty<CardDefinition>(),
+                Array.Empty<CardDefinition>(),
+                Array.Empty<CardDefinition>(),
                 new Dictionary<DeckEnvironment, IReadOnlyList<CardDefinition>>(),
                 new Dictionary<int, List<AbilityConfig>>(),
                 new Dictionary<long, AbilityConfig>(),
@@ -49,6 +55,8 @@ namespace ShadowverseBeyond.Server.Services
             public Guid DataRevision { get; init; } = Guid.NewGuid();
             public Dictionary<int, CardDefinition> CardDefinitions { get; }
             public IReadOnlyList<CardDefinition> Cards { get; }
+            public IReadOnlyList<CardDefinition> MirageCards { get; }
+            public IReadOnlyList<CardDefinition> MirageLeaders { get; }
             public IReadOnlyDictionary<DeckEnvironment, IReadOnlyList<CardDefinition>> CardDefinitionsByEnvironment { get; }
             public Dictionary<int, List<AbilityConfig>> AbilityConfigsByCard { get; }
             public Dictionary<long, AbilityConfig> AbilityConfigsById { get; }
@@ -195,6 +203,28 @@ namespace ShadowverseBeyond.Server.Services
             return Array.Empty<CardDefinition>();
         }
 
+        public IReadOnlyCollection<CardDefinition> GetMirageCardDefinitions()
+        {
+            if (!IsInitialized)
+            {
+                _logger.LogWarning("GameDataProvider未初始化，无法获取幻境卡池");
+                return Array.Empty<CardDefinition>();
+            }
+
+            return Volatile.Read(ref _snapshot).MirageCards;
+        }
+
+        public IReadOnlyCollection<CardDefinition> GetMirageLeaderDefinitions()
+        {
+            if (!IsInitialized)
+            {
+                _logger.LogWarning("GameDataProvider未初始化，无法获取幻境主战者池");
+                return Array.Empty<CardDefinition>();
+            }
+
+            return Volatile.Read(ref _snapshot).MirageLeaders;
+        }
+
         /// <inheritdoc />
         public List<AbilityConfig> GetAbilityConfigs(int cardId)
         {
@@ -299,7 +329,7 @@ namespace ShadowverseBeyond.Server.Services
 
         public async Task RefreshCardAsync(int cardId)
         {
-            if (cardId < 0)
+            if (cardId < Domain.Constants.GameConstants.Cards.MirageLeaderCardId)
             {
                 return;
             }
@@ -325,6 +355,8 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 var cards = cardDefinitions.Values.ToList();
+                var mirageCards = BuildMirageCardDefinitions(cards);
+                var mirageLeaders = BuildMirageLeaderDefinitions(cards);
                 var cardsByEnvironment = BuildCardDefinitionsByEnvironment(cards);
                 var abilityConfigsByCard = new Dictionary<int, List<AbilityConfig>>(current.AbilityConfigsByCard);
                 abilityConfigsByCard.Remove(cardId);
@@ -349,6 +381,8 @@ namespace ShadowverseBeyond.Server.Services
                 var snapshot = new CacheSnapshot(
                     cardDefinitions,
                     cards,
+                    mirageCards,
+                    mirageLeaders,
                     cardsByEnvironment,
                     abilityConfigsByCard,
                     abilityConfigsById,
@@ -418,6 +452,8 @@ namespace ShadowverseBeyond.Server.Services
         {
             var cardDefinitions = await LoadCardDefinitionsAsync();
             var cards = cardDefinitions.Values.ToList();
+            var mirageCards = BuildMirageCardDefinitions(cards);
+            var mirageLeaders = BuildMirageLeaderDefinitions(cards);
             var cardsByEnvironment = BuildCardDefinitionsByEnvironment(cards);
             var abilityConfigs = await LoadAbilityConfigsAsync();
             var buffDefinitions = await LoadBuffDefinitionsAsync();
@@ -425,10 +461,29 @@ namespace ShadowverseBeyond.Server.Services
             return new CacheSnapshot(
                 cardDefinitions,
                 cards,
+                mirageCards,
+                mirageLeaders,
                 cardsByEnvironment,
                 abilityConfigs.ByCard,
                 abilityConfigs.ById,
                 buffDefinitions);
+        }
+
+        private static IReadOnlyList<CardDefinition> BuildMirageCardDefinitions(
+            IReadOnlyCollection<CardDefinition> cardDefinitions)
+        {
+            return cardDefinitions
+                .Where(card => card != null && card.IsMirageCard && card.Id > 0 && card.Type != CardType.Leader)
+                .ToList();
+        }
+
+        private static IReadOnlyList<CardDefinition> BuildMirageLeaderDefinitions(
+            IReadOnlyCollection<CardDefinition> cardDefinitions)
+        {
+            return cardDefinitions
+                .Where(card => card != null && card.IsMirageCard && card.Id > 0 && card.Type == CardType.Leader && card.IsCollectible)
+                .OrderBy(card => card.Id)
+                .ToList();
         }
 
         private static IReadOnlyDictionary<DeckEnvironment, IReadOnlyList<CardDefinition>> BuildCardDefinitionsByEnvironment(
@@ -438,6 +493,11 @@ namespace ShadowverseBeyond.Server.Services
 
             foreach (var card in cardDefinitions)
             {
+                if (card == null || card.IsMirageCard)
+                {
+                    continue;
+                }
+
                 var environments = card.CardSetDefinition?.Environments;
                 if (environments == null || environments.Count == 0)
                 {

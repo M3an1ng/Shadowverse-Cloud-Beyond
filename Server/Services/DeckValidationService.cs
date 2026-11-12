@@ -79,6 +79,7 @@ public class DeckValidationService : IDeckValidationService
                 card.Name,
                 card.Class,
                 card.IsCollectible,
+                card.IsMirageCard,
                 HasCardSetDefinition = card.CardSetDefinitionId.HasValue,
                 Environments = card.CardSetDefinition != null ? card.CardSetDefinition.Environments : new List<DeckEnvironment>()
             })
@@ -87,6 +88,11 @@ public class DeckValidationService : IDeckValidationService
         if (cardDefinitions.Count != cardIds.Count)
         {
             return DeckOperationResult<List<DeckCardEntryDto>>.Fail("Deck contains unknown cards.");
+        }
+
+        if (cardDefinitions.Any(card => card.IsMirageCard))
+        {
+            return DeckOperationResult<List<DeckCardEntryDto>>.Fail("Deck contains Mirage mode cards which cannot be used in constructed decks.");
         }
 
         if (!requireComplete)
@@ -131,6 +137,11 @@ public class DeckValidationService : IDeckValidationService
 
         foreach (var card in cardDefinitions)
         {
+            if (!ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.IsCardImplemented(card.Id))
+            {
+                return DeckOperationResult<List<DeckCardEntryDto>>.Fail($"卡牌 '{card.Name}' 处于「待实装」阶段（尚未实装对战逻辑），仅可用于图鉴浏览或云构筑草稿，不可用于正式对战。");
+            }
+
             if (!card.IsCollectible)
             {
                 return DeckOperationResult<List<DeckCardEntryDto>>.Fail(

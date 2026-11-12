@@ -11,11 +11,66 @@ import { showAlert } from './siteDialog.js';
 
 import { createPlayer } from "./player.js"; // 正确导入
 import { createCardInstance } from "./cardManager.js";
-let gameView;
+let rawGameView = null;
+let gameView = null;
+
+export const mirageCombatPlayback = {
+    active: false,
+    reconnectSyncPending: false,
+    playbackToken: 0,
+    abortController: null,
+    pendingGameEndDto: null,
+    pendingTurnStartBannerPlayerId: null,
+    currentReplay: null,
+    currentStepIndex: -1
+};
+
+const MIRAGE_PLAYBACK_ALLOWED_VIEW_METHODS = new Set([
+    "renderGameLog",
+    "updateTurnTimerDisplay",
+    "clearInMatchChatUiState",
+    "clearInMatchUsedCardUiState",
+    "replaceInMatchChatHistory",
+    "appendInMatchChatMessage",
+    "replaceInMatchCardHistory",
+    "appendInMatchUsedCard",
+    "appendInMatchDestroyedCard",
+    "startMirageCombatPlaybackUi",
+    "renderMirageCombatStep",
+    "renderMirageCombatOutcome",
+    "hideMirageCombatPlaybackOverlay",
+    "showMirageReconnectLockOverlay"
+]);
+
+function isMiragePlaybackDomGateActive() {
+    return mirageCombatPlayback.active === true || mirageCombatPlayback.reconnectSyncPending === true;
+}
+
+function createGatedGameView(view) {
+    if (!view || typeof view !== "object") return view;
+    return new Proxy(view, {
+        get(target, prop, receiver) {
+            const value = Reflect.get(target, prop, receiver);
+            if (typeof value !== "function") {
+                return value;
+            }
+            if (typeof prop === "string" && !MIRAGE_PLAYBACK_ALLOWED_VIEW_METHODS.has(prop)) {
+                return (...args) => {
+                    if (isMiragePlaybackDomGateActive()) {
+                        return undefined;
+                    }
+                    return value.apply(target, args);
+                };
+            }
+            return value.bind(target);
+        }
+    });
+}
 
 // 入口在处理游戏事件前提供视图，逻辑模块不再反向加载 DOM。
 export function bindGameView(view) {
-    gameView = view;
+    rawGameView = view;
+    gameView = createGatedGameView(view);
 }
 import { getUserSession } from "./userSession.js";
 
@@ -71,6 +126,8 @@ function createInitialGameState() {
         localPlayerId: null, // ID of the player using this client instance
         gamePhase: "Initializing",
         phase: "Initializing",
+        mode: "Standard",
+        mirage: null,
         isEndingTurn: false,
         activePlayer: null, // 对当前玩家实例的引用
         opponentPlayer: null, // 对对手玩家实例的引用
@@ -299,7 +356,10 @@ function prunePlayerPlayabilityCache(playerId) {
         });
     }
 
-    const fieldKeys = collectZoneCardKeys(player.field);
+    const fieldKeys = collectZoneCardKeys([
+        ...(Array.isArray(player.field) ? player.field : []),
+        ...(player.leaderCard ? [player.leaderCard] : [])
+    ]);
     const actBucket = getActPlayabilityBucketForPlayer(player.id, false);
     if (actBucket && typeof actBucket === 'object') {
         Object.keys(actBucket).forEach(cacheKey => {
@@ -721,8 +781,12 @@ function hasCardActCapability(card) {
 
 function hasMissingActPlayability(playerId) {
     const player = getPlayerState(playerId);
-    if (!player || !Array.isArray(player.field)) return false;
-    return player.field.some(card => {
+    if (!player) return false;
+    const candidateCards = [
+        ...(Array.isArray(player.field) ? player.field : []),
+        ...(player.leaderCard ? [player.leaderCard] : [])
+    ];
+    return candidateCards.some(card => {
         if (!hasCardActCapability(card)) {
             return false;
         }
@@ -802,7 +866,8 @@ function selectDualControlMulliganSeat() {
     gameView.resetMulliganSelection();
 }
 
-function resetGameSessionState() {
+function resetGameSessionState(abortReason = "new_game") {
+    abortMirageCombatPlayback(abortReason);
     stopTurnTimer();
     resetPlayabilityResyncState();
     resetPlayCardRequestLocks();
@@ -819,11 +884,11 @@ function resetGameSessionState() {
 export function clearGameSession() {
     signalRConnection = null;
     signalRGuestConnection = null;
-    resetGameSessionState();
+    resetGameSessionState("leave_room");
 }
 
 export function initializeGame(idOfGame, idOfPlayer, options = {}) {
-    resetGameSessionState();
+    resetGameSessionState("new_game");
     gameState.gameId = idOfGame;
     gameState.localPlayerId = idOfPlayer;
     gameState.phase = gameState.gamePhase = 'Connecting';
@@ -838,7 +903,7 @@ export function initializeGame(idOfGame, idOfPlayer, options = {}) {
 }
 
 export function initializeSpectator(gameId) {
-    resetGameSessionState();
+    resetGameSessionState("new_game");
     gameState.gameId = gameId;
     gameState.isSpectator = true;
     gameState.phase = gameState.gamePhase = 'Connecting';
@@ -1180,24 +1245,53 @@ export async function playCard(cardUid, targetUid = null) {
 
     // --- Pre-condition Checks (Client-side) ---
     // IMPORTANT: Ensure we check against localPlayerId provided during initGame
-    if (
-        playerState.id !== gameState.localPlayerId ||
-        playerState.id !== gameState.currentPlayerId
-    ) {
-        console.warn(
-            `GM: PlayCard rejected - Not local player's turn or local player ID mismatch (Local: ${gameState.localPlayerId}, Current: ${gameState.currentPlayerId}, CardOwner: ${playerState.id}).`
-        );
-        showAlert("现在不是你的回合！");
-        cancelCommittedVisual();
-        return;
-    }
-    if (gameState.phase !== "Main") {
-        console.warn(
-            `GM: PlayCard rejected - Can only play cards during Main phase (Current: ${gameState.phase}).`
-        );
-        showAlert("只能在你的回合主阶段出牌！");
-        cancelCommittedVisual();
-        return;
+    const isMirage = gameState.mode === "Mirage";
+    if (isMirage) {
+        if (mirageCombatPlayback.reconnectSyncPending) {
+            showAlert("正在同步最新对局状态，请稍候...");
+            cancelCommittedVisual();
+            return;
+        }
+        if (mirageCombatPlayback.active) {
+            showAlert("正在播放本轮幻境战斗回放，可点击跳过立即进入下一轮！");
+            cancelCommittedVisual();
+            return;
+        }
+        if (playerState.id !== gameState.localPlayerId) {
+            showAlert("只能操作自己的手牌！");
+            cancelCommittedVisual();
+            return;
+        }
+        if (gameState.phase !== "Recruit") {
+            showAlert("只能在招募阶段部署随从！");
+            cancelCommittedVisual();
+            return;
+        }
+        if (playerState.mirage?.isReady || playerState.mirage?.IsReady) {
+            showAlert("已锁定本轮阵容，无法继续部署！");
+            cancelCommittedVisual();
+            return;
+        }
+    } else {
+        if (
+            playerState.id !== gameState.localPlayerId ||
+            playerState.id !== gameState.currentPlayerId
+        ) {
+            console.warn(
+                `GM: PlayCard rejected - Not local player's turn or local player ID mismatch (Local: ${gameState.localPlayerId}, Current: ${gameState.currentPlayerId}, CardOwner: ${playerState.id}).`
+            );
+            showAlert("现在不是你的回合！");
+            cancelCommittedVisual();
+            return;
+        }
+        if (gameState.phase !== "Main") {
+            console.warn(
+                `GM: PlayCard rejected - Can only play cards during Main phase (Current: ${gameState.phase}).`
+            );
+            showAlert("只能在你的回合主阶段出牌！");
+            cancelCommittedVisual();
+            return;
+        }
     }
     const spendablePp = (playerState.pp ?? 0) + (playerState.ppBoostArmed ? 1 : 0);
     if (spendablePp < effectiveCost) {
@@ -1846,7 +1940,10 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
         return;
     }
 
-    const playerState = getPlayerState(gameState.currentPlayerId);
+    const isMirage = String(gameState.mode || '').toLowerCase() === 'mirage';
+    const playerState = isMirage
+        ? getPlayerState(gameState.localPlayerId)
+        : getPlayerState(gameState.currentPlayerId);
     const cardInstance = findCardInstanceByUid(cardUid);
 
     if (!playerState || !cardInstance) {
@@ -1854,19 +1951,36 @@ export async function requestAct(cardUid, abilityRuntimeId = null) {
         return;
     }
 
-    if (playerState.id !== gameState.localPlayerId || playerState.id !== gameState.currentPlayerId) {
-        showAlert("现在不是你的回合！");
-        return;
-    }
+    if (isMirage) {
+        if (gameState.phase !== "Recruit") {
+            showAlert("幻境战棋模式仅可在酒馆招募阶段启动主战者技能！");
+            return;
+        }
+        if (playerState.mirage?.isReady ?? playerState.mirage?.IsReady) {
+            showAlert("已确认本轮准备，不能继续操作！");
+            return;
+        }
+        const isLocalLeader = cardInstance.ownerId === playerState.id
+            && (cardInstance.zone === "Leader" || playerState.leaderCard?.uid === cardInstance.uid);
+        if (!isLocalLeader) {
+            showAlert("幻境战棋模式仅可启动我方主战者技能！");
+            return;
+        }
+    } else {
+        if (playerState.id !== gameState.localPlayerId || playerState.id !== gameState.currentPlayerId) {
+            showAlert("现在不是你的回合！");
+            return;
+        }
 
-    if (gameState.phase !== "Main") {
-        showAlert("只能在主阶段启动！");
-        return;
-    }
+        if (gameState.phase !== "Main") {
+            showAlert("只能在主阶段启动！");
+            return;
+        }
 
-    if (cardInstance.ownerId !== playerState.id || cardInstance.zone !== "Field") {
-        showAlert("只能启动自己场上的卡牌！");
-        return;
+        if (cardInstance.ownerId !== playerState.id || cardInstance.zone !== "Field") {
+            showAlert("只能启动自己场上的卡牌！");
+            return;
+        }
     }
 
     const hasActCapability = (Array.isArray(cardInstance.actAbilities) && cardInstance.actAbilities.length > 0)
@@ -2028,6 +2142,9 @@ export async function submitMulligan(cardUidsToReplace = []) {
  * Sends a request to the server to end the current player's turn.
  */
 export async function endTurnRequest() {
+    if (gameState.mode === "Mirage") {
+        return await mirageSetReadyRequest();
+    }
     const timestamp = new Date().toISOString();
     // --- Proceed with checks ---
     if (gameState.isSpectator) {
@@ -2080,6 +2197,132 @@ export async function endTurnRequest() {
             errorMessage = err.message;
         }
         showAlert(`结束回合失败：${errorMessage}`);
+    }
+}
+
+function canExecuteLocalMirageRecruitAction() {
+    if (gameState.isSpectator) {
+        showAlert("观战模式：不能进行操作。");
+        return false;
+    }
+    if (mirageCombatPlayback.reconnectSyncPending) {
+        showAlert("正在同步最新对局状态，请稍候...");
+        return false;
+    }
+    if (mirageCombatPlayback.active) {
+        showAlert("正在播放本轮幻境战斗回放，可点击跳过立即进入下一轮！");
+        return false;
+    }
+    if (gameState.mode !== "Mirage" || gameState.phase !== "Recruit") {
+        showAlert("当前不在幻境招募阶段！");
+        return false;
+    }
+    const localPlayer = getPlayerState(gameState.localPlayerId);
+    if (!localPlayer) {
+        showAlert("找不到本地玩家状态！");
+        return false;
+    }
+    if (localPlayer.mirage?.isReady || localPlayer.mirage?.IsReady) {
+        showAlert("已锁定本轮阵容！");
+        return false;
+    }
+    const connection = getActiveConnection();
+    if (!connection || connection.state !== "Connected") {
+        showAlert("与服务器连接丢失！");
+        return false;
+    }
+    return true;
+}
+
+export async function mirageSetReadyRequest() {
+    if (!canExecuteLocalMirageRecruitAction()) return;
+    const connection = getActiveConnection();
+    try {
+        await connection.invoke("MirageSetReady", generateRequestId());
+    } catch (err) {
+        showAlert(`锁定阵容失败：${err?.message || "服务器通信错误"}`);
+    }
+}
+
+export async function mirageRefreshShopRequest() {
+    if (!canExecuteLocalMirageRecruitAction()) return;
+    const connection = getActiveConnection();
+    try {
+        await connection.invoke("MirageRefreshShop", generateRequestId());
+    } catch (err) {
+        showAlert(`刷新商店失败：${err?.message || "服务器通信错误"}`);
+    }
+}
+
+export async function mirageUpgradeTierRequest() {
+    if (!canExecuteLocalMirageRecruitAction()) return;
+    const connection = getActiveConnection();
+    try {
+        await connection.invoke("MirageUpgradeTier", generateRequestId());
+    } catch (err) {
+        showAlert(`升星失败：${err?.message || "服务器通信错误"}`);
+    }
+}
+
+export async function mirageToggleFreezeRequest() {
+    if (!canExecuteLocalMirageRecruitAction()) return;
+    const connection = getActiveConnection();
+    try {
+        await connection.invoke("MirageToggleFreeze", generateRequestId());
+    } catch (err) {
+        showAlert(`切换冻结失败：${err?.message || "服务器通信错误"}`);
+    }
+}
+
+export async function mirageBuyOfferRequest(offerId) {
+    if (!offerId || !canExecuteLocalMirageRecruitAction()) return;
+    const connection = getActiveConnection();
+    try {
+        await connection.invoke("MirageBuyOffer", String(offerId), generateRequestId());
+    } catch (err) {
+        showAlert(`招募失败：${err?.message || "服务器通信错误"}`);
+    }
+}
+
+export async function mirageSellCardRequest(cardUid) {
+    if (!cardUid || !canExecuteLocalMirageRecruitAction()) return;
+    const connection = getActiveConnection();
+    try {
+        await connection.invoke("MirageSellCard", String(cardUid), generateRequestId());
+    } catch (err) {
+        showAlert(`出售随从失败：${err?.message || "服务器通信错误"}`);
+    }
+}
+
+export async function mirageReorderFieldRequest(orderedCardUids) {
+    if (!Array.isArray(orderedCardUids) || !canExecuteLocalMirageRecruitAction()) return;
+    const connection = getActiveConnection();
+    try {
+        await connection.invoke("MirageReorderField", orderedCardUids.map(String), generateRequestId());
+    } catch (err) {
+        showAlert(`调整站位失败：${err?.message || "服务器通信错误"}`);
+    }
+}
+
+export async function mirageRedeemTicketRequest(ticketId, chosenCardDefinitionId) {
+    const parsedDefId = Number(chosenCardDefinitionId);
+    if (!ticketId || !Number.isInteger(parsedDefId) || parsedDefId <= 0 || !canExecuteLocalMirageRecruitAction()) return;
+    const connection = getActiveConnection();
+    try {
+        await connection.invoke("MirageRedeemTicket", String(ticketId), parsedDefId, generateRequestId());
+    } catch (err) {
+        showAlert(`兑现发现凭据失败：${err?.message || "服务器通信错误"}`);
+    }
+}
+
+export async function mirageSelectLeaderRequest(leaderCardDefinitionId) {
+    const parsedDefId = Number(leaderCardDefinitionId);
+    if (!Number.isInteger(parsedDefId) || parsedDefId <= 0 || !canExecuteLocalMirageRecruitAction()) return;
+    const connection = getActiveConnection();
+    try {
+        await connection.invoke("MirageSelectLeader", parsedDefId, generateRequestId());
+    } catch (err) {
+        showAlert(`选择主战者失败：${err?.message || "服务器通信错误"}`);
     }
 }
 
@@ -2392,6 +2635,7 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
       playerInstance.deck = Array.isArray(playerDto.Deck ?? playerDto.deck) ? [...(playerDto.Deck ?? playerDto.deck)] : []; // PascalCase/camelCase
       // Mulligan
     playerInstance.hasCompletedMulligan = playerDto.HasCompletedMulligan ?? playerDto.hasCompletedMulligan ?? false; // PascalCase/camelCase
+    playerInstance.mirage = playerDto.Mirage ?? playerDto.mirage ?? null;
 
 
 }
@@ -2479,7 +2723,7 @@ function _hydrateCardZone(zoneDtoArray, ownerId, zoneName) {
  * This is typically used for the initial state synchronization.
  * @param {object} serverState - The complete game state object from the server.
  */
-export function updateFullGameState(serverState) {
+export function updateFullGameState(serverState, options = {}) {
     const readStateField = (source, pascal, camel) => source?.[pascal] ?? source?.[camel];
     const normalizeId = (value) => String(value ?? '').trim().toLowerCase();
     const playersDto = readStateField(serverState, 'Players', 'players');
@@ -2503,7 +2747,11 @@ export function updateFullGameState(serverState) {
     // --- Smart Hydration: Assign top-level properties ---
     const incomingGameId = incomingStateGameId;
     const isNewGameSession = incomingGameId && incomingGameId !== gameState.gameId;
+    if (isNewGameSession || options?.isReconnectFullSync === true) {
+        rawGameView?.cancelAllBattleMotions?.();
+    }
     if (isNewGameSession) {
+        abortMirageCombatPlayback("new_game");
         gameState.gameLog = [];
         gameState.chatMessages = [];
         gameState.playabilityCache = {};
@@ -2580,13 +2828,15 @@ export function updateFullGameState(serverState) {
     // 【架构重构】不再从serverState获取全局TurnNumber，改为从当前玩家的PlayerState获取
     // Use PascalCase: Phase
     gameState.phase = readStateField(serverState, 'Phase', 'phase') || "Unknown"; // PascalCase/camelCase
+    const rawMode = readStateField(serverState, 'Mode', 'mode');
+    gameState.mode = rawMode === 1 || String(rawMode ?? '').toLowerCase() === 'mirage' ? 'Mirage' : 'Standard';
+    gameState.mirage = serverState.Mirage ?? serverState.mirage ?? null;
     const timeoutSeconds = serverState.TurnTimeoutSeconds ?? serverState.turnTimeoutSeconds;
     gameState.turnTimeoutSeconds = Number.isFinite(timeoutSeconds) ? timeoutSeconds : gameState.turnTimeoutSeconds;
     gameState.turnStartedAtUtc = serverState.TurnStartedAtUtc ?? serverState.turnStartedAtUtc ?? null;
     gameState.turnEndsAtUtc = serverState.TurnEndsAtUtc ?? serverState.turnEndsAtUtc ?? null;
     gameState.gameOver = readStateField(serverState, 'IsGameOver', 'isGameOver') || false;
-    // Use PascalCase: Winner
-    gameState.winner = readStateField(serverState, 'Winner', 'winner') || null; // PascalCase/camelCase
+    gameState.winner = readStateField(serverState, 'WinnerId', 'winnerId') || null;
     gameState.selectedCardUid = null; // Reset selections on full update
     gameState.selectedAttackerUid = null; // Reset selections on full update
     // Find player DTOs to get mulligan status
@@ -2634,36 +2884,25 @@ export function updateFullGameState(serverState) {
             // Use PascalCase: LeaderCard
             const leaderDto = playerDto.LeaderCard ?? playerDto.leaderCard;
             if (leaderDto) {
-                // Use PascalCase: LeaderCard
                 const serverLeaderDto = leaderDto;
-                // Use PascalCase: InstanceId, instanceId, Uid, uid
-                const serverLeaderUid = serverLeaderDto.InstanceId || serverLeaderDto.instanceId || serverLeaderDto.Uid || serverLeaderDto.uid; // PascalCase (multiple checks)
-
-                // Check if client leader exists and matches UID, or if it needs creation/replacement
-                if (!playerInstance.leaderCard || playerInstance.leaderCard.uid !== serverLeaderUid) {
-                    // Create a new leader instance from the server DTO
-                    // NOTE: Assumes createCardInstance can handle the server DTO directly. May need adjustment later.
-                    const newLeaderInstance = createCardInstance(serverLeaderDto); // Pass DTO
-                    if (newLeaderInstance) {
-                        newLeaderInstance.ownerId = playerInstance.id;
-                        newLeaderInstance.zone = 'Leader';
-                        // Hydrate dynamic state from DTO
-                        // Use PascalCase: CurrentHealth
-                        newLeaderInstance.currentHealth = serverLeaderDto.CurrentHealth ?? newLeaderInstance.health; // PascalCase
-                        // Assign the new instance
-                        playerInstance.leaderCard = newLeaderInstance;
-                        newLeaderInstance.currentHealth = serverLeaderDto.CurrentHealth ?? newLeaderInstance.health; // PascalCase
-                        // Assign the new instance
-                        playerInstance.leaderCard = newLeaderInstance;
-                    } else {
-                        console.error(`GM HYDRATION: Failed to create leader card instance from DTO for player ${playerInstance.id}:`, serverLeaderDto);
-                        playerInstance.leaderCard = null; // Ensure it's null if creation failed
+                const newLeaderInstance = createCardInstance(serverLeaderDto);
+                if (newLeaderInstance) {
+                    newLeaderInstance.ownerId = playerInstance.id;
+                    newLeaderInstance.zone = 'Leader';
+                    newLeaderInstance.currentHealth = serverLeaderDto.CurrentHealth ?? serverLeaderDto.currentHealth ?? newLeaderInstance.health;
+                    newLeaderInstance.keywords = Array.isArray(serverLeaderDto.Keywords)
+                        ? [...serverLeaderDto.Keywords]
+                        : Array.isArray(serverLeaderDto.keywords)
+                            ? [...serverLeaderDto.keywords]
+                            : [];
+                    const previousLeaderUid = playerInstance.leaderCard?.uid;
+                    playerInstance.leaderCard = newLeaderInstance;
+                    if (previousLeaderUid && previousLeaderUid !== newLeaderInstance.uid) {
+                        rawGameView?.replaceBattleCardPreviewIdentity?.(previousLeaderUid, newLeaderInstance);
                     }
                 } else {
-                    // Leader exists and UID matches, just update dynamic properties
-                    // Use PascalCase: CurrentHealth
-                    playerInstance.leaderCard.currentHealth = serverLeaderDto.CurrentHealth ?? playerInstance.leaderCard.health; // PascalCase
-                    // Add other dynamic updates if needed (e.g., effects, keywords)
+                    console.error(`GM HYDRATION: Failed to create leader card instance from DTO for player ${playerInstance.id}:`, serverLeaderDto);
+                    playerInstance.leaderCard = null; // Ensure it's null if creation failed
                 }
             } else if (playerInstance.leaderCard) {
                 // Server DTO doesn't have a leader, but client does? Log warning and remove client leader.
@@ -2736,14 +2975,36 @@ export function updateFullGameState(serverState) {
 
     selectDualControlMulliganSeat();
 
+    if (options?.isReconnectFullSync === true && mirageCombatPlayback.reconnectSyncPending) {
+        mirageCombatPlayback.reconnectSyncPending = false;
+        rawGameView?.hideMirageCombatPlaybackOverlay?.();
+        if (!gameState.gameOver) {
+            mirageCombatPlayback.pendingGameEndDto = null;
+        }
+    }
+
+    if (isMiragePlaybackDomGateActive()) {
+        refreshTurnTimerFromState();
+        return true;
+    }
+
     // Ensure the UI is re-rendered with the fully updated state
-    if (typeof gameView.renderGame === "function") {
-        gameView.renderGame(gameState); // Pass the updated complete gameState
+    if (typeof rawGameView?.renderGame === "function") {
+        rawGameView.renderGame(gameState); // Pass the updated complete gameState
+        refreshTurnTimerFromState();
+    } else if (typeof gameView?.renderGame === "function") {
+        gameView.renderGame(gameState);
         refreshTurnTimerFromState();
     } else {
         console.error(
             "GAME MANAGER: renderGame function is not available for UI update after full state update."
         );
+    }
+
+    if (options?.isReconnectFullSync === true && gameState.gameOver && mirageCombatPlayback.pendingGameEndDto) {
+        const pendingEnd = mirageCombatPlayback.pendingGameEndDto;
+        mirageCombatPlayback.pendingGameEndDto = null;
+        finalizeGameOverPresentation(pendingEnd);
     }
 
     getPlayabilityResyncCandidatePlayerIds().forEach(playerId => {
@@ -2772,16 +3033,27 @@ export function handleTurnStarted(eventData) {
     // Delegate the processing to the function designed for full state updates, passing the nested object.
     // Use PascalCase: GameState
     if (eventData && eventData.GameState) { // PascalCase
+        const prevMode = gameState.mode;
+        const prevMirageRound = Number(gameState.mirage?.roundNumber ?? gameState.mirage?.RoundNumber ?? 0);
         const hydrationSucceeded = updateFullGameState(eventData.GameState); // Pass the nested GameState object
         if (hydrationSucceeded === false) {
             console.error("GM: TurnStarted state hydration failed; skipping turn-start banner.");
             return;
         }
-        if (gameState.currentPlayerId && hasMissingHandPlayability(gameState.currentPlayerId)) {
-            schedulePlayabilityResync(gameState.currentPlayerId, 'turn-start-missing-cache');
+        const isMirage = gameState.mode === "Mirage";
+        const nextMirageRound = Number(gameState.mirage?.roundNumber ?? gameState.mirage?.RoundNumber ?? 0);
+        const targetResyncPlayerId = isMirage ? gameState.localPlayerId : gameState.currentPlayerId;
+        if (targetResyncPlayerId && hasMissingHandPlayability(targetResyncPlayerId)) {
+            schedulePlayabilityResync(targetResyncPlayerId, 'turn-start-missing-cache');
         }
-        if (typeof gameView.showTurnStartBanner === 'function') {
-            gameView.showTurnStartBanner(gameState.currentPlayerId);
+        const shouldShowBanner = !isMirage || prevMode !== "Mirage" || (nextMirageRound > 0 && nextMirageRound !== prevMirageRound);
+        if (shouldShowBanner) {
+            const bannerTargetPlayerId = isMirage ? gameState.localPlayerId : gameState.currentPlayerId;
+            if (isMiragePlaybackDomGateActive()) {
+                mirageCombatPlayback.pendingTurnStartBannerPlayerId = bannerTargetPlayerId;
+            } else if (typeof rawGameView?.showTurnStartBanner === 'function') {
+                rawGameView.showTurnStartBanner(bannerTargetPlayerId);
+            }
         }
     } else {
         console.error("GM Error: TurnStarted event received without a valid nested GameState object:", eventData);
@@ -2915,6 +3187,11 @@ export function handlePpMaxUpdate(eventData) {
     playerToUpdate.maxPP = eventData.MaxPp;
     if (eventData.CurrentPp !== undefined && eventData.CurrentPp !== null) {
         playerToUpdate.pp = eventData.CurrentPp;
+    } else if (gameState.mode === "Mirage") {
+        const hardCap = Number(playerToUpdate.mirage?.hardGoldCap ?? gameState.mirage?.hardGoldCap ?? 10) || 10;
+        if (playerToUpdate.pp > hardCap) {
+            playerToUpdate.pp = hardCap;
+        }
     } else if (playerToUpdate.pp > playerToUpdate.maxPP) {
         // 兜底：若当前值超过最大值，进行下修
         playerToUpdate.pp = playerToUpdate.maxPP;
@@ -2993,12 +3270,16 @@ export function handleActPlayabilityUpdate(updateDto) {
     }
 
     const targetPlayer = getPlayerState(updatePlayerId);
-    if (!targetPlayer || !Array.isArray(targetPlayer.field)) {
+    if (!targetPlayer) {
         return;
     }
     const normalizeInstanceId = value => String(value ?? '').trim().toLowerCase();
     const fieldLookup = new Map();
-    targetPlayer.field.forEach(card => {
+    const candidateCards = [
+        ...(Array.isArray(targetPlayer.field) ? targetPlayer.field : []),
+        ...(targetPlayer.leaderCard ? [targetPlayer.leaderCard] : [])
+    ];
+    candidateCards.forEach(card => {
         if (!card) return;
         const uidKey = normalizeInstanceId(card.uid);
         const instanceKey = normalizeInstanceId(card.InstanceId);
@@ -3338,6 +3619,14 @@ export function handleCardMoved(eventData) {
         return;
     }
 
+    const moveContext = {
+        cardUid: String(cardUid),
+        ownerId: ownerId ? String(ownerId) : '',
+        fromZone,
+        toZone,
+        moveReason: String(eventData?.MoveReason ?? eventData?.moveReason ?? eventData?.Reason ?? '').trim().toLowerCase()
+    };
+    const preMoveVisual = gameView.prepareCardMoveVisual?.(moveContext, eventData) ?? null;
     const ownerPlayer = ownerId ? getPlayerState(ownerId) : null;
     const detached = detachCardFromAllZones(cardUid);
 
@@ -3412,6 +3701,8 @@ export function handleCardMoved(eventData) {
         gameState.selectedAttackerUid = null;
         gameView.renderHighlights(gameState);
     }
+
+    return gameView.commitCardMoveVisual?.(moveContext, preMoveVisual, movedInstance, eventData);
 }
 
 export function handleTuck(eventData) {
@@ -3616,6 +3907,8 @@ export function handleUnitEvolved(eventData) {
             // Re-render specifically the unit (EP display will be updated by separate EpUpdateEvent)
             gameView.updateUnitDisplay(updatedUnit);
             gameView.updateHealthDisplay(updatedUnit);
+            const isSuper = Boolean(updatedUnit.isSuperEvolved ?? updatedUnit.IsSuperEvolved);
+            return gameView.playUnitEvolutionEffect?.(updatedUnit.uid, isSuper);
         }
     }
 }
@@ -3728,6 +4021,9 @@ export function handleKeywordRemoved(eventData) {
         return;
     }
 
+    if (String(keyword).trim().toLowerCase() === 'shield') {
+        gameView.notifyShieldRemoved?.(unit.uid);
+    }
     updateCardKeywords(unit, keyword, false);
     gameView.updateUnitDisplay(unit);
     gameView.refreshBattleCardPreviewIfCurrent(unit);
@@ -3846,12 +4142,7 @@ export function handleAttackDeclared(eventData) {
         return;
     }
 
-
-    // Future: Trigger attack animation start here?
-    // Example: showAttackArrow(attacker.uid, target.uid);
-
-    // No state change or re-render needed here usually, wait for AttackOccurred.
-    // renderGame(gameState); // Avoid re-rendering unless specific UI effect requires it
+    return gameView.playAttackLunge?.(attacker.uid, target.uid);
 }
 export function handleDamageDealt(eventData) {
     // DTO: Assume DamageDealtEventDto { string? SourceUid, string TargetUid, int DamageAmount }
@@ -4001,7 +4292,7 @@ export function handleCardPlayed(eventData) {
         timestampUtc: eventData.TimestampUtc ?? eventData.timestampUtc ?? new Date().toISOString()
     });
 
-    // Placeholder for play-card visual effects.
+    return gameView.notifyCardPlayed?.(playedCard, sourcePlayerId);
 }
 
 export function handleCardSummoned(eventData) {
@@ -4015,30 +4306,177 @@ export function handleCardSummoned(eventData) {
 
 // --- END NEW Refactored Event Handlers ---
 
-export function handleGameOver(eventData) {
-    // DTO: GameOverEventDto { WinnerId: string, Reason?: string } // Assuming PascalCase DTO
-    // Use PascalCase: WinnerId
-    if (!eventData || !eventData.WinnerId) { // PascalCase
-        console.error("GM Error: Invalid data in handleGameOver:", eventData);
-        return;
-    }
-    gameState.gameOver = true;
-    gameState.gamePhase = "GameOver";
-    // Use PascalCase: WinnerId
-    gameState.winner = eventData.WinnerId; // PascalCase
-    // Update UI to show game over screen with winner/loser info
-    // Use PascalCase: Reason
-
+function finalizeGameOverPresentation() {
     appendSystemLog('提示：结算完成后，可返回主菜单右上角「元进度」面板刷新查看金币/任务。');
     const session = getUserSession();
     const maybeUserId = session?.mode === "user" ? session.userId : null;
     if (looksLikeGuid(maybeUserId)) {
         tryFetchMetaProgressionState(maybeUserId).catch(() => { });
     }
-    gameView.renderGame(gameState); // Render final game over state
+    if (typeof rawGameView?.renderGame === "function") {
+        rawGameView.renderGame(gameState);
+    } else if (typeof gameView?.renderGame === "function") {
+        gameView.renderGame(gameState);
+    }
     refreshTurnTimerFromState();
-    // Consider disabling all further interactions more forcefully
-    // disablePlayerInteractions(); // REMOVED: Relying on existing logic per user preference
+}
+
+export function handleGameOver(eventData) {
+    // DTO: GameOverEventDto { WinnerId: string, Reason?: string } // Assuming PascalCase DTO
+    // Use PascalCase: WinnerId
+    const winnerId = eventData?.WinnerId ?? eventData?.winnerId;
+    if (!eventData || !winnerId) { // PascalCase
+        console.error("GM Error: Invalid data in handleGameOver:", eventData);
+        return;
+    }
+    gameState.gameOver = true;
+    gameState.gamePhase = "GameOver";
+    gameState.phase = "GameOver";
+    gameState.winner = winnerId;
+
+    if (isMiragePlaybackDomGateActive()) {
+        mirageCombatPlayback.pendingGameEndDto = eventData;
+        return;
+    }
+
+    finalizeGameOverPresentation();
+}
+
+function waitMiragePlaybackDelay(ms, abortSignal) {
+    return new Promise((resolve, reject) => {
+        if (abortSignal?.aborted) {
+            reject(new Error("aborted"));
+            return;
+        }
+        const timerId = setTimeout(() => {
+            if (abortSignal) {
+                abortSignal.removeEventListener("abort", onAbort);
+            }
+            resolve();
+        }, Math.max(0, Number(ms) || 0));
+        const onAbort = () => {
+            clearTimeout(timerId);
+            reject(new Error("aborted"));
+        };
+        if (abortSignal) {
+            abortSignal.addEventListener("abort", onAbort, { once: true });
+        }
+    });
+}
+
+export function abortMirageCombatPlayback(reason = "completed") {
+    mirageCombatPlayback.playbackToken += 1;
+    if (mirageCombatPlayback.abortController) {
+        try {
+            mirageCombatPlayback.abortController.abort(reason);
+        } catch {
+            // ignore abort error
+        }
+        mirageCombatPlayback.abortController = null;
+    }
+    mirageCombatPlayback.active = false;
+    mirageCombatPlayback.currentReplay = null;
+    mirageCombatPlayback.currentStepIndex = -1;
+
+    if (reason === "leave_room" || reason === "new_game") {
+        mirageCombatPlayback.reconnectSyncPending = false;
+        mirageCombatPlayback.pendingGameEndDto = null;
+        mirageCombatPlayback.pendingTurnStartBannerPlayerId = null;
+        rawGameView?.hideMirageCombatPlaybackOverlay?.();
+        return;
+    }
+
+    if (reason === "reconnecting") {
+        mirageCombatPlayback.reconnectSyncPending = true;
+        rawGameView?.showMirageReconnectLockOverlay?.();
+        return;
+    }
+
+    if (reason === "skip" || reason === "completed") {
+        mirageCombatPlayback.reconnectSyncPending = false;
+        rawGameView?.hideMirageCombatPlaybackOverlay?.();
+        if (typeof rawGameView?.renderGame === "function") {
+            rawGameView.renderGame(gameState);
+            refreshTurnTimerFromState();
+        }
+        if (mirageCombatPlayback.pendingGameEndDto) {
+            mirageCombatPlayback.pendingGameEndDto = null;
+            mirageCombatPlayback.pendingTurnStartBannerPlayerId = null;
+            finalizeGameOverPresentation();
+        } else if (mirageCombatPlayback.pendingTurnStartBannerPlayerId) {
+            const bannerTarget = mirageCombatPlayback.pendingTurnStartBannerPlayerId;
+            mirageCombatPlayback.pendingTurnStartBannerPlayerId = null;
+            rawGameView?.showTurnStartBanner?.(bannerTarget);
+        }
+    }
+}
+
+export async function handleMirageCombatReplay(replayDto) {
+    const combatId = replayDto?.combatId ?? replayDto?.CombatId;
+    if (!replayDto || !combatId) {
+        console.warn("GM: Received invalid MirageCombatReplayDto:", replayDto);
+        return;
+    }
+    if (mirageCombatPlayback.reconnectSyncPending) {
+        return;
+    }
+    if (mirageCombatPlayback.active) {
+        mirageCombatPlayback.playbackToken += 1;
+        try {
+            mirageCombatPlayback.abortController?.abort("superseded");
+        } catch {
+            // ignore
+        }
+        mirageCombatPlayback.abortController = null;
+    }
+
+    const token = ++mirageCombatPlayback.playbackToken;
+    const abortController = new AbortController();
+    mirageCombatPlayback.active = true;
+    mirageCombatPlayback.abortController = abortController;
+    mirageCombatPlayback.currentReplay = replayDto;
+    mirageCombatPlayback.currentStepIndex = -1;
+
+    const steps = Array.isArray(replayDto.steps ?? replayDto.Steps)
+        ? (replayDto.steps ?? replayDto.Steps)
+        : [];
+
+    try {
+        rawGameView?.startMirageCombatPlaybackUi?.(replayDto, {
+            onSkip: () => abortMirageCombatPlayback("skip")
+        });
+        await waitMiragePlaybackDelay(450, abortController.signal);
+
+        for (let i = 0; i < steps.length; i++) {
+            if (abortController.signal.aborted || mirageCombatPlayback.playbackToken !== token) {
+                return;
+            }
+            mirageCombatPlayback.currentStepIndex = i;
+            rawGameView?.renderMirageCombatStep?.(steps[i], replayDto, i);
+            await waitMiragePlaybackDelay(550, abortController.signal);
+        }
+
+        if (abortController.signal.aborted || mirageCombatPlayback.playbackToken !== token) {
+            return;
+        }
+        rawGameView?.renderMirageCombatOutcome?.(replayDto);
+        await waitMiragePlaybackDelay(600, abortController.signal);
+
+        if (!abortController.signal.aborted && mirageCombatPlayback.playbackToken === token) {
+            abortMirageCombatPlayback("completed");
+        }
+    } catch (error) {
+        if (abortController.signal.aborted || mirageCombatPlayback.playbackToken !== token) {
+            return;
+        }
+        console.error("GM: Mirage combat playback encountered an unexpected error:", error);
+        try {
+            abortMirageCombatPlayback("completed");
+        } catch (cleanupError) {
+            console.error("GM: Failed to restore state after Mirage playback error:", cleanupError);
+        }
+        appendSystemLog("系统: 幻境战斗回放渲染异常，已自动跳过并同步最新战场状态。");
+    }
 }
 
 function appendSystemLog(message) {

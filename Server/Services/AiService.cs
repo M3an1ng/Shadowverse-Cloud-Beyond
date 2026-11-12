@@ -24,6 +24,8 @@ using System.Linq; // For Linq methods
 using System.Threading;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Hubs;
 
 namespace ShadowverseBeyond.Server.Services
 {
@@ -38,8 +40,9 @@ namespace ShadowverseBeyond.Server.Services
         private readonly bool _isolateTargetEffects;
         private readonly bool _protectPlannedMaterials;
         private readonly IServiceScopeFactory _serviceScopeFactory; // To resolve IGameService if needed, avoiding circular dependency
+        private readonly IGameDataProvider _gameDataProvider;
 
-        public AiService(ILogger<AiService> logger, IServiceScopeFactory serviceScopeFactory, AiLearningModel learned, Microsoft.Extensions.Configuration.IConfiguration? configuration=null)
+        public AiService(ILogger<AiService> logger, IServiceScopeFactory serviceScopeFactory, AiLearningModel learned, Microsoft.Extensions.Configuration.IConfiguration? configuration=null, IGameDataProvider? gameDataProvider=null)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _learned = learned;
@@ -47,7 +50,125 @@ namespace ShadowverseBeyond.Server.Services
             _isolateTargetEffects=configuration?.GetValue("AiStrategy:IsolateTargetEffects",true)??true;
             _protectPlannedMaterials=configuration?.GetValue("AiStrategy:ProtectPlannedMaterials",true)??true;
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
+            _gameDataProvider = gameDataProvider ?? GameDataProvider.Instance;
         }
+
+        public async Task<MirageAiActionDecision> DecideMirageRecruitActionAsync(GameStateDto gameState, Guid aiPlayerId)
+        {
+            if (gameState.Mode != GameMode.Mirage || gameState.Phase != GamePhase.Recruit || gameState.IsGameOver)
+                throw new InvalidOperationException("Mirage AI decisions require an active Recruit phase.");
+
+            var aiState = gameState.Players.Single(p => p.PlayerId == aiPlayerId);
+            var mirage = aiState.Mirage ?? throw new InvalidOperationException("Mirage AI player state is missing.");
+
+            if (!mirage.HasSelectedLeader && mirage.LeaderCandidateCardIds.Count > 0)
+            {
+                var preferredLeaderId = mirage.LeaderCandidateCardIds
+                    .OrderByDescending(id => id == 900102 ? 100 : id == 900101 ? 90 : 0)
+                    .ThenBy(id => id)
+                    .First();
+                return new("MirageSelectLeader", preferredLeaderId);
+            }
+
+            var fieldUnits = aiState.Field.Where(c => c.Type != CardType.Leader).ToList();
+            var weakestSellableFollower = fieldUnits
+                .Where(c => c.Type == CardType.Follower && !c.IsMirageTriple)
+                .OrderBy(FollowerCombatScore).ThenBy(c => c.InstanceId).FirstOrDefault();
+            var handDeployableFollowers = aiState.Hand
+                .Where(c => c.Type == CardType.Follower && !c.HasKeyword(CardKeyword.CannotUse)
+                    && (c.IsMirageRecruited || c.CurrentCost <= aiState.CurrentPP))
+                .OrderByDescending(FollowerCombatScore).ThenBy(c => c.InstanceId).ToList();
+            var ownedCopies = aiState.Hand.Concat(aiState.Field)
+                .Where(c => c.Type == CardType.Follower && !c.IsMirageTriple)
+                .GroupBy(c => c.CardId).ToDictionary(g => g.Key, g => g.Count());
+            int Copies(MirageShopOfferDto offer) => ownedCopies.GetValueOrDefault(offer.CardDefinitionId);
+            var canReceiveCard = aiState.Hand.Count < GameConstants.Hand.MaxHandSize;
+            var affordableOffers = mirage.ShopOffers.Where(o => o.BuyCost <= aiState.CurrentPP).ToList();
+            var buyableOffers = canReceiveCard ? affordableOffers : new List<MirageShopOfferDto>();
+
+            if (canReceiveCard && mirage.PendingTickets.Count > 0)
+            {
+                var ticket = mirage.PendingTickets[0];
+                var chosen = ticket.CandidateCardDefinitionIds.Select(_gameDataProvider.GetCardDefinition)
+                    .Where(def => def != null && def.IsMirageCard)
+                    .OrderByDescending(def => def!.Attack * 10 + def.Health * 10 + (def.MirageTavernTier ?? def.Cost) * 5)
+                    .ThenBy(def => def!.Id).FirstOrDefault()
+                    ?? throw new InvalidOperationException($"Mirage discover ticket {ticket.TicketId} has no valid Mirage candidates.");
+                return new("MirageRedeemTicket", new MirageRedeemTicketActionDto(ticket.TicketId, chosen.Id));
+            }
+
+            if (fieldUnits.Count < GameConstants.Field.MaxFieldSize)
+            {
+                var playableCards = await GetPlayableCardsAsync(gameState.GameId, aiPlayerId, aiState);
+                var cardToPlay = playableCards
+                    .OrderByDescending(c => c.Type == CardType.Follower)
+                    .ThenByDescending(FollowerCombatScore).ThenBy(c => c.InstanceId).FirstOrDefault();
+                if (cardToPlay != null)
+                    return new("PlayCard", new PlayCardActionDto { CardUid = cardToPlay.InstanceId, TargetUids = null });
+            }
+
+            // 满场可玩性检查会排除全部随从；换怪先比较手牌，卖出后再走正常部署校验。
+            if (fieldUnits.Count >= GameConstants.Field.MaxFieldSize && weakestSellableFollower != null
+                && handDeployableFollowers.Any(c => FollowerCombatScore(c) >= FollowerCombatScore(weakestSellableFollower) + 20))
+                return new("MirageSellCard", weakestSellableFollower.InstanceId);
+
+            if (mirage.CanUpgradeTier && !buyableOffers.Any(o => Copies(o) >= 2)
+                && (gameState.Mirage?.RoundNumber == 2 && mirage.TavernTier == 1
+                    || aiState.CurrentPP - mirage.UpgradeCost >= MirageRuleConfig.DefaultBuyCost
+                    || mirage.UpgradeCost <= Math.Max(2, mirage.TavernTier)
+                    || fieldUnits.Count >= GameConstants.Field.MaxFieldSize && aiState.CurrentPP >= mirage.UpgradeCost))
+                return new("MirageUpgradeTier", new { });
+
+            var tripleOffer = buyableOffers.Where(o => Copies(o) >= 2)
+                .OrderByDescending(OfferCombatScore).ThenBy(o => o.CardDefinitionId).ThenBy(o => o.OfferId).FirstOrDefault();
+            if (tripleOffer != null)
+                return new("MirageBuyOffer", tripleOffer.OfferId);
+
+            var bestOffer = buyableOffers.Where(o => fieldUnits.Count < GameConstants.Field.MaxFieldSize
+                    || weakestSellableFollower != null && OfferCombatScore(o) >= FollowerCombatScore(weakestSellableFollower) + 20)
+                .OrderByDescending(o => OfferCombatScore(o) + o.TavernTier * 5 + (Copies(o) == 1 ? 50 : 0))
+                .ThenBy(o => o.CardDefinitionId).ThenBy(o => o.OfferId).FirstOrDefault();
+            if (bestOffer != null)
+                return new("MirageBuyOffer", bestOffer.OfferId);
+
+            if (aiState.LeaderCard != null && aiState.CurrentPP > 0)
+            {
+                using var scope = _serviceScopeFactory.CreateScope();
+                var gameService = scope.ServiceProvider.GetRequiredService<IGameService>();
+                var actPlayability = await gameService.GetActPlayabilityAsync(
+                    gameState.GameId,
+                    aiPlayerId,
+                    aiState.LeaderCard.InstanceId,
+                    CancellationToken.None);
+                var playableAbility = actPlayability.Abilities.FirstOrDefault(a =>
+                    a.IsPlayable && (!a.RequiresTargetSelection || a.HasValidTargets));
+                if (playableAbility != null || (actPlayability.Abilities.Count == 0
+                    && actPlayability.IsPlayable
+                    && (!actPlayability.RequiresTargetSelection || actPlayability.HasValidTargets)))
+                {
+                    return new("RequestAct", new ActActionDto
+                    {
+                        CardUid = aiState.LeaderCard.InstanceId,
+                        AbilityRuntimeId = playableAbility?.AbilityRuntimeId
+                    });
+                }
+            }
+
+            if (aiState.CurrentPP >= mirage.RefreshCost + MirageRuleConfig.DefaultBuyCost
+                && (fieldUnits.Count < GameConstants.Field.MaxFieldSize || weakestSellableFollower != null || ownedCopies.Count > 0))
+                return new("MirageRefreshShop", new { });
+
+            var hasTripleFreezeTarget = mirage.ShopOffers.Any(o => Copies(o) >= 2);
+            if (hasTripleFreezeTarget != mirage.IsShopFrozen)
+                return new("MirageToggleFreeze", new { });
+
+            return new("MirageSetReady", new { });
+        }
+
+        private static int FollowerCombatScore(CardInstanceDto card) =>
+            card.CurrentAttack * 10 + card.CurrentHealth * 10 + (card.IsMirageTriple ? 500 : 0);
+
+        private static int OfferCombatScore(MirageShopOfferDto offer) => offer.Attack * 10 + offer.Health * 10;
 
         /// <inheritdoc />
         public Task<List<string>> DecideMulliganAsync(GameStateDto gameState, Guid aiPlayerId)
@@ -398,6 +519,42 @@ namespace ShadowverseBeyond.Server.Services
             return (aiState, opponentState);
         }
 
+        private async Task<List<CardInstanceDto>> GetPlayableCardsAsync(string gameId, Guid aiPlayerId, PlayerStateDto aiState)
+        {
+            if (aiState?.Hand == null)
+            {
+                _logger.LogWarning("[AiService:Helper] AI state or hand is null in GetPlayableCards.");
+                return new List<CardInstanceDto>();
+            }
+            var spendablePp = aiState.CurrentPP + (aiState.IsPpBoostArmed ? GameConstants.PlayPoints.PpBoostAmount : 0);
+            var costPlayable = aiState.Hand
+                .Where(card => card != null && (card.IsMirageRecruited || card.CurrentCost <= spendablePp))
+                .ToList();
+            if (!costPlayable.Any())
+            {
+                return new List<CardInstanceDto>();
+            }
+            using var scope = _serviceScopeFactory.CreateScope();
+            var gameService = scope.ServiceProvider.GetRequiredService<IGameService>();
+            var playable = new List<CardInstanceDto>();
+            foreach (var card in costPlayable)
+            {
+                try
+                {
+                    var result = await gameService.GetCardPlayabilityAsync(gameId, aiPlayerId, card.InstanceId, CancellationToken.None);
+                    if (result.IsPlayable)
+                    {
+                        playable.Add(card);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[AiService:{GameId}] Failed to check playability for card {CardInstanceId}. Skipping.", gameId, card.InstanceId);
+                }
+            }
+            return playable;
+        }
+
         /// <summary>
         /// Gets cards from the AI's hand that can currently be played based on Play Points.
         /// </summary>
@@ -680,31 +837,46 @@ namespace ShadowverseBeyond.Server.Services
 
             if (minSelectionCount > 0 && selectableTargetIds.Any())
             {
-                var random = new Random();
-                var w=LearnedWeights(gameId,aiPlayerId);
-                chosenIds = selectableTargetIds
-                                   .OrderBy(id => reservedMaterials.Contains(id) ? 1 : 0)
-                                   .ThenByDescending(id => {
-                                       var card=request.SelectableCardInstances.FirstOrDefault(c=>c.InstanceId==id)??gameState.FindCardInstanceById(id.ToString());
-                                       if (choosesFusionMaterials && card != null && !useLegacyPolicy && player != null)
-                                           return -AiAbilityScoring.PlannedMaterialValue(player, card, materialPlan);
-                                       if (choosesFusionMaterials && card != null)
-                                           return _learned.Score(gameState, aiPlayerId, "choose", null, card, w)
-                                               - card.CurrentCost - (card.CurrentAttack + card.CurrentHealth) * .1;
-                                       if (card == null && !useLegacyPolicy) playerTargets.TryGetValue(id, out card);
-                                       if (effects.Count > 0 && effects.All(effect => effect.Type == EffectType.Discard)
-                                           && player != null && card?.OwnerPlayerId == aiPlayerId)
-                                           return -AiHandEconomy.DiscardValue(player, card, materialPlan,discardEconomy.GetValueOrDefault(card.InstanceId));
-                                       if (effects.Count > 0 && card != null)
-                                       {
-                                           var learned = _learned.Current == null ? 0 : _learned.Score(gameState, aiPlayerId, "choose", null, card, w);
-                                           return AiTargetScoring.Score(card, aiPlayerId, effects) + .04 * Math.Clamp(learned, -8, 8);
-                                       }
-                                       if (_learned.Current == null) return isOptionRequest && !useLegacyPolicy ? 0 : random.NextDouble();
-                                       return _learned.Score(gameState,aiPlayerId,"choose",null,card,w)+(card==null?0:(card.CurrentAttack+card.CurrentHealth)*.1);
-                                   })
-                                   .Take(minSelectionCount)
-                                   .ToList();
+                if (gameState.Mode == GameMode.Mirage)
+                {
+                    var aiFieldById = gameState.Players
+                        .FirstOrDefault(p => p.PlayerId == aiPlayerId)?
+                        .Field
+                        .ToDictionary(c => c.InstanceId) ?? new Dictionary<Guid, CardInstanceDto>();
+                    chosenIds = selectableTargetIds
+                        .OrderBy(id => aiFieldById.TryGetValue(id, out var card) && card.IsMirageTriple ? 1 : 0)
+                        .ThenBy(id => id)
+                        .Take(minSelectionCount)
+                        .ToList();
+                }
+                else
+                {
+                    var random = new Random();
+                    var w=LearnedWeights(gameId,aiPlayerId);
+                    chosenIds = selectableTargetIds
+                                       .OrderBy(id => reservedMaterials.Contains(id) ? 1 : 0)
+                                       .ThenByDescending(id => {
+                                           var card=request.SelectableCardInstances.FirstOrDefault(c=>c.InstanceId==id)??gameState.FindCardInstanceById(id.ToString());
+                                           if (choosesFusionMaterials && card != null && !useLegacyPolicy && player != null)
+                                               return -AiAbilityScoring.PlannedMaterialValue(player, card, materialPlan);
+                                           if (choosesFusionMaterials && card != null)
+                                               return _learned.Score(gameState, aiPlayerId, "choose", null, card, w)
+                                                   - card.CurrentCost - (card.CurrentAttack + card.CurrentHealth) * .1;
+                                           if (card == null && !useLegacyPolicy) playerTargets.TryGetValue(id, out card);
+                                           if (effects.Count > 0 && effects.All(effect => effect.Type == EffectType.Discard)
+                                               && player != null && card?.OwnerPlayerId == aiPlayerId)
+                                               return -AiHandEconomy.DiscardValue(player, card, materialPlan,discardEconomy.GetValueOrDefault(card.InstanceId));
+                                           if (effects.Count > 0 && card != null)
+                                           {
+                                               var learned = _learned.Current == null ? 0 : _learned.Score(gameState, aiPlayerId, "choose", null, card, w);
+                                               return AiTargetScoring.Score(card, aiPlayerId, effects) + .04 * Math.Clamp(learned, -8, 8);
+                                           }
+                                           if (_learned.Current == null) return isOptionRequest && !useLegacyPolicy ? 0 : random.NextDouble();
+                                           return _learned.Score(gameState,aiPlayerId,"choose",null,card,w)+(card==null?0:(card.CurrentAttack+card.CurrentHealth)*.1);
+                                       })
+                                       .Take(minSelectionCount)
+                                       .ToList();
+                }
 
                 _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} selected {Count} targets: [{Targets}]",
                     gameId, aiPlayerId, chosenIds.Count, string.Join(", ", chosenIds));

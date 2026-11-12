@@ -91,7 +91,7 @@
   width: 100%;
   flex-wrap: nowrap;
   margin-bottom: 14px;
-  gap: 12px;
+  gap: 8px;
 }
 .entry-create-heading .mp-card-title {
   margin: 0;
@@ -106,9 +106,10 @@
 .mp-card .entry-format-switch button {
   width: auto;
   min-width: 0;
-  padding: 7px 11px;
+  padding: 6px 9px;
   font-size: 12px;
   letter-spacing: 0;
+  white-space: nowrap;
   background: #141c23;
   color: #a3b0b9;
 }
@@ -123,6 +124,7 @@
   margin: 16px 0;
 }
 .take-two-create-settings[hidden],
+.mirage-create-settings[hidden],
 #take-two-create[hidden],
 #mp-create-host[hidden] {
   display: none !important;

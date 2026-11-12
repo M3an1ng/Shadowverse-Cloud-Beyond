@@ -70,7 +70,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
 
             var expiredGameIds = await db.ReplayGames
                 .AsNoTracking()
-                .Where(g => (g.EndedAtUtc != null && g.EndedAtUtc < cutoff) || (g.EndedAtUtc == null && g.CreatedAtUtc < cutoff))
+                .Where(g => (g.EndedAtUtc != null && g.EndedAtUtc < cutoff) || (g.SchemaVersion == 1 && g.EndedAtUtc == null && g.CreatedAtUtc < cutoff))
                 .Select(g => g.GameId)
                 .ToListAsync(cancellationToken);
 
@@ -78,6 +78,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
 
             foreach (var gameId in expiredGameIds)
             {
+                await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
                 var deletedEvents = await db.ReplayEvents
                     .Where(e => e.GameId == gameId)
                     .ExecuteDeleteAsync(cancellationToken);
@@ -93,6 +94,7 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
                 var deletedGames = await db.ReplayGames
                     .Where(g => g.GameId == gameId)
                     .ExecuteDeleteAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
 
                 if (deletedGames > 0)
                 {

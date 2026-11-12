@@ -1,4 +1,10 @@
-import { ensureAbilityData, ensureCardDefinitions, getAbilityDataSnapshot } from '../abilityDataCache.js';
+import {
+    ensureAbilityData,
+    ensureCardDefinitions,
+    getAbilityDataSnapshot,
+    getActiveAbilityDataScope
+} from '../abilityDataCache.js';
+import { normalizeCardPoolScope } from '../cardDefinitionsLoader.js';
 
 function normalizeCardChoices(cards) {
     const entries = (cards || [])
@@ -47,8 +53,8 @@ function normalizeAbilityChoices(abilities, cardIndex) {
     return entries;
 }
 
-// 原始目录仍由 abilityDataCache 拥有；这里仅持有同一编辑实例的选择展示投影与在途请求。
 export class DefinitionPickerCatalog {
+    #scope = null;
     #cardDefinitionCache = null;
     #cardDefinitionIndex = new Map();
     #cardDefinitionPromise = null;
@@ -56,8 +62,21 @@ export class DefinitionPickerCatalog {
     #abilityDefinitionIndex = new Map();
     #abilityDefinitionPromise = null;
 
+    constructor(options = {}) {
+        if (options && typeof options === 'object' && options.scope) {
+            this.#scope = normalizeCardPoolScope(options.scope);
+        } else if (typeof options === 'string' && options) {
+            this.#scope = normalizeCardPoolScope(options);
+        }
+    }
+
+    #resolveScope() {
+        return this.#scope || getActiveAbilityDataScope() || 'standard';
+    }
+
     async loadCards() {
-        const snapshot = getAbilityDataSnapshot();
+        const scope = this.#resolveScope();
+        const snapshot = getAbilityDataSnapshot(scope);
         if (snapshot.cards?.length) {
             this.#cardDefinitionCache = normalizeCardChoices(snapshot.cards);
             this.#cardDefinitionIndex = new Map(this.#cardDefinitionCache.map(entry => [entry.id, entry]));
@@ -65,7 +84,7 @@ export class DefinitionPickerCatalog {
         }
 
         if (!this.#cardDefinitionPromise) {
-            this.#cardDefinitionPromise = ensureCardDefinitions()
+            this.#cardDefinitionPromise = ensureCardDefinitions(scope)
                 .then(cards => {
                     this.#cardDefinitionCache = normalizeCardChoices(cards);
                     this.#cardDefinitionIndex = new Map(this.#cardDefinitionCache.map(entry => [entry.id, entry]));
@@ -80,7 +99,8 @@ export class DefinitionPickerCatalog {
     }
 
     async loadAbilities() {
-        const snapshot = getAbilityDataSnapshot();
+        const scope = this.#resolveScope();
+        const snapshot = getAbilityDataSnapshot(scope);
         if (snapshot.abilities?.length) {
             await this.loadCards();
             this.#abilityDefinitionCache = normalizeAbilityChoices(snapshot.abilities, this.#cardDefinitionIndex);
@@ -89,7 +109,7 @@ export class DefinitionPickerCatalog {
         }
 
         if (!this.#abilityDefinitionPromise) {
-            this.#abilityDefinitionPromise = ensureAbilityData()
+            this.#abilityDefinitionPromise = ensureAbilityData(scope)
                 .then(async data => {
                     await this.loadCards();
                     this.#abilityDefinitionCache = normalizeAbilityChoices(data.abilities, this.#cardDefinitionIndex);

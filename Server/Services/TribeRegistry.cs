@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Data;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
@@ -13,11 +14,13 @@ namespace ShadowverseBeyond.Server.Services
         private sealed record Snapshot(
             IReadOnlyDictionary<string, TribeDefinition> DefinitionsByLookup,
             IReadOnlyDictionary<string, TribeDefinition> DefinitionsByName,
-            IReadOnlyCollection<string> KnownNormalTribes)
+            IReadOnlyCollection<string> StandardKnownNormalTribes,
+            IReadOnlyCollection<string> MirageKnownNormalTribes)
         {
             public static Snapshot Empty { get; } = new(
                 new Dictionary<string, TribeDefinition>(StringComparer.OrdinalIgnoreCase),
                 new Dictionary<string, TribeDefinition>(StringComparer.OrdinalIgnoreCase),
+                Array.Empty<string>(),
                 Array.Empty<string>());
         }
 
@@ -60,10 +63,13 @@ namespace ShadowverseBeyond.Server.Services
             return CanonicalizeMany(rawValues, Volatile.Read(ref _snapshot));
         }
 
-        public IReadOnlyCollection<string> GetKnownNormalTribes()
+        public IReadOnlyCollection<string> GetKnownNormalTribes(GameMode mode = GameMode.Standard)
         {
             EnsureInitialized();
-            return Volatile.Read(ref _snapshot).KnownNormalTribes;
+            var snapshot = Volatile.Read(ref _snapshot);
+            return mode == GameMode.Mirage
+                ? snapshot.MirageKnownNormalTribes
+                : snapshot.StandardKnownNormalTribes;
         }
 
         public bool TryGetDefinition(string? raw, out TribeDefinition definition)
@@ -80,12 +86,15 @@ namespace ShadowverseBeyond.Server.Services
             return Volatile.Read(ref _snapshot).DefinitionsByLookup.TryGetValue(trimmed, out definition!);
         }
 
-        public async Task<IReadOnlyList<string>> NormalizeAndRegisterAsync(IEnumerable<string>? rawValues, CancellationToken cancellationToken = default)
+        public async Task<IReadOnlyList<string>> NormalizeAndRegisterAsync(
+            IEnumerable<string>? rawValues,
+            CancellationToken cancellationToken = default,
+            bool isMirageScope = false)
         {
             await RefreshIfNeededAsync(cancellationToken);
 
             var normalizedValues = CanonicalizeMany(rawValues, Volatile.Read(ref _snapshot));
-            if (normalizedValues.Count == 0)
+            if (normalizedValues.Count == 0 || isMirageScope)
             {
                 return normalizedValues;
             }
@@ -159,17 +168,19 @@ namespace ShadowverseBeyond.Server.Services
                     byName[GameConstants.Tribes.MatchAll] = BuildMatchAllDefinition();
                 }
 
-                var knownNormalTribes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var standardKnownNormalTribes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var mirageKnownNormalTribes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var definition in byName.Values)
                 {
                     if (definition.Behavior == TribeBehavior.Normal)
                     {
-                        knownNormalTribes.Add(definition.Name);
+                        standardKnownNormalTribes.Add(definition.Name);
                     }
                 }
 
                 foreach (var card in _gameDataProvider.Cards)
                 {
+                    if (card == null || card.IsMirageCard) continue;
                     foreach (var tribe in TrimDistinct(card.Tribe))
                     {
                         if (!byName.TryGetValue(tribe, out var definition))
@@ -180,7 +191,28 @@ namespace ShadowverseBeyond.Server.Services
 
                         if (definition.Behavior == TribeBehavior.Normal)
                         {
-                            knownNormalTribes.Add(definition.Name);
+                            standardKnownNormalTribes.Add(definition.Name);
+                        }
+                    }
+                }
+
+                var mirageCards = (_gameDataProvider as IEnvironmentScopedGameDataProvider)?.GetMirageCardDefinitions()
+                    ?? Array.Empty<CardDefinition>();
+                foreach (var card in mirageCards)
+                {
+                    if (card == null || !card.IsMirageCard) continue;
+                    foreach (var tribe in TrimDistinct(card.Tribe))
+                    {
+                        if (byName.TryGetValue(tribe, out var definition))
+                        {
+                            if (definition.Behavior == TribeBehavior.Normal)
+                            {
+                                mirageKnownNormalTribes.Add(definition.Name);
+                            }
+                        }
+                        else
+                        {
+                            mirageKnownNormalTribes.Add(tribe);
                         }
                     }
                 }
@@ -195,7 +227,13 @@ namespace ShadowverseBeyond.Server.Services
                     }
                 }
 
-                Volatile.Write(ref _snapshot, new Snapshot(byLookup, byName, knownNormalTribes.ToList()));
+                Volatile.Write(
+                    ref _snapshot,
+                    new Snapshot(
+                        byLookup,
+                        byName,
+                        standardKnownNormalTribes.ToList(),
+                        mirageKnownNormalTribes.ToList()));
                 _isInitialized = true;
             }
             finally

@@ -138,6 +138,9 @@ namespace ShadowverseBeyond.Server.Dtos
         /// Relevant primarily for followers on the field.
         /// </summary>
         public bool IsSuperEvolved { get; set; }
+        public bool IsMirageRecruited { get; set; }
+        public bool IsMirageTriple { get; set; }
+        public Guid? OriginInstanceId { get; set; }
 
         /// <summary>
         /// Indicates if the follower instance can currently attack.

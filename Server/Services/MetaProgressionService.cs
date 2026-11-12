@@ -45,7 +45,8 @@ public sealed class MetaProgressionService : IMetaProgressionService
         IReadOnlyList<IGameEvent> processedEvents,
         CancellationToken cancellationToken)
     {
-        var gameEndEvent = processedEvents.LastOrDefault(e => e is GameEndEvent) as GameEndEvent;
+        if (gameContext.CurrentGameState.ReplayBranch != null) return;
+        var gameEndEvent = ResolveTerminalGameEndEvent(processedEvents);
         if (gameEndEvent == null)
         {
             return;
@@ -87,6 +88,31 @@ public sealed class MetaProgressionService : IMetaProgressionService
                 isTakeTwo: participant.IsTakeTwo,
                 cancellationToken);
         }
+    }
+
+    private static GameEndEvent? ResolveTerminalGameEndEvent(IReadOnlyList<IGameEvent> processedEvents)
+    {
+        for (int i = processedEvents.Count - 1; i >= 0; i--)
+        {
+            switch (processedEvents[i])
+            {
+                case GameEndEvent gameEnd:
+                    return gameEnd;
+                case MirageCombatResultCommittedEvent
+                {
+                    WasNoOpIdempotent: false,
+                    IsGameOverResult: true
+                } mirageCommit when mirageCommit.WinnerPlayerId != Guid.Empty && mirageCommit.LoserPlayerId != Guid.Empty:
+                    return new GameEndEvent(
+                        mirageCommit.WinnerPlayerId,
+                        mirageCommit.LoserPlayerId,
+                        mirageCommit.EndReason,
+                        mirageCommit.EventId,
+                        mirageCommit.Timestamp);
+            }
+        }
+
+        return null;
     }
 
     private async Task SettleUserOnceAsync(

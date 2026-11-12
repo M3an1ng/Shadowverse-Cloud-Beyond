@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Dtos.Enums;
 
 namespace ShadowverseBeyond.Server.Services.Abstractions
 {
@@ -11,11 +12,14 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
 
         IReadOnlyList<string> NormalizeMany(IEnumerable<string>? rawValues);
 
-        IReadOnlyCollection<string> GetKnownNormalTribes();
+        IReadOnlyCollection<string> GetKnownNormalTribes(GameMode mode = GameMode.Standard);
 
         bool TryGetDefinition(string? raw, out TribeDefinition definition);
 
-        Task<IReadOnlyList<string>> NormalizeAndRegisterAsync(IEnumerable<string>? rawValues, CancellationToken cancellationToken = default);
+        Task<IReadOnlyList<string>> NormalizeAndRegisterAsync(
+            IEnumerable<string>? rawValues,
+            CancellationToken cancellationToken = default,
+            bool isMirageScope = false);
 
         Task RefreshAsync(CancellationToken cancellationToken = default);
     }

@@ -1,4 +1,4 @@
-﻿import { showAlert } from './siteDialog.js';
+import { showAlert } from './siteDialog.js';
 // src/router.js - 简单的前端路由系统
 //
 // 相关文档:
@@ -56,6 +56,13 @@ class Router {
             title: '卡牌工坊 - 影之诗 星云',
             init: this.initCardEditorPage.bind(this),
             cleanup: this.cleanupCardEditorPage.bind(this)
+        });
+
+        this.routes.set('mirage-card-editor', {
+            element: document.getElementById('mirage-card-editor-page'),
+            title: '幻境卡牌工坊 - 影之诗 星云',
+            init: this.initMirageCardEditorPage.bind(this),
+            cleanup: this.cleanupMirageCardEditorPage.bind(this)
         });
 
         this.routes.set('deck-builder', {
@@ -227,7 +234,12 @@ class Router {
         try {
             // 动态导入卡牌编辑器模块
             const editorModule = await import('./cardEditor.js');
-            await editorModule.initializeCardEditor();
+            await editorModule.initializeCardEditor({
+                containerId: 'card-editor-container',
+                cardPoolScope: 'standard'
+            });
+            const cardSetModule = await import('./devToolsCardSetEnvironmentMembership.js');
+            await cardSetModule.initializeDevToolsCardSetEnvironmentMembership();
         } catch (error) {
             console.error('Router: Failed to initialize card editor:', error);
 
@@ -248,12 +260,56 @@ class Router {
 
     async cleanupCardEditorPage() {
         try {
+            const cardSetModule = await import('./devToolsCardSetEnvironmentMembership.js');
+            await cardSetModule.cleanupDevToolsCardSetEnvironmentMembership();
             const editorModule = await import('./cardEditor.js');
             if (typeof editorModule.cleanupCardEditor === 'function') {
-                editorModule.cleanupCardEditor();
+                editorModule.cleanupCardEditor('card-editor-container');
             }
         } catch (error) {
             console.error('Router: Failed to cleanup card editor:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * 初始化幻境卡牌编辑器页面（独立卡池隔离入口）
+     */
+    async initMirageCardEditorPage() {
+        try {
+            const editorModule = await import('./cardEditor.js');
+            await editorModule.initializeCardEditor({
+                containerId: 'mirage-card-editor-container',
+                cardPoolScope: 'mirage'
+            });
+            const cardSetModule = await import('./devToolsCardSetEnvironmentMembership.js');
+            await cardSetModule.initializeDevToolsCardSetEnvironmentMembership();
+        } catch (error) {
+            console.error('Router: Failed to initialize mirage card editor:', error);
+            const container = document.getElementById('mirage-card-editor-container');
+            if (container) {
+                container.innerHTML = `
+                    <div class="error-message">
+                        <h3>加载失败</h3>
+                        <p>无法加载幻境卡牌编辑器: ${error.message}</p>
+                        <button onclick="location.reload()">重新加载</button>
+                    </div>
+                `;
+            }
+            throw error;
+        }
+    }
+
+    async cleanupMirageCardEditorPage() {
+        try {
+            const cardSetModule = await import('./devToolsCardSetEnvironmentMembership.js');
+            await cardSetModule.cleanupDevToolsCardSetEnvironmentMembership();
+            const editorModule = await import('./cardEditor.js');
+            if (typeof editorModule.cleanupCardEditor === 'function') {
+                editorModule.cleanupCardEditor('mirage-card-editor-container');
+            }
+        } catch (error) {
+            console.error('Router: Failed to cleanup mirage card editor:', error);
             throw error;
         }
     }
@@ -293,11 +349,8 @@ class Router {
      * 初始化多人对战（展示多人面板）
      */
     async initMultiplayer() {
+        // 面板已通过 CSS 定位；滚动到面板会将顶部导航一起移出视口。
         document.body.classList.add('show-multiplayer');
-        const panel = document.getElementById('multiplayer-panel');
-        if (panel) {
-            panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
     }
 
     /**
@@ -305,10 +358,6 @@ class Router {
      */
     async initSingleplayer() {
         document.body.classList.add('show-singleplayer');
-        const panel = document.getElementById('singleplayer-panel');
-        if (panel) {
-            panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
     }
 
     async cleanupSingleplayer() {
@@ -321,19 +370,17 @@ class Router {
     async initDevToolsPage() {
 
         try {
-            const [logModule, userModule, winrateModule, copyLimitModule, cardSetEnvModule] = await Promise.all([
+            const [logModule, userModule, winrateModule, copyLimitModule] = await Promise.all([
                 import('./devToolsLogViewer.js'),
                 import('./devToolsUserManagement.js'),
                 import('./devToolsWinrateStats.js'),
-                import('./devToolsCopyLimitPolicies.js'),
-                import('./devToolsCardSetEnvironmentMembership.js')
+                import('./devToolsCopyLimitPolicies.js')
             ]);
             const outcomes = await Promise.allSettled([
                 logModule.initializeDevToolsLogViewer(),
                 userModule.initializeDevToolsUserManagement(),
                 winrateModule.initializeDevToolsWinrateStats(),
-                copyLimitModule.initializeDevToolsCopyLimitPolicies(),
-                cardSetEnvModule.initializeDevToolsCardSetEnvironmentMembership()
+                copyLimitModule.initializeDevToolsCopyLimitPolicies()
             ]);
             const failures = outcomes.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
             if (failures.length) throw new AggregateError(failures, '开发工具生命周期未完成。');
@@ -345,19 +392,17 @@ class Router {
 
     async cleanupDevToolsPage() {
         try {
-            const [logModule, userModule, winrateModule, copyLimitModule, cardSetEnvModule] = await Promise.all([
+            const [logModule, userModule, winrateModule, copyLimitModule] = await Promise.all([
                 import('./devToolsLogViewer.js'),
                 import('./devToolsUserManagement.js'),
                 import('./devToolsWinrateStats.js'),
-                import('./devToolsCopyLimitPolicies.js'),
-                import('./devToolsCardSetEnvironmentMembership.js')
+                import('./devToolsCopyLimitPolicies.js')
             ]);
             const outcomes = await Promise.allSettled([
                 logModule.cleanupDevToolsLogViewer(),
                 userModule.cleanupDevToolsUserManagement(),
                 winrateModule.cleanupDevToolsWinrateStats(),
-                copyLimitModule.cleanupDevToolsCopyLimitPolicies(),
-                cardSetEnvModule.cleanupDevToolsCardSetEnvironmentMembership()
+                copyLimitModule.cleanupDevToolsCopyLimitPolicies()
             ]);
             const failures = outcomes.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
             if (failures.length) throw new AggregateError(failures, '开发工具生命周期未完成。');

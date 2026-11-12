@@ -239,7 +239,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                         ? "没有可供选择的目标。"
                         : BuildPlayerChoicePrompt(requestMinSelectionCount, maxSelectionCount);
 
-                    if (context.InvocationOptions.AutoRandomTargetSelection)
+                    if (context.InvocationOptions.AutoRandomTargetSelection || context.CurrentGameState.IsCombatSandbox)
                     {
                         var randomSelectionCount = ResolveRandomSelectionCount(
                             maxSelectionCount,

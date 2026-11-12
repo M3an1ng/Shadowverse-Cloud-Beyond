@@ -31,7 +31,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     return true;
                 foreach (var effect in config.Effects.Where(e => e.IsEnabled))
                 {
-                    if (effect.Type == EffectType.Choose) return true;
+                    if (effect.Type is EffectType.Choose or EffectType.Discover) return true;
                     if (effect.ChainedAbilities.Any(a => Inspect(a, path, depth + 1))) return true;
                     if (effect.Type is not (EffectType.Sequence or EffectType.Random)) continue;
                     if (!effect.Parameters.TryGetValue("AbilityConfigs", out var value)) continue;

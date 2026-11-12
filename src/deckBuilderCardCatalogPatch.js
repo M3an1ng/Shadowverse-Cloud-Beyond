@@ -5,6 +5,10 @@ function getCardDefinitionId(card) {
     return Number.isFinite(id) && id > 0 ? id : null;
 }
 
+function isMirageCardDefinition(card) {
+    return card?.isMirageCard === true || card?.IsMirageCard === true;
+}
+
 function normalizeIdList(values) {
     if (!Array.isArray(values)) {
         return [];
@@ -15,6 +19,7 @@ function normalizeIdList(values) {
 }
 
 function isDeckBuilderCollectibleCard(card) {
+    if (isMirageCardDefinition(card)) return false;
     const collectible = card?.isCollectible ?? card?.IsCollectible;
     if (collectible !== true) return false;
     const rarity = String(card?.rarity ?? card?.Rarity ?? '').trim().toLowerCase();
@@ -46,7 +51,9 @@ function removeCards(list, deletedIds) {
 }
 
 function rebuildIndexes(state) {
-    const rawCards = Array.isArray(state.rawCardsCache) ? state.rawCardsCache : [];
+    const rawCards = (Array.isArray(state.rawCardsCache) ? state.rawCardsCache : [])
+        .filter(card => !isMirageCardDefinition(card));
+    state.rawCardsCache = rawCards;
     state.rawCardIndex = new Map(rawCards
         .map(card => [getCardDefinitionId(card), card])
         .filter(([id]) => id != null));
@@ -56,11 +63,25 @@ function rebuildIndexes(state) {
 }
 
 export function normalizeCardCatalogPatch(detail = {}) {
-    const changedCards = Array.isArray(detail.changedCards) ? detail.changedCards : [];
+    if (String(detail?.scope ?? '').trim().toLowerCase() === 'mirage') {
+        return {
+            changedCards: [],
+            changedIds: [],
+            deletedIds: [],
+            hasPatch: false
+        };
+    }
+
+    const rawChangedCards = Array.isArray(detail.changedCards) ? detail.changedCards : [];
+    const changedCards = rawChangedCards.filter(card => !isMirageCardDefinition(card));
+    const mirageChangedIds = rawChangedCards
+        .filter(card => isMirageCardDefinition(card))
+        .map(card => getCardDefinitionId(card))
+        .filter(id => id != null);
     const changedIds = changedCards
         .map(card => getCardDefinitionId(card))
         .filter(id => id != null);
-    const deletedIds = normalizeIdList(detail.deletedCardIds);
+    const deletedIds = normalizeIdList([...(detail.deletedCardIds || []), ...mirageChangedIds]);
 
     return {
         changedCards,
@@ -79,6 +100,9 @@ export function canApplyDeckBuilderCardCatalogPatch(state, detail = {}) {
 }
 
 export function shouldSkipDeckBuilderCatalogReload(detail = {}) {
+    if (String(detail?.scope ?? '').trim().toLowerCase() === 'mirage') {
+        return true;
+    }
     return isAbilityOnlyInvalidation(detail);
 }
 
@@ -94,6 +118,9 @@ export function applyDeckBuilderCardCatalogPatch(state, detail = {}) {
 
     let rawCards = removeCards(state.rawCardsCache, patch.deletedIds);
     patch.changedCards.forEach(card => {
+        if (isMirageCardDefinition(card)) {
+            return;
+        }
         const cardId = getCardDefinitionId(card);
         if (cardId == null || patch.deletedIds.includes(cardId)) {
             return;

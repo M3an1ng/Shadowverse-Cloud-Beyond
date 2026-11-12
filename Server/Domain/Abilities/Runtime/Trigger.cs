@@ -2,6 +2,7 @@ using ShadowverseBeyond.Server.Domain.Abilities.Triggers;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -12,7 +13,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
     /// 运行时触发器包装类
     /// 包装TriggerConfig并添加运行时状态和行为
     /// </summary>
-    public class Trigger
+    public partial class Trigger
     {
         /// <summary>
         /// 静态触发器配置
@@ -70,13 +71,13 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Runtime
         /// <param name="gameEvent">游戏事件</param>
         /// <param name="sourceCard">触发器所属的卡牌实例，用于区域检查</param>
         /// <returns>是否可以触发</returns>
-        public bool CanTrigger(IGameEvent gameEvent, CardInstance? sourceCard)
+        public bool CanTrigger(IGameEvent gameEvent, CardInstance? sourceCard, CardZone? sourceZone = null)
         {
             if (!IsEnabled || TriggeredThisEvent)
                 return false;
 
             // 1. 检查区域限制
-            if (sourceCard != null && !Config.IsValidZone(sourceCard.CurrentZone))
+            if (sourceCard != null && !Config.IsValidZone(sourceZone ?? sourceCard.CurrentZone))
             {
 #if DEBUG
                 // Console.WriteLine($"[TriggerDebug] Trigger for '{sourceCard.Card.Name}' filtered by zone. Current: {sourceCard.CurrentZone}, Valid: {string.Join(",", Config.ValidZones)}");

@@ -405,14 +405,16 @@ async function loadCards(options = {}) {
         state.rawCardsCache = null;
     }
     const cards = await loadCardDefinitions({
+        scope: 'standard',
         useCache: options.force !== true,
         force: options.force === true,
         getCached: () => state.rawCardsCache,
         setCached: cardsFromApi => {
-            state.rawCardsCache = cardsFromApi;
+            state.rawCardsCache = (cardsFromApi || []).filter(c => !(c?.isMirageCard === true || c?.IsMirageCard === true));
         }
     });
     const filtered = cards.filter(card => {
+            if (card?.isMirageCard === true || card?.IsMirageCard === true) return false;
             const collectible = card?.isCollectible ?? card?.IsCollectible;
             if (collectible !== true) return false;
             const rarity = normalizeEnumValue(card?.rarity ?? card?.Rarity ?? '');

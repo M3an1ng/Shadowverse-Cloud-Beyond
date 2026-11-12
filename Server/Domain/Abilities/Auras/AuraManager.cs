@@ -16,7 +16,7 @@ using ShadowverseBeyond.Server.Domain.Events;
 
 namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
 {
-    public class AuraManager : IAuraManager
+    public partial class AuraManager : IAuraManager
     {
         private sealed class AuraInstance
         {
@@ -555,6 +555,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Auras
                 }
 
                 buff.RemoveAfterUse = config.RemoveAfterUse;
+                buff.IsAuraGenerated = true;
                 buff.SourceEffectIndex = aura.AuraIndex;
                 _logger.LogDebug("[AuraManager] ApplyAuraBuffToTarget: aura {AuraId} -> target {TargetId}. SourceAbilityId={SourceAbilityId} SourceCardId={SourceCardId} EffectIndex={EffectIndex}.",
                     aura.AuraId,

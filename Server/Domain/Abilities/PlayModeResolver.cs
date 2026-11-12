@@ -61,6 +61,24 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
             var modes = new List<PlayModeAvailabilityDto>();
             var currentPp = player.GetSpendablePlayPoints();
 
+            if (card.IsMirageRecruited && context.CurrentGameState.Mode == GameMode.Mirage)
+            {
+                modes.Add(new PlayModeAvailabilityDto
+                {
+                    Mode = PlayMode.Base,
+                    EffectiveCost = 0,
+                    IsAvailable = true,
+                    Reason = string.Empty
+                });
+                return new PlayModeResolution(
+                    modes,
+                    PlayMode.Base,
+                    0,
+                    null,
+                    null,
+                    null);
+            }
+
             var baseCost = Math.Max(0, card.CurrentCost);
             modes.Add(BuildAvailability(PlayMode.Base, baseCost, currentPp));
 
@@ -189,7 +207,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities
                     }
 
                     var definition = ShadowverseBeyond.Server.Services.GameDataProvider.Instance.GetCardDefinition(playAsCardDefinitionId);
-                    if (definition == null || definition.Type != (keyword == AbilityKeyword.Accelerate ? ShadowverseBeyond.Server.Dtos.Enums.CardType.Spell : ShadowverseBeyond.Server.Dtos.Enums.CardType.Amulet))
+                    var expectMirage = context.CurrentGameState.Mode == GameMode.Mirage;
+                    if (definition == null
+                        || definition.IsMirageCard != expectMirage
+                        || definition.Type != (keyword == AbilityKeyword.Accelerate ? ShadowverseBeyond.Server.Dtos.Enums.CardType.Spell : ShadowverseBeyond.Server.Dtos.Enums.CardType.Amulet))
                         continue;
                     if (ability.AlternatePlay?.AvailabilityConditions?.Any(condition => condition.IsEnabled
                         && !context.ServiceProvider.GetRequiredService<ShadowverseBeyond.Server.Domain.Abilities.Conditions.IConditionEvaluator>()

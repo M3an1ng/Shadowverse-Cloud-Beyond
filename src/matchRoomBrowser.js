@@ -56,19 +56,39 @@ export function normalizeMatchRoomList(payload) {
             const status = normalizeStatus(readValue(item, "status", "Status"));
             const canSpectate = status === "Started" && !!roomId && !!activeGameId;
             const hasGuest = Boolean(readValue(item, "hasGuest", "HasGuest"));
+            const useAiFallback = Boolean(readValue(item, "useAiFallback", "UseAiFallback"));
+            const isPublic = readValue(item, "isPublic", "IsPublic") !== false;
+            const isTakeTwo = Boolean(readValue(item, "isTakeTwo", "IsTakeTwo"));
+            const mode = normalizeString(readValue(item, "mode", "Mode")) || "Standard";
+            const isMirage = Boolean(readValue(item, "isMirage", "IsMirage")) || mode.toLowerCase() === "mirage";
+            const canJoin = Boolean(
+                readValue(item, "canJoin", "CanJoin") ??
+                (status === "Waiting" && isPublic && !hasGuest && !useAiFallback && !isTakeTwo && !!roomId)
+            );
             const round = normalizeRound(readValue(item, "round", "Round"));
+            const hostWins = Number(readValue(item, "hostWins", "HostWins") || 0);
+            const guestWins = Number(readValue(item, "guestWins", "GuestWins") || 0);
+            const draws = Number(readValue(item, "draws", "Draws") || 0);
             const createdAt = normalizeString(readValue(item, "createdAt", "CreatedAt"));
 
             return {
                 roomId,
-                isTakeTwo: Boolean(readValue(item, "isTakeTwo", "IsTakeTwo")),
+                isTakeTwo,
+                isMirage,
+                mode,
                 draftEnvironment: readValue(item, "draftEnvironment", "DraftEnvironment") || null,
                 activeGameId,
                 status,
                 statusLabel: STATUS_LABELS[status] || status || "未知",
                 canSpectate,
+                canJoin,
+                isPublic,
                 hasGuest,
+                useAiFallback,
                 round,
+                hostWins,
+                guestWins,
+                draws,
                 createdAt,
                 requiredEnvironment: readValue(item, "requiredEnvironment", "RequiredEnvironment") || null,
                 requiredRule: readValue(item, "requiredRule", "RequiredRule") || null

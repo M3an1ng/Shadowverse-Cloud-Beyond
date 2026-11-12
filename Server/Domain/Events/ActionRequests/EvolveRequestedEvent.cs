@@ -45,6 +45,11 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
 
         public DomainOperationResult Commit(GameContext context)
         {
+            if (context.CurrentGameState.Mode == GameMode.Mirage)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "幻境模式不允许手动进化。" };
+            }
+
             // =================================================================
             // 1. Resolve Entities from IDs
             // =================================================================

@@ -38,9 +38,24 @@ import {
     // handleMulligan, // Removed import - Now uses submitMulligan
     submitMulligan, // Added import for SignalR mulligan submission
     endTurnRequest,  // Added import for SignalR end turn request
+    mirageSetReadyRequest,
+    mirageRefreshShopRequest,
+    mirageUpgradeTierRequest,
+    mirageToggleFreezeRequest,
+    mirageBuyOfferRequest,
+    mirageSellCardRequest,
+    mirageReorderFieldRequest,
+    mirageRedeemTicketRequest,
+    mirageSelectLeaderRequest,
+    abortMirageCombatPlayback,
     submitPlayerChoice,
     cancelPlayerChoice
 } from './gameManager.js';
+
+function isMirageMode(state = gameState) {
+    const rawMode = state?.mode ?? state?.Mode;
+    return rawMode === 'Mirage' || rawMode === 1;
+}
 import {
     buildDebugLogLine,
     createHandDragPerfSession,
@@ -69,6 +84,8 @@ import {
     buildMatchHistoryPreviewCard
 } from './ui/logPanel.js';
 import { createCardAnimationSystem } from './ui/cardAnimationSystem.js';
+import { createBattleMotionController, createCleanCardClone, toStageRect } from './ui/battleCardMotion.js';
+import { isPresentationFastForward } from './revealPresentationGate.js';
 import { buildCounterSummaryEntries, PLAYER_SYSTEM_COUNTER_KEYS } from './counterSummary.js';
 import { getUserSession } from './userSession.js';
 import { preventNativeGameDrag } from './nativeGameDragGuard.js';
@@ -87,10 +104,29 @@ import badgeAuraUrl from './badge/Aura.png';
 import badgeShieldUrl from './badge/Shield.png';
 import badgeAbilityResistUrl from './badge/AbilityResist.png';
 import badgeShackleUrl from './badge/Shackle.png';
+import classNeutralIconUrl from './icon/svg/class_neutral.svg';
+import classForestcraftIconUrl from './icon/svg/class_elf.svg';
+import classSwordcraftIconUrl from './icon/svg/class_royal.svg';
+import classRunecraftIconUrl from './icon/svg/class_witch.svg';
+import classDragoncraftIconUrl from './icon/svg/class_dragon.svg';
+import classAbysscraftIconUrl from './icon/svg/class_nightmare.svg';
+import classHavencraftIconUrl from './icon/svg/class_bishop.svg';
+import classPortalcraftIconUrl from './icon/svg/class_nemesis.svg';
 // getCardDefinition is obsolete. Card instances now contain all necessary data.
 // import { endTurn } from './turnManager.js'; // Removed import - Now uses endTurnRequest
 
-export { renderGame, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, updateHandDisplay, refreshHandPlayabilityVisuals, addUnitToField, updateUnitDisplay, removeUnitFromField, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, clearSelectionHighlights, resetMulliganSelection, refreshBattleCardPreviewIfCurrent, renderHighlights, updateEmblemZone, updateTurnTimerDisplay, setConnectionStatus, setOpponentConnectionStatus, refreshCardInstanceUi, refreshCardActionControls, renderGameLog, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, getActionButtonsHtml, resolveRenderableTargetElement };
+export { renderGame, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, updateHandDisplay, refreshHandPlayabilityVisuals, addUnitToField, updateUnitDisplay, removeUnitFromField, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, clearSelectionHighlights, resetMulliganSelection, refreshBattleCardPreviewIfCurrent, renderHighlights, updateEmblemZone, updateTurnTimerDisplay, setConnectionStatus, setOpponentConnectionStatus, refreshCardInstanceUi, refreshCardActionControls, renderGameLog, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, getActionButtonsHtml, resolveRenderableTargetElement, prepareCardMoveVisual, commitCardMoveVisual, notifyCardPlayed, playAttackLunge, playUnitEvolutionEffect, notifyShieldRemoved, cancelAllBattleMotions };
+
+const CLASS_ICON_URL_MAP = Object.freeze({
+    Neutral: classNeutralIconUrl,
+    Forestcraft: classForestcraftIconUrl,
+    Swordcraft: classSwordcraftIconUrl,
+    Runecraft: classRunecraftIconUrl,
+    Dragoncraft: classDragoncraftIconUrl,
+    Abysscraft: classAbysscraftIconUrl,
+    Havencraft: classHavencraftIconUrl,
+    Portalcraft: classPortalcraftIconUrl
+});
 
 let mulliganSelectedUids = new Set();
 const EMBLEM_SLOT_COUNT = 5;
@@ -99,7 +135,7 @@ const CARD_MOVE_OPACITY = '0.82';
 const CARD_ENTER_TRANSITION_MS = 220;
 const CARD_MOVE_TRANSITION_MS = 220;
 const CARD_EXIT_TRANSITION_MS = 190;
-const CARD_ENTER_STAGGER_MS = 0;
+const CARD_ENTER_STAGGER_MS = 45;
 const CARD_MOVE_STAGGER_MS = 0;
 const CARD_EXIT_STAGGER_MS = 0;
 const CARD_STAGGER_MAX_MS = 420;
@@ -107,15 +143,16 @@ const CARD_ENTER_AFTER_EXIT_DELAY_MS = 0;
 const ATTACK_DRAG_MIN_DISTANCE_PX = 10;
 const ATTACK_DRAG_CLICK_SUPPRESS_MS = 260;
 const ATTACK_DRAG_LINE_ID = 'attack-drag-line';
-const ATTACK_DRAG_LEADER_ZONE_ID = 'attack-drag-leader-zone';
-const ATTACK_DRAG_LEADER_ZONE_CONFIRM_MS = 140;
+const ATTACK_DRAG_LEADER_CONFIRM_MS = 140;
+const HP_GHOST_SETTLE_DELAY_MS = 180;
 const HAND_DRAG_MIN_DISTANCE_PX = 10;
 const HAND_DRAG_CLICK_SUPPRESS_MS = 260;
 const HAND_DRAG_DROP_LANE_ID = 'hand-play-drop-lane';
 const HAND_DRAG_SNAP_BACK_MS = 190;
 const TRANSIENT_VISUAL_ROOT_ID = 'game-transient-visual-root';
-const TRANSIENT_VISUAL_CLEANUP_SELECTOR = '.card-fade-enter-overlay, .card-fade-exit-overlay, .fusion-float-card, .damage-number, .heal-number, .hand-drag-ghost, .hand-play-drop-lane, .attack-drag-leader-zone, #fusion-burst-root, #reveal-overlay-root';
+const TRANSIENT_VISUAL_CLEANUP_SELECTOR = '.card-fade-enter-overlay, .card-fade-exit-overlay, .fusion-float-card, .damage-number, .heal-number, .hand-drag-ghost, .hand-play-drop-lane, .bui-motion-carrier, .bui-exit-clip-shell, .bui-impact-burst, .bui-float-num, .bui-evo-burst, .bui-spell-arcane-burst, #fusion-burst-root, #reveal-overlay-root';
 const transientVisualTimeoutIds = new Set();
+const hpGhostSettleTimers = new Map();
 let suppressGameClickUntil = 0;
 const attackDragState = {
     pointerId: null,
@@ -132,8 +169,7 @@ const attackDragState = {
     hoverTargetUid: null,
     hoverElement: null,
     hoverKind: null,
-    lineElement: null,
-    leaderZoneElement: null
+    lineElement: null
 };
 const handDragState = {
     pointerId: null,
@@ -291,11 +327,7 @@ function removeStrayBattleCardArtifacts() {
 
 function clearAttackDragHover() {
     if (attackDragState.hoverElement) {
-        if (attackDragState.hoverKind === 'leader-zone') {
-            attackDragState.hoverElement.classList.remove('is-active');
-        } else {
-            attackDragState.hoverElement.classList.remove('attack-drag-hover');
-        }
+        attackDragState.hoverElement.classList.remove('attack-drag-hover', 'attack-drag-invalid');
     }
     attackDragState.hoverElement = null;
     attackDragState.hoverTargetUid = null;
@@ -303,13 +335,29 @@ function clearAttackDragHover() {
 }
 
 function ensureAttackDragLineElement() {
-    let lineEl = document.getElementById(ATTACK_DRAG_LINE_ID);
-    if (lineEl) return lineEl;
-    lineEl = document.createElement('div');
-    lineEl.id = ATTACK_DRAG_LINE_ID;
-    lineEl.className = 'attack-drag-line';
-    document.body.appendChild(lineEl);
-    return lineEl;
+    let svgEl = document.getElementById(ATTACK_DRAG_LINE_ID);
+    if (svgEl) return svgEl;
+    const ns = 'http://www.w3.org/2000/svg';
+    svgEl = document.createElementNS(ns, 'svg');
+    svgEl.setAttribute('id', ATTACK_DRAG_LINE_ID);
+    svgEl.setAttribute('class', 'attack-drag-svg');
+    svgEl.setAttribute('aria-hidden', 'true');
+
+    const originDot = document.createElementNS(ns, 'circle');
+    originDot.setAttribute('class', 'attack-drag-origin-dot');
+    originDot.setAttribute('r', '3.5');
+
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('class', 'attack-drag-vector');
+
+    const arrow = document.createElementNS(ns, 'polygon');
+    arrow.setAttribute('class', 'attack-drag-arrowhead');
+
+    svgEl.appendChild(originDot);
+    svgEl.appendChild(line);
+    svgEl.appendChild(arrow);
+    document.body.appendChild(svgEl);
+    return svgEl;
 }
 
 function removeAttackDragLineElement() {
@@ -318,107 +366,9 @@ function removeAttackDragLineElement() {
     attackDragState.lineElement = null;
 }
 
-function removeAttackDragLeaderZoneElement() {
-    const zoneEl = attackDragState.leaderZoneElement ?? document.getElementById(ATTACK_DRAG_LEADER_ZONE_ID);
-    zoneEl?.remove();
-    attackDragState.leaderZoneElement = null;
-}
-
-function ensureAttackDragLeaderZoneElement() {
-    const container = gameContainerEl ?? document.getElementById('game-container');
-    if (!container || !isGamePageActive()) return null;
-
-    let zoneEl = attackDragState.leaderZoneElement ?? container.querySelector(`#${ATTACK_DRAG_LEADER_ZONE_ID}`);
-    if (!zoneEl) {
-        zoneEl = document.createElement('div');
-        zoneEl.id = ATTACK_DRAG_LEADER_ZONE_ID;
-        zoneEl.className = 'attack-drag-leader-zone is-invalid';
-        zoneEl.innerHTML = `
-            <div class="attack-drag-leader-zone-marker">
-                <div class="attack-drag-leader-zone-avatar"></div>
-            </div>
-        `;
-        container.appendChild(zoneEl);
-    }
-
-    zoneEl.style.position = 'fixed';
-    zoneEl.style.pointerEvents = 'none';
-    zoneEl.classList.remove('is-confirmed', 'is-active');
-
-    const localPlayerId = gameState.localPlayerId ?? uiCurrentPlayerId;
-    const opponentPlayer = gameState.players?.find(player => player?.id !== localPlayerId) ?? null;
-    const displayName = resolvePlayerDisplayName(opponentPlayer, false);
-    const avatarData = resolvePlayerAvatar(opponentPlayer, false, displayName);
-    const avatarContainer = zoneEl.querySelector('.attack-drag-leader-zone-avatar');
-    if (avatarContainer) {
-        avatarContainer.textContent = '';
-        avatarContainer.classList.toggle('has-image', Boolean(avatarData.imageSrc));
-        if (avatarData.imageSrc) {
-            const imageEl = document.createElement('img');
-            imageEl.className = 'attack-drag-leader-zone-avatar-img';
-            imageEl.src = avatarData.imageSrc;
-            imageEl.alt = `${displayName} avatar`;
-            imageEl.onerror = () => {
-                avatarContainer.classList.remove('has-image');
-                avatarContainer.textContent = avatarData.fallbackText;
-            };
-            avatarContainer.appendChild(imageEl);
-        } else {
-            avatarContainer.textContent = avatarData.fallbackText;
-        }
-    }
-
-    attackDragState.leaderZoneElement = zoneEl;
-    return zoneEl;
-}
-
-function updateAttackDragLeaderZoneLayout() {
-    const zoneEl = attackDragState.leaderZoneElement ?? document.getElementById(ATTACK_DRAG_LEADER_ZONE_ID);
-    if (!zoneEl) return;
-
-    const battlefieldElement = document.getElementById('battlefield');
-    const opponentHandElement = player2HandEl ?? document.getElementById('player2-hand');
-    const avatarEl = resolveOpponentLeaderAvatarElement();
-    const battlefieldRect = battlefieldElement?.getBoundingClientRect?.() ?? null;
-    const handRect = opponentHandElement?.getBoundingClientRect?.() ?? null;
-    if (!handRect && !battlefieldRect) {
-        zoneEl.style.display = 'none';
-        return;
-    }
-
-    if (!isAttackDragLeaderTargetable(avatarEl)) {
-        zoneEl.style.display = 'none';
-        return;
-    }
-
-    const left = battlefieldRect?.left ?? handRect?.left ?? 0;
-    const width = battlefieldRect?.width ?? handRect?.width ?? 0;
-    const top = handRect?.top ?? battlefieldRect?.top ?? 0;
-    const height = handRect?.height ?? 0;
-
-    zoneEl.style.display = '';
-    zoneEl.style.left = `${left}px`;
-    zoneEl.style.top = `${top}px`;
-    zoneEl.style.width = `${width}px`;
-    zoneEl.style.height = `${height}px`;
-}
-
-function updateAttackDragLeaderZoneState() {
-    const zoneEl = attackDragState.leaderZoneElement ?? document.getElementById(ATTACK_DRAG_LEADER_ZONE_ID);
-    if (!zoneEl) return;
-
-    const avatarEl = resolveOpponentLeaderAvatarElement();
-    const isValid = isAttackDragLeaderTargetable(avatarEl);
-    zoneEl.classList.toggle('is-valid', isValid);
-    zoneEl.classList.toggle('is-invalid', !isValid);
-}
-
-function resetAttackDragState({ keepLeaderZone = false } = {}) {
+function resetAttackDragState() {
     clearAttackDragHover();
     removeAttackDragLineElement();
-    if (!keepLeaderZone) {
-        removeAttackDragLeaderZoneElement();
-    }
     document.body.classList.remove('attack-dragging');
     attackDragState.pointerId = null;
     attackDragState.isPending = false;
@@ -698,6 +648,10 @@ function buildHandDragGhost(sourceElement, sourceRect = null) {
 
     const ghostEl = sourceElement.cloneNode(true);
     const rect = sourceRect ?? sourceElement.getBoundingClientRect();
+    const baseW = sourceElement.offsetWidth || Math.round(rect.width) || 102;
+    const baseH = sourceElement.offsetHeight || Math.round(rect.height) || 140;
+    const initialX = (rect.left + rect.width / 2) - (baseW / 2);
+    const initialY = (rect.top + rect.height / 2) - (baseH / 2);
     ghostEl.querySelectorAll?.('[id]')?.forEach?.(node => node.removeAttribute('id'));
     ghostEl.classList.remove(
         'hand-card-floated',
@@ -719,12 +673,14 @@ function buildHandDragGhost(sourceElement, sourceRect = null) {
     ghostEl.style.top = '0';
     ghostEl.style.margin = '0';
     ghostEl.style.pointerEvents = 'none';
-    ghostEl.style.width = `${rect.width}px`;
-    ghostEl.style.height = `${rect.height}px`;
-    ghostEl.style.transform = `translate3d(${rect.left}px, ${rect.top}px, 0) rotate(-2deg) scale(1.04)`;
+    ghostEl.style.width = `${baseW}px`;
+    ghostEl.style.height = `${baseH}px`;
+    ghostEl.style.setProperty('--fan-offset', '0');
+    ghostEl.style.setProperty('--fan-abs', '0');
+    ghostEl.style.transform = `translate3d(${initialX}px, ${initialY}px, 0) rotate(-2deg) scale(1.04)`;
     transientRoot.appendChild(ghostEl);
-    handDragState.renderedGhostX = rect.left;
-    handDragState.renderedGhostY = rect.top;
+    handDragState.renderedGhostX = initialX;
+    handDragState.renderedGhostY = initialY;
     return ghostEl;
 }
 
@@ -836,10 +792,12 @@ function resolveHandDragDropTarget(clientX, clientY) {
             break;
         }
 
-        const avatarEl = element?.closest?.('#player1-avatar, #player2-avatar');
-        if (avatarEl) {
+        const leaderHudEl = element?.closest?.('#player1-info, #player2-info');
+        if (leaderHudEl && !element?.closest?.('button')) {
+            const avatarId = leaderHudEl.id === 'player2-info' ? 'player2-avatar' : 'player1-avatar';
+            const avatarEl = document.getElementById(avatarId);
             const avatarUid = resolveAvatarLeaderUid(avatarEl);
-            if (avatarUid) {
+            if (avatarUid && avatarEl) {
                 hoveredTargetElement = avatarEl;
                 hoveredTargetUid = String(avatarUid);
                 break;
@@ -926,12 +884,21 @@ function activateHandDragIfNeeded() {
         return;
     }
 
+    const baseW = sourceElement.offsetWidth || Math.round(sourceRect.width) || 102;
+    const baseH = sourceElement.offsetHeight || Math.round(sourceRect.height) || 140;
+    const ratioX = sourceRect.width > 0
+        ? Math.max(0.1, Math.min(0.9, (handDragState.startX - sourceRect.left) / sourceRect.width))
+        : 0.5;
+    const ratioY = sourceRect.height > 0
+        ? Math.max(0.1, Math.min(0.9, (handDragState.startY - sourceRect.top) / sourceRect.height))
+        : 0.5;
+
     handDragState.sourceElement = sourceElement;
     handDragState.ghostElement = ghostEl;
-    handDragState.pointerOffsetX = handDragState.startX - sourceRect.left;
-    handDragState.pointerOffsetY = handDragState.startY - sourceRect.top;
-    handDragState.ghostWidth = sourceRect.width;
-    handDragState.ghostHeight = sourceRect.height;
+    handDragState.pointerOffsetX = ratioX * baseW;
+    handDragState.pointerOffsetY = ratioY * baseH;
+    handDragState.ghostWidth = baseW;
+    handDragState.ghostHeight = baseH;
     handDragState.isPending = false;
     handDragState.isActive = true;
     sourceElement.classList.add('hand-drag-origin');
@@ -962,60 +929,8 @@ function animateHandDragGhostToSource(ghostEl, sourceElement) {
     }, HAND_DRAG_SNAP_BACK_MS + 40);
 }
 
-function resolveAttackDragLeaderZoneRect(zoneEl) {
-    if (!zoneEl) return null;
-    const rect = zoneEl.getBoundingClientRect?.() ?? null;
-    const hasUsableRect = rect && (rect.width > 0 || rect.height > 0 || rect.left !== 0 || rect.top !== 0);
-    if (hasUsableRect) {
-        return rect;
-    }
-
-    const left = Number.parseFloat(zoneEl.style.left);
-    const top = Number.parseFloat(zoneEl.style.top);
-    const width = Number.parseFloat(zoneEl.style.width);
-    const height = Number.parseFloat(zoneEl.style.height);
-    if (!Number.isFinite(left) || !Number.isFinite(top) || !Number.isFinite(width) || !Number.isFinite(height)) {
-        return null;
-    }
-
-    return {
-        left,
-        top,
-        width,
-        height,
-        right: left + width,
-        bottom: top + height
-    };
-}
-
-function resolveAttackDragLeaderZoneTarget(clientX, clientY) {
-    const zoneEl = attackDragState.leaderZoneElement ?? document.getElementById(ATTACK_DRAG_LEADER_ZONE_ID);
-    if (!zoneEl || zoneEl.style.display === 'none') {
-        return null;
-    }
-    const zoneRect = resolveAttackDragLeaderZoneRect(zoneEl);
-    if (!zoneRect || !isPointInsideRect(clientX, clientY, zoneRect)) {
-        return null;
-    }
-
-    const avatarEl = resolveOpponentLeaderAvatarElement();
-    const leaderUid = resolveAvatarLeaderUid(avatarEl) ?? resolveOpponentLeaderUid();
-    const isValid = Boolean(leaderUid) && isAttackDragLeaderTargetable(avatarEl);
-    return {
-        kind: 'leader-zone',
-        uid: leaderUid ? String(leaderUid) : null,
-        element: zoneEl,
-        isValid
-    };
-}
-
 function resolveAttackDragDropTarget(clientX, clientY) {
     const hit = document.elementFromPoint(clientX, clientY);
-    const leaderZoneTarget = resolveAttackDragLeaderZoneTarget(clientX, clientY);
-    if (leaderZoneTarget) {
-        return leaderZoneTarget;
-    }
-
     if (!hit) {
         return { kind: 'none', uid: null, element: null, isValid: false };
     }
@@ -1025,6 +940,19 @@ function resolveAttackDragDropTarget(clientX, clientY) {
         const uid = String(targetCard.dataset.uid);
         const isValid = targetCard.classList.contains('targetable');
         return { kind: 'card', uid, element: targetCard, isValid };
+    }
+
+    const opponentHudEl = hit.closest?.('#player2-info');
+    if (opponentHudEl && !hit.closest?.('button')) {
+        const avatarEl = resolveOpponentLeaderAvatarElement();
+        const uid = resolveAvatarLeaderUid(avatarEl) ?? resolveOpponentLeaderUid();
+        const isValid = Boolean(uid) && isAttackDragLeaderTargetable(avatarEl);
+        return {
+            kind: 'leader-hud',
+            uid: uid ? String(uid) : null,
+            element: opponentHudEl,
+            isValid
+        };
     }
 
     const avatarEl = hit.closest?.('#player1-avatar, #player2-avatar');
@@ -1054,21 +982,60 @@ function isAttackDragStartAllowed(cardInstance) {
 }
 
 function updateAttackDragLine() {
-    if (!attackDragState.isActive || !attackDragState.lineElement) return;
-    const dx = attackDragState.currentX - attackDragState.sourceCenterX;
-    const dy = attackDragState.currentY - attackDragState.sourceCenterY;
-    const length = Math.max(1, Math.hypot(dx, dy));
-    const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+    const svgEl = attackDragState.lineElement;
+    if (!attackDragState.isActive || !svgEl) return;
 
-    attackDragState.lineElement.style.left = `${attackDragState.sourceCenterX}px`;
-    attackDragState.lineElement.style.top = `${attackDragState.sourceCenterY}px`;
-    attackDragState.lineElement.style.width = `${length}px`;
-    attackDragState.lineElement.style.transform = `translateY(-50%) rotate(${angle}deg)`;
+    const x1 = attackDragState.sourceCenterX;
+    const y1 = attackDragState.sourceCenterY;
+    const x2 = attackDragState.currentX;
+    const y2 = attackDragState.currentY;
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const dist = Math.hypot(dx, dy);
+    const ux = dist >= 2 ? dx / dist : 0;
+    const uy = dist >= 2 ? dy / dist : -1;
+    const px = -uy;
+    const py = ux;
+
+    const arrowBack = 13;
+    const arrowNotch = 9.5;
+    const arrowHalfWing = 5.2;
+    const lineEndX = dist > arrowNotch + 2 ? x2 - ux * arrowNotch : x2;
+    const lineEndY = dist > arrowNotch + 2 ? y2 - uy * arrowNotch : y2;
+
+    const originDot = svgEl.querySelector('.attack-drag-origin-dot');
+    const line = svgEl.querySelector('.attack-drag-vector');
+    const arrow = svgEl.querySelector('.attack-drag-arrowhead');
+
+    if (originDot) {
+        originDot.setAttribute('cx', x1.toFixed(1));
+        originDot.setAttribute('cy', y1.toFixed(1));
+    }
+    if (line) {
+        line.setAttribute('x1', x1.toFixed(1));
+        line.setAttribute('y1', y1.toFixed(1));
+        line.setAttribute('x2', lineEndX.toFixed(1));
+        line.setAttribute('y2', lineEndY.toFixed(1));
+    }
+    if (arrow) {
+        const leftX = x2 - ux * arrowBack + px * arrowHalfWing;
+        const leftY = y2 - uy * arrowBack + py * arrowHalfWing;
+        const notchX = x2 - ux * arrowNotch;
+        const notchY = y2 - uy * arrowNotch;
+        const rightX = x2 - ux * arrowBack - px * arrowHalfWing;
+        const rightY = y2 - uy * arrowBack - py * arrowHalfWing;
+        arrow.setAttribute(
+            'points',
+            `${x2.toFixed(1)},${y2.toFixed(1)} ${leftX.toFixed(1)},${leftY.toFixed(1)} ${notchX.toFixed(1)},${notchY.toFixed(1)} ${rightX.toFixed(1)},${rightY.toFixed(1)}`
+        );
+    }
+
+    const isLockedValid = Boolean(attackDragState.hoverTargetUid && attackDragState.hoverElement?.classList?.contains('attack-drag-hover'));
+    svgEl.classList.toggle('is-locked', isLockedValid);
 }
 
 function updateAttackDragHover(targetInfo) {
     const nextKind = String(targetInfo?.kind ?? 'none');
-    const isLeaderZone = nextKind === 'leader-zone';
     const nextUid = targetInfo?.uid ? String(targetInfo.uid) : null;
     const nextElement = targetInfo?.element ?? null;
 
@@ -1082,13 +1049,14 @@ function updateAttackDragHover(targetInfo) {
 
     clearAttackDragHover();
 
-    if (isLeaderZone && nextElement) {
-        const isValid = targetInfo?.isValid === true;
-        nextElement.classList.add('is-active');
-        nextElement.classList.toggle('is-valid', isValid);
-        nextElement.classList.toggle('is-invalid', !isValid);
+    if (nextKind === 'leader-hud' && nextElement) {
+        if (targetInfo?.isValid === true) {
+            nextElement.classList.add('attack-drag-hover');
+        } else {
+            nextElement.classList.add('attack-drag-invalid');
+        }
         attackDragState.hoverKind = nextKind;
-        attackDragState.hoverTargetUid = nextUid;
+        attackDragState.hoverTargetUid = targetInfo?.isValid === true ? nextUid : null;
         attackDragState.hoverElement = nextElement;
         return;
     }
@@ -1123,14 +1091,11 @@ function activateAttackDragIfNeeded() {
 
     const sourceRect = sourceElement.getBoundingClientRect();
     attackDragState.sourceCenterX = sourceRect.left + sourceRect.width / 2;
-    attackDragState.sourceCenterY = sourceRect.top + sourceRect.height / 2;
+    attackDragState.sourceCenterY = sourceRect.top + sourceRect.height * 0.38;
     attackDragState.lineElement = ensureAttackDragLineElement();
-    attackDragState.leaderZoneElement = ensureAttackDragLeaderZoneElement();
     attackDragState.isPending = false;
     attackDragState.isActive = true;
     document.body.classList.add('attack-dragging');
-    updateAttackDragLeaderZoneLayout();
-    updateAttackDragLeaderZoneState();
     updateAttackDragLine();
 }
 
@@ -1216,10 +1181,33 @@ function toSafeCounterValue(value, fallback = 0) {
 function tweenIntegerText(element, targetValue, options = {}) {
     if (!element) return;
 
+    const prevRaw = Number.parseInt(String(element.textContent ?? '').trim(), 10);
+    const hasPrev = Number.isFinite(prevRaw);
     const safeTarget = options?.nonNegative === true
         ? toSafeCounterValue(targetValue, 0)
         : toSafeInteger(targetValue, 0);
     element.textContent = `${safeTarget}`;
+
+    if (
+        hasPrev
+        && prevRaw !== safeTarget
+        && isGamePageActive()
+        && gameState.phase !== 'Initializing'
+        && gameState.phase !== 'Mulligan'
+    ) {
+        const isCombatStat = element.matches?.('.attack, .health, .hp-value') === true;
+        const isNeutralBadge = element.matches?.('.countdown, .emblem-countdown') === true
+            || element.parentElement?.classList?.contains('cost') === true;
+        if (isCombatStat || isNeutralBadge) {
+            const tone = isCombatStat
+                ? (safeTarget > prevRaw ? 'buff' : 'damage')
+                : 'neutral';
+            const popTarget = element.parentElement?.classList?.contains('cost')
+                ? element.parentElement
+                : element;
+            getBattleMotionController().animateStatPop(popTarget, tone);
+        }
+    }
 }
 
 function resolveRenderedCardKey(element, index) {
@@ -1234,6 +1222,373 @@ function resolveRenderedCardKey(element, index) {
     }
 
     return `legacy-${index}`;
+}
+
+const LIVE_BATTLE_ZONE_SPECS = [
+    { zone: 'opp:field', selector: '#player2-field > .card[data-uid]' },
+    { zone: 'self:field', selector: '#player1-field > .card[data-uid]' },
+    { zone: 'self:hand', selector: '#player1-hand > .card[data-uid]' },
+    { zone: 'opp:hand', selector: '#player2-hand.is-face-up-opponent > .card[data-uid]' },
+    { zone: 'emblem', selector: '.emblem-zone .emblem-slot.filled[data-uid]' }
+];
+
+let battleMotionController = null;
+const suppressedEnterUids = new Map();
+const suppressedExitUids = new Map();
+const pendingCardPlayHoverMap = new Map();
+const recentShieldBrokenUntil = new Map();
+const recentFusedUids = new Map();
+
+function normalizeMotionUidKey(uid) {
+    return String(uid ?? '').trim().toLowerCase();
+}
+
+function markTimedUidFlag(map, uid, ttlMs = 2400) {
+    const key = normalizeMotionUidKey(uid);
+    if (!key) return;
+    map.set(key, Date.now() + ttlMs);
+}
+
+function consumeTimedUidFlag(map, uid) {
+    const key = normalizeMotionUidKey(uid);
+    if (!key || !map.has(key)) return false;
+    const expiresAt = map.get(key);
+    map.delete(key);
+    return Date.now() <= expiresAt;
+}
+
+function hasActiveTimedUidFlag(map, uid) {
+    const key = normalizeMotionUidKey(uid);
+    if (!key || !map.has(key)) return false;
+    const expiresAt = map.get(key);
+    if (Date.now() > expiresAt) {
+        map.delete(key);
+        return false;
+    }
+    return true;
+}
+
+function getBattleMotionController() {
+    if (battleMotionController) {
+        return battleMotionController;
+    }
+    battleMotionController = createBattleMotionController({
+        getStageElement: () => gameContainerEl ?? document.getElementById('game-container'),
+        getTransientLayer: () => ensureTransientVisualRoot(),
+        uidAttribute: 'data-uid',
+        zoneSpecs: LIVE_BATTLE_ZONE_SPECS,
+        resolveEntityElement: (_stageEl, uid) => resolveRenderableTargetElement(uid),
+        resolveOppHandElement: stageEl => stageEl?.querySelector('#player2-hand'),
+        resolveSelfDeckElement: stageEl => stageEl?.querySelector('#player1-corner-pod .deck-box, #player1-deck-count'),
+        resolveOppDeckElement: stageEl => stageEl?.querySelector('#player2-corner-pod .deck-box, #player2-deck-count')
+    });
+    return battleMotionController;
+}
+
+function ensureEagerCardArt(cardEl, cardData) {
+    if (!cardEl || !cardData) return;
+    const artEl = cardEl.querySelector?.('.card-art');
+    if (!artEl) return;
+    const previewPath = cardData.artPreview
+        ?? cardData.ArtPreview
+        ?? cardData.artDetail
+        ?? cardData.ArtDetail
+        ?? '';
+    const resolvedUrl = resolveArtUrl(previewPath);
+    if (resolvedUrl) {
+        artEl.style.backgroundImage = `url("${resolvedUrl}")`;
+        artEl.classList.add('has-art');
+    }
+}
+
+function buildStandaloneMotionCardClone(cardDtoOrInstance) {
+    if (!cardDtoOrInstance) return null;
+    const hydrated = createDiscoverPreviewCard(cardDtoOrInstance) ?? cardDtoOrInstance;
+    const paidCostRaw = cardDtoOrInstance.CurrentCost
+        ?? cardDtoOrInstance.currentCost
+        ?? cardDtoOrInstance.Cost
+        ?? cardDtoOrInstance.cost;
+    if (hydrated && hydrated !== cardDtoOrInstance && Number.isFinite(Number(paidCostRaw))) {
+        hydrated.currentCost = Number(paidCostRaw);
+        hydrated.cost = Number(paidCostRaw);
+    }
+    const rawCardEl = createCardElement(hydrated, 'hand');
+    if (!rawCardEl) return null;
+    ensureEagerCardArt(rawCardEl, cardDtoOrInstance);
+    return createCleanCardClone(rawCardEl, 102, 140);
+}
+
+function cancelAllBattleMotions() {
+    suppressedEnterUids.clear();
+    suppressedExitUids.clear();
+    pendingCardPlayHoverMap.clear();
+    recentShieldBrokenUntil.clear();
+    recentFusedUids.clear();
+    battleMotionController?.cancelAll();
+}
+
+function notifyShieldRemoved(unitUid) {
+    markTimedUidFlag(recentShieldBrokenUntil, unitUid, 450);
+}
+
+function playAttackLunge(attackerUid, targetUid) {
+    if (!isGamePageActive() || !attackerUid || !targetUid) {
+        return Promise.resolve();
+    }
+    return getBattleMotionController().playAttackLungeAndHold({
+        attackerUid: String(attackerUid),
+        targetUid: String(targetUid)
+    });
+}
+
+function playUnitEvolutionEffect(unitUid, isSuper = false) {
+    if (!isGamePageActive() || !unitUid) {
+        return Promise.resolve();
+    }
+    return getBattleMotionController().playEvolveBurst(String(unitUid), Boolean(isSuper));
+}
+
+function notifyCardPlayed(playedCardDto, sourcePlayerId) {
+    if (!isGamePageActive() || !playedCardDto) return undefined;
+    const stageEl = gameContainerEl ?? document.getElementById('game-container');
+    if (!stageEl) return undefined;
+
+    const now = Date.now();
+    for (const [key, entry] of pendingCardPlayHoverMap.entries()) {
+        if (now - entry.createdAt > 3000) {
+            pendingCardPlayHoverMap.delete(key);
+        }
+    }
+
+    const cardUid = String(
+        playedCardDto.InstanceId ?? playedCardDto.instanceId ?? playedCardDto.uid ?? ''
+    ).trim();
+    if (!cardUid) return undefined;
+
+    const stageRect = stageEl.getBoundingClientRect();
+    const isOpponent = !isSamePlayerId(sourcePlayerId, gameState.localPlayerId);
+    const anchors = getBattleMotionController().getAnchorRects();
+
+    let isFromDrag = false;
+    let sourceRect = null;
+
+    if (
+        !isOpponent
+        && handPlayCommitState.ghostElement
+        && normalizeMotionUidKey(handPlayCommitState.cardUid) === normalizeMotionUidKey(cardUid)
+    ) {
+        isFromDrag = true;
+        sourceRect = toStageRect(handPlayCommitState.ghostElement.getBoundingClientRect(), stageRect);
+        clearCommittedHandPlayVisual({ removeGhost: true, clearSource: true });
+    } else {
+        const handCardEl = stageEl.querySelector(`.hand-card[data-uid="${cardUid}"]`);
+        if (handCardEl) {
+            sourceRect = toStageRect(handCardEl.getBoundingClientRect(), stageRect);
+        } else if (isOpponent) {
+            sourceRect = anchors?.oppHandRect ?? null;
+        } else if (player1HandEl) {
+            sourceRect = toStageRect(player1HandEl.getBoundingClientRect(), stageRect);
+        }
+    }
+
+    const cardHtmlElement = buildStandaloneMotionCardClone(playedCardDto);
+    if (!cardHtmlElement) return undefined;
+
+    const rawType = String(playedCardDto.Type ?? playedCardDto.type ?? '').trim().toLowerCase();
+    const isSpell = rawType === 'spell';
+
+    markTimedUidFlag(suppressedExitUids, cardUid, 2600);
+    if (!isSpell) {
+        markTimedUidFlag(suppressedEnterUids, cardUid, 2600);
+    }
+
+    pendingCardPlayHoverMap.set(normalizeMotionUidKey(cardUid), {
+        cardUid,
+        cardHtmlElement,
+        sourceRect,
+        isOpponent,
+        isFromDrag,
+        isSpell,
+        createdAt: now
+    });
+    return undefined;
+}
+
+function isFaceUpHandForOwner(ownerId) {
+    if (isSamePlayerId(ownerId, gameState.localPlayerId)) return true;
+    return gameState.dualControl === true || gameState.isSpectator === true;
+}
+
+function prepareCardMoveVisual(moveContext) {
+    if (!isGamePageActive() || !moveContext?.cardUid) return null;
+
+    const { cardUid, ownerId, fromZone, toZone, moveReason } = moveContext;
+    const motion = getBattleMotionController();
+    const existingEl = resolveRenderableTargetElement(cardUid);
+    const isCardDom = existingEl?.classList?.contains('card') === true
+        || existingEl?.classList?.contains('emblem-slot') === true;
+    const snap = isCardDom
+        ? motion.captureElementSnapshot(existingEl, cardUid, fromZone || 'unknown')
+        : null;
+
+    const pendingKey = normalizeMotionUidKey(cardUid);
+    const hasPendingPlay = pendingCardPlayHoverMap.has(pendingKey);
+
+    if (
+        hasPendingPlay
+        || moveReason === 'destroyed'
+        || moveReason === 'vanished'
+        || moveReason === 'burned'
+        || moveReason === 'discarded'
+        || moveReason === 'returnedtohand'
+        || (toZone === 'deck' && (fromZone === 'field' || fromZone === 'hand'))
+    ) {
+        markTimedUidFlag(suppressedExitUids, cardUid, 2200);
+    }
+
+    if (
+        (hasPendingPlay && toZone === 'field')
+        || (toZone === 'hand'
+            && isFaceUpHandForOwner(ownerId)
+            && (moveReason === 'drawn'
+                || moveReason === 'addedtohand'
+                || moveReason === 'returnedtohand'
+                || fromZone === 'deck'
+                || fromZone === 'field'))
+    ) {
+        markTimedUidFlag(suppressedEnterUids, cardUid, 2200);
+    }
+
+    return { snap };
+}
+
+function commitCardMoveVisual(moveContext, preMoveVisual, movedInstance) {
+    if (!isGamePageActive() || !moveContext?.cardUid) return undefined;
+
+    const { cardUid, ownerId, fromZone, toZone, moveReason } = moveContext;
+    const motion = getBattleMotionController();
+    const anchors = motion.getAnchorRects();
+    const isOwnerLocal = isSamePlayerId(ownerId, gameState.localPlayerId);
+
+    const pendingKey = normalizeMotionUidKey(cardUid);
+    const pendingPlay = pendingCardPlayHoverMap.get(pendingKey) ?? null;
+
+    if (pendingPlay && (toZone === 'field' || (pendingPlay.isSpell && toZone === 'playing'))) {
+        pendingCardPlayHoverMap.delete(pendingKey);
+        return motion.playCastHoverSequence({
+            cardHtmlElement: pendingPlay.cardHtmlElement,
+            sourceRect: pendingPlay.sourceRect,
+            targetUid: toZone === 'field' ? cardUid : null,
+            isSpell: toZone !== 'field',
+            isOpponent: pendingPlay.isOpponent,
+            isFromDrag: pendingPlay.isFromDrag,
+            fastForward: isPresentationFastForward()
+        });
+    }
+
+    if (moveReason === 'destroyed' || moveReason === 'burned' || moveReason === 'discarded') {
+        if (motion.markActiveLungeExit(cardUid, 'destroy')) {
+            return undefined;
+        }
+        if (preMoveVisual?.snap?.cloneEl) {
+            motion.spawnSemanticExitClone(preMoveVisual.snap, 'destroy');
+            return undefined;
+        }
+        if (moveReason === 'burned' && movedInstance && anchors) {
+            const deckAnchor = isOwnerLocal ? anchors.selfDeckRect : anchors.oppDeckRect;
+            const burnedClone = buildStandaloneMotionCardClone(movedInstance);
+            if (burnedClone && deckAnchor) {
+                const burnX = isOwnerLocal
+                    ? Math.max(90, deckAnchor.cx + 76)
+                    : Math.min(anchors.stageRect.width - 90, deckAnchor.cx - 76);
+                const burnY = isOwnerLocal
+                    ? Math.max(120, deckAnchor.cy - 86)
+                    : Math.min(anchors.stageRect.height - 120, deckAnchor.cy + 86);
+                motion.spawnSemanticExitClone({
+                    uid: cardUid,
+                    rect: { left: burnX - 51, top: burnY - 70, width: 102, height: 140, cx: burnX, cy: burnY },
+                    unscaledW: 102,
+                    unscaledH: 140,
+                    isCard: true,
+                    cloneEl: burnedClone
+                }, 'destroy');
+            }
+        }
+        return undefined;
+    }
+
+    if (moveReason === 'vanished') {
+        if (hasActiveTimedUidFlag(recentFusedUids, cardUid)) {
+            return undefined;
+        }
+        if (motion.markActiveLungeExit(cardUid, 'vanish')) {
+            return undefined;
+        }
+        if (preMoveVisual?.snap?.cloneEl) {
+            motion.spawnSemanticExitClone(preMoveVisual.snap, 'vanish');
+        }
+        return undefined;
+    }
+
+    if (moveReason === 'returnedtohand' || (fromZone === 'field' && toZone === 'hand')) {
+        if (isFaceUpHandForOwner(ownerId)) {
+            const newHandEl = gameContainerEl?.querySelector(`.hand-card[data-uid="${cardUid}"]`);
+            const sourceRect = preMoveVisual?.snap?.rect ?? (isOwnerLocal ? anchors?.selfDeckRect : anchors?.oppHandRect);
+            if (newHandEl && sourceRect) {
+                motion.runCrossZoneCarrierFlight({
+                    targetUid: cardUid,
+                    targetEl: newHandEl,
+                    sourceRect,
+                    durationMs: 250,
+                    pulseTone: 'cyan'
+                });
+                return undefined;
+            }
+        }
+        if (preMoveVisual?.snap?.cloneEl && anchors?.oppHandRect) {
+            motion.spawnSemanticExitClone(preMoveVisual.snap, 'return', null, anchors.oppHandRect);
+        }
+        return undefined;
+    }
+
+    if (toZone === 'deck' && (fromZone === 'field' || fromZone === 'hand')) {
+        if (preMoveVisual?.snap?.cloneEl && anchors) {
+            const deckRect = isOwnerLocal ? anchors.selfDeckRect : anchors.oppDeckRect;
+            motion.spawnSemanticExitClone(preMoveVisual.snap, 'deck', null, deckRect);
+        }
+        return undefined;
+    }
+
+    if (
+        toZone === 'hand'
+        && isFaceUpHandForOwner(ownerId)
+        && (moveReason === 'drawn' || moveReason === 'addedtohand' || fromZone === 'deck')
+    ) {
+        const newHandEl = gameContainerEl?.querySelector(`.hand-card[data-uid="${cardUid}"]`);
+        if (newHandEl && anchors) {
+            const isDeckDraw = fromZone === 'deck' || moveReason === 'drawn';
+            const fallbackCenter = {
+                left: anchors.stageRect.width * 0.5 - 36,
+                top: anchors.stageRect.height * 0.46 - 50,
+                width: 72,
+                height: 100,
+                cx: anchors.stageRect.width * 0.5,
+                cy: anchors.stageRect.height * 0.46
+            };
+            const sourceRect = isDeckDraw
+                ? (isOwnerLocal ? anchors.selfDeckRect : anchors.oppDeckRect)
+                : fallbackCenter;
+            motion.runCrossZoneCarrierFlight({
+                targetUid: cardUid,
+                targetEl: newHandEl,
+                sourceRect,
+                durationMs: 240,
+                pulseTone: 'cyan'
+            });
+        }
+    }
+
+    return undefined;
 }
 
 let cardAnimationSystem = null;
@@ -1267,7 +1622,15 @@ function getCardAnimationSystem() {
         preserveStateClasses: preserveCardStateClasses,
         clearTransientClasses: clearTransientCardAnimationClasses,
         resolveRenderedCardKey,
-        prefersReducedMotion
+        prefersReducedMotion,
+        shouldSkipEnter: (_key, element) => consumeTimedUidFlag(suppressedEnterUids, element?.dataset?.uid),
+        shouldSkipExit: (_key, element) => consumeTimedUidFlag(suppressedExitUids, element?.dataset?.uid),
+        onElementMounted: (_key, element) => {
+            const uid = element?.dataset?.uid;
+            if (uid) {
+                getBattleMotionController().syncEntityElementVisibility(uid, element);
+            }
+        }
     });
     return cardAnimationSystem;
 }
@@ -1292,11 +1655,18 @@ function buildFaceUpHandEntries(handCards = [], isLocalHand = false) {
     const cards = Array.isArray(handCards) ? handCards : [];
     const selectedHandUid = String(gameState.selectedCardUid ?? '').trim();
     const entries = [];
+    const total = cards.length;
+    const mid = (total - 1) / 2;
 
     cards.forEach((cardInstance, index) => {
         if (!cardInstance) return;
         const cardElement = createCardElement(cardInstance, 'hand');
         if (!cardElement) return;
+
+        const offset = index - mid;
+        cardElement.style.setProperty('--fan-offset', offset.toFixed(2));
+        cardElement.style.setProperty('--fan-abs', Math.abs(offset).toFixed(2));
+        cardElement.style.setProperty('--hand-count', String(total));
 
         if (isLocalHand && gameState.phase === 'Mulligan') {
             const localPlayer = getPlayerState(gameState.localPlayerId);
@@ -1323,9 +1693,14 @@ function buildFaceUpHandEntries(handCards = [], isLocalHand = false) {
 
 function buildFaceDownHandEntries(handCards = []) {
     const cards = Array.isArray(handCards) ? handCards : [];
+    const total = cards.length;
+    const mid = (total - 1) / 2;
     return cards.map((_, index) => {
         const cardBackDiv = document.createElement('div');
         cardBackDiv.classList.add('card-back');
+        const offset = index - mid;
+        cardBackDiv.style.setProperty('--fan-offset', offset.toFixed(2));
+        cardBackDiv.style.setProperty('--fan-abs', Math.abs(offset).toFixed(2));
         return {
             key: `opp-hand-back-${index}`,
             element: cardBackDiv
@@ -1345,6 +1720,71 @@ function buildFieldEntries(fieldCards = []) {
         entries.push({ key, element: cardElement });
     });
     return entries;
+}
+
+function applyHandOverlapCssVars(handElement, count) {
+    if (!handElement) return;
+    let overlapPx = 3;
+    let hoverOverlapPx = 5;
+    if (count >= 8) {
+        overlapPx = -15;
+        hoverOverlapPx = -8;
+    } else if (count === 7) {
+        overlapPx = -5;
+        hoverOverlapPx = 0;
+    } else if (count === 6) {
+        overlapPx = 1.5;
+        hoverOverlapPx = 3;
+    }
+    handElement.style.setProperty('--hand-overlap', `${overlapPx}px`);
+    handElement.style.setProperty('--hand-overlap-hover', `${hoverOverlapPx}px`);
+}
+
+function syncFieldZoneDensity(fieldElement, count) {
+    const zoneWrapper = fieldElement?.closest?.('.battle-field-zone') ?? fieldElement;
+    if (!zoneWrapper) return;
+    const safeCount = Math.max(0, Number(count) || 0);
+    zoneWrapper.style.setProperty('--slot-count', String(Math.max(5, safeCount)));
+    zoneWrapper.classList.toggle('is-crowded', safeCount >= 6);
+}
+
+function applyLeaderHpBarWithGhostSettle(hpContainer, hpPercent, isDanger) {
+    if (!hpContainer) return;
+    const safePct = Math.max(0, Math.min(100, Number(hpPercent) || 0));
+    hpContainer.classList.toggle('is-danger', Boolean(isDanger));
+    hpContainer.classList.toggle('is-low', safePct < 30 || Boolean(isDanger));
+    hpContainer.closest('.leader-rpg-hud')?.classList.toggle('is-danger', Boolean(isDanger));
+
+    const fillEl = hpContainer.querySelector('.hp-bar-fill');
+    const ghostEl = hpContainer.querySelector('.hp-bar-ghost');
+    if (fillEl) {
+        fillEl.style.width = `${safePct}%`;
+        fillEl.classList.toggle('low-hp', safePct < 30 || Boolean(isDanger));
+    }
+
+    if (!ghostEl) return;
+    const prevPctRaw = Number.parseFloat(hpContainer.dataset.lastHpPct ?? '');
+    hpContainer.dataset.lastHpPct = safePct.toFixed(2);
+
+    const containerKey = hpContainer.id || 'hp-unknown';
+    const existingTimer = hpGhostSettleTimers.get(containerKey);
+    if (existingTimer) {
+        window.clearTimeout(existingTimer);
+        hpGhostSettleTimers.delete(containerKey);
+    }
+
+    if (Number.isFinite(prevPctRaw) && safePct < prevPctRaw - 0.1 && !prefersReducedMotion()) {
+        ghostEl.style.width = `${prevPctRaw}%`;
+        const timerId = runTrackedVisualTimeout(() => {
+            hpGhostSettleTimers.delete(containerKey);
+            if (ghostEl.isConnected) {
+                ghostEl.style.width = `${safePct}%`;
+            }
+        }, HP_GHOST_SETTLE_DELAY_MS);
+        hpGhostSettleTimers.set(containerKey, timerId);
+    } else {
+        ghostEl.style.width = `${safePct}%`;
+    }
 }
 
 // --- Specific UI Update Functions ---
@@ -1368,15 +1808,34 @@ function updatePpDisplay(playerId, currentPp, maxPp, isPpBoostArmed = false) {
     const overflowCount = naturalOverflowCount + armedOverflowCount;
     const displayCurrentPp = rawCurrentPp + armedOverflowCount;
 
-    // Update text if container exists (handled in renderPlayerStats, but good for standalone updates)
-    const statsContainer = document.getElementById(`${prefix}-stats`);
-    if (statsContainer) {
-        const ppTextEl = statsContainer.querySelector('.pp-text');
-        if (ppTextEl) ppTextEl.textContent = `${displayCurrentPp} / ${maxPp ?? 0}`;
+    // In Mirage mode, upper block displays Tavern Tier (handled in renderMirageShopPanel / renderPlayerStats)
+    if (!isLocalPlayer && isMirageMode(gameState)) {
+        return;
+    }
+
+    const ppLabelEl = document.getElementById(`${prefix}-pp-label`);
+    if (ppLabelEl) {
+        if (isLocalPlayer) {
+            ppLabelEl.textContent = isMirageMode(gameState) ? 'GOLD' : 'PP';
+        } else {
+            ppLabelEl.textContent = 'OPP PP';
+        }
+    }
+
+    const ppTextEl = document.getElementById(`${prefix}-pp-text`)
+        ?? document.getElementById(`${prefix}-stats`)?.querySelector('.pp-text');
+    if (ppTextEl) {
+        ppTextEl.textContent = `${displayCurrentPp} / ${maxPp ?? 0}`;
+    }
+
+    const selfPpWrapper = isLocalPlayer ? document.getElementById('right-dock-self-pp') : document.getElementById('right-dock-upper-pp');
+    if (selfPpWrapper && isLocalPlayer) {
+        selfPpWrapper.classList.toggle('is-gold', isMirageMode(gameState));
     }
 
     // Render PP Bar Segments
     if (ppBarContainer) {
+        ppBarContainer.classList.remove('is-six');
         ppBarContainer.innerHTML = '';
         const displayMax = 10; // Always show 10 slots for consistency
         const safeMax = Math.max(0, Math.min(rawMaxPp, displayMax));
@@ -1392,8 +1851,10 @@ function updatePpDisplay(playerId, currentPp, maxPp, isPpBoostArmed = false) {
                 segment.classList.add('active'); // Filled PP
             } else if (i >= safeOverflowStart && i < safeOverflowStart + safeOverflowCount) {
                 segment.classList.add('overflow'); // PP+1 overflow
+            } else if (i < safeMax) {
+                segment.classList.add('empty', 'unlocked'); // Unlocked this match, spent this turn
             } else {
-                segment.classList.add('empty'); // Locked/Max capacity limit
+                segment.classList.add('empty', 'locked'); // Locked/Max capacity limit
             }
 
             ppBarContainer.appendChild(segment);
@@ -1529,9 +1990,11 @@ function updateBloodPoolDisplay(playerId, count) {
     const bloodCountEl = document.getElementById(`${prefix}-blood-count`);
 
     if (bloodCountEl) {
-        tweenIntegerText(bloodCountEl, count, {
+        const safeVal = toSafeCounterValue(count, 0);
+        tweenIntegerText(bloodCountEl, safeVal, {
             nonNegative: true
         });
+        bloodCountEl.closest('.blood-box')?.classList.toggle('is-zero', safeVal <= 0);
     }
 }
 
@@ -1548,9 +2011,11 @@ function updateComboDisplay(playerId, count) {
     const comboCountEl = document.getElementById(`${prefix}-combo-count`);
 
     if (comboCountEl) {
-        tweenIntegerText(comboCountEl, count, {
+        const safeVal = toSafeCounterValue(count, 0);
+        tweenIntegerText(comboCountEl, safeVal, {
             nonNegative: true
         });
+        comboCountEl.closest('.combo-box')?.classList.toggle('is-zero', safeVal <= 0);
     }
 }
 
@@ -1567,9 +2032,11 @@ function updateRallyDisplay(playerId, count) {
     const rallyCountEl = document.getElementById(`${prefix}-rally-count`);
 
     if (rallyCountEl) {
-        tweenIntegerText(rallyCountEl, count, {
+        const safeVal = toSafeCounterValue(count, 0);
+        tweenIntegerText(rallyCountEl, safeVal, {
             nonNegative: true
         });
+        rallyCountEl.closest('.rally-box')?.classList.toggle('is-zero', safeVal <= 0);
     }
 }
 
@@ -1597,14 +2064,13 @@ function updateHealthDisplay(unitInstance) {
         const hpContainer = document.getElementById(`${uiPlayerPrefix}-hp`);
 
         if (hpContainer) {
-            const maxHpRaw = Number(unitInstance.maxHealth);
-            const maxHp = Number.isFinite(maxHpRaw) && maxHpRaw > 0 ? maxHpRaw : 20;
+            const maxHpRaw = Number(unitInstance.maxHealth ?? unitInstance.MaxHealth ?? unitInstance.health ?? unitInstance.Health);
+            const maxHp = Number.isFinite(maxHpRaw) && maxHpRaw > 0 ? Math.trunc(maxHpRaw) : 20;
             const hpForBar = hasNumericHealth ? nextHealthValue : 0;
             const hpPercent = Math.max(0, Math.min(100, (hpForBar / maxHp) * 100));
 
             const valueEl = hpContainer.querySelector('.hp-value');
-            const fillEl = hpContainer.querySelector('.hp-bar-fill');
-            const ghostEl = hpContainer.querySelector('.hp-bar-ghost');
+            const maxEl = hpContainer.querySelector('.hp-max');
 
             if (valueEl) {
                 if (hasNumericHealth) {
@@ -1613,16 +2079,11 @@ function updateHealthDisplay(unitInstance) {
                     valueEl.textContent = healthText;
                 }
             }
-
-            if (fillEl) {
-                fillEl.style.width = `${hpPercent}%`;
-                if (hpPercent < 30) fillEl.classList.add('low-hp');
-                else fillEl.classList.remove('low-hp');
+            if (maxEl) {
+                maxEl.textContent = `/ ${maxHp}`;
             }
 
-            if (ghostEl) {
-                ghostEl.style.width = `${hpPercent}%`;
-            }
+            applyLeaderHpBarWithGhostSettle(hpContainer, hpPercent, hasNumericHealth && nextHealthValue <= 5);
             return; // Exit early for Leader
         }
     }
@@ -1731,6 +2192,11 @@ function updateHandDisplay(playerId, handCards = []) {
     }
 
     const isFaceUpHand = isLocalPlayer || revealOpponentHand;
+    if (isLocalPlayer) {
+        applyHandOverlapCssVars(handElement, handCards.length);
+    } else {
+        handElement.classList.toggle('is-face-up-opponent', revealOpponentHand);
+    }
     const entries = (!isLocalPlayer && !revealOpponentHand)
         ? buildFaceDownHandEntries(handCards)
         : buildFaceUpHandEntries(handCards, isLocalPlayer);
@@ -1738,7 +2204,7 @@ function updateHandDisplay(playerId, handCards = []) {
         animateEnter: isFaceUpHand,
         animateExit: isFaceUpHand,
         animateInitialEnter: false,
-        animateMove: false
+        animateMove: isFaceUpHand
     });
 
     if (isLocalPlayer) {
@@ -1881,6 +2347,7 @@ function addUnitToField(playerId, cardInstance) {
             cardElement.dataset.renderKey = `field-${cardUid}`;
         }
         fieldElement.appendChild(cardElement);
+        syncFieldZoneDensity(fieldElement, fieldElement.querySelectorAll(':scope > .card').length);
         animateCardEnter(cardElement);
         return true;
     }
@@ -1935,6 +2402,9 @@ function updateUnitDisplay(unitInstance) {
     const unitUid = getCardUid(unitInstance);
     replacement.dataset.renderKey = unitElement.dataset.renderKey
         || (unitUid ? `field-${unitUid}` : replacement.dataset.renderKey || '');
+    if (unitUid) {
+        getBattleMotionController().syncEntityElementVisibility(unitUid, replacement);
+    }
 
     unitElement.replaceWith(replacement);
 }
@@ -1992,8 +2462,10 @@ function removeUnitFromField(unitUid) {
     const unitElement = gameContainerEl?.querySelector(`.field-card[data-uid="${unitUid}"]`);
 
     if (unitElement && unitElement.parentNode) {
+        const parentField = unitElement.parentNode;
         const rect = unitElement.getBoundingClientRect();
-        unitElement.parentNode.removeChild(unitElement);
+        parentField.removeChild(unitElement);
+        syncFieldZoneDensity(parentField, parentField.querySelectorAll?.(':scope > .card')?.length ?? 0);
         animateCardLeaveOverlay(unitElement, rect);
     } else if (!unitElement) {
         console.warn(`UI Update Error: Could not find field element for unit UID: ${unitUid} to remove.`);
@@ -2545,6 +3017,12 @@ function renderGame(currentGameState) { // Remove second parameter
         clearMulliganVisualState();
     }
 
+    if (gameContainerEl) {
+        const mirageActive = isMirageMode(currentGameState);
+        gameContainerEl.dataset.gameMode = mirageActive ? 'Mirage' : 'Standard';
+        gameContainerEl.dataset.miragePhase = mirageActive ? String(currentGameState.phase || 'Recruit') : '';
+    }
+
     if (spectatorToggleViewButtonEl) {
         if (gameState.isSpectator) {
             spectatorToggleViewButtonEl.style.display = 'inline-block';
@@ -2608,6 +3086,10 @@ function renderGame(currentGameState) { // Remove second parameter
     const player1 = localPlayer;     // 本地玩家（屏幕底部）
     const player2 = opponentPlayerState;  // 对手玩家（屏幕顶部）
 
+    const isMulliganPhase = !isMirageMode(currentGameState)
+        && currentGameState.phase === 'Mulligan'
+        && currentGameState.isSpectator !== true;
+    gameContainerEl?.classList.toggle('mulligan-active', isMulliganPhase);
 
     // Call helper functions to render specific parts of the UI using game state and cached elements
 
@@ -2640,28 +3122,526 @@ function renderGame(currentGameState) { // Remove second parameter
 
     // 6. Render Action Buttons based on Game Phase
     renderActionButtons(currentGameState);
+    renderMirageShopPanel(currentGameState, player1);
+
+    const activePreviewUid = battleCardPreviewEl?.dataset?.previewUid;
+    if (activePreviewUid) {
+        const refreshedPreviewCard = findCardInstanceByUid(activePreviewUid);
+        renderBattleCardPreview(refreshedPreviewCard ?? null);
+    }
 
 }
 
+function syncMirageRightDockUpperTier(currentGameState, localPlayer) {
+    const upperPpBox = document.getElementById('right-dock-upper-pp');
+    const labelEl = document.getElementById('player2-pp-label');
+    const textEl = document.getElementById('player2-pp-text');
+    const barEl = document.getElementById('player2-pp-bar');
+    if (!upperPpBox || !barEl) return;
+
+    if (!isMirageMode(currentGameState)) {
+        upperPpBox.classList.remove('is-gold');
+        barEl.classList.remove('is-six');
+        return;
+    }
+
+    const miragePlayer = localPlayer?.mirage ?? {};
+    const tavernTier = Math.max(1, Number(miragePlayer.tavernTier ?? miragePlayer.TavernTier ?? 1) || 1);
+    const maxTavernTier = Math.max(1, Number(miragePlayer.maxTavernTier ?? miragePlayer.MaxTavernTier ?? 6) || 6);
+
+    upperPpBox.classList.add('is-gold');
+    if (labelEl) labelEl.textContent = 'TAVERN TIER';
+    if (textEl) textEl.textContent = `★${tavernTier} / ${maxTavernTier}`;
+
+    barEl.classList.add('is-six');
+    barEl.innerHTML = '';
+    for (let i = 0; i < maxTavernTier; i++) {
+        const seg = document.createElement('div');
+        seg.className = i < tavernTier ? 'pp-segment active' : 'pp-segment empty unlocked';
+        barEl.appendChild(seg);
+    }
+}
+
+function renderMirageShopPanel(currentGameState, localPlayer) {
+    if (!gameContainerEl) return;
+    const upperFieldZone = document.getElementById('upper-field-zone');
+    const upperZoneTag = document.getElementById('upper-zone-tag');
+    const lowerZoneTag = document.getElementById('lower-zone-tag');
+    const mirageSubActions = document.getElementById('mirage-dock-sub-actions');
+    let stageEl = document.getElementById('mirage-tavern-stage');
+    let drawerEl = document.getElementById('mirage-decision-drawer');
+
+    const mirageActive = isMirageMode(currentGameState);
+    if (mirageActive) {
+        syncMirageRightDockUpperTier(currentGameState, localPlayer);
+    }
+
+    if (!mirageActive || currentGameState.phase !== 'Recruit') {
+        if (stageEl) stageEl.style.display = 'none';
+        if (drawerEl) drawerEl.style.display = 'none';
+        if (upperFieldZone) upperFieldZone.classList.remove('is-tavern', 'is-frozen');
+        if (mirageSubActions) {
+            mirageSubActions.hidden = true;
+            mirageSubActions.innerHTML = '';
+        }
+        if (upperZoneTag) {
+            upperZoneTag.textContent = mirageActive ? 'OPPONENT WARBAND' : '';
+        }
+        if (lowerZoneTag) {
+            lowerZoneTag.textContent = mirageActive ? 'PLAYER WARBAND' : '';
+        }
+        return;
+    }
+
+    const stageHost = upperFieldZone ?? gameContainerEl;
+    if (!stageEl) {
+        stageEl = document.createElement('div');
+        stageEl.id = 'mirage-tavern-stage';
+        stageEl.className = 'mirage-tavern-stage';
+        stageHost.appendChild(stageEl);
+    } else if (stageEl.parentElement !== stageHost) {
+        stageHost.appendChild(stageEl);
+    }
+    if (!drawerEl) {
+        drawerEl = document.createElement('div');
+        drawerEl.id = 'mirage-decision-drawer';
+        drawerEl.className = 'mirage-decision-drawer';
+        gameContainerEl.appendChild(drawerEl);
+    }
+    stageEl.style.display = 'flex';
+
+    const miragePlayer = localPlayer?.mirage ?? {};
+    const roundNumber = Number(currentGameState.mirage?.roundNumber ?? currentGameState.mirage?.RoundNumber ?? 1);
+    const tavernTier = Number(miragePlayer.tavernTier ?? miragePlayer.TavernTier ?? 1);
+    const maxTavernTier = Number(miragePlayer.maxTavernTier ?? miragePlayer.MaxTavernTier ?? 6);
+    const upgradeCost = Number(miragePlayer.upgradeCost ?? miragePlayer.UpgradeCost ?? 0);
+    const refreshCost = Number(miragePlayer.refreshCost ?? miragePlayer.RefreshCost ?? 1);
+    const isShopFrozen = Boolean(miragePlayer.isShopFrozen ?? miragePlayer.IsShopFrozen);
+    const isReady = Boolean(miragePlayer.isReady ?? miragePlayer.IsReady);
+    const canUpgradeTier = Boolean(miragePlayer.canUpgradeTier ?? miragePlayer.CanUpgradeTier);
+    const hasSelectedLeader = Boolean(miragePlayer.hasSelectedLeader ?? miragePlayer.HasSelectedLeader ?? true);
+    const currentPp = Number(localPlayer?.pp ?? 0);
+    const isSpectator = currentGameState.isSpectator === true;
+    const isHandFull = (Array.isArray(localPlayer?.hand) ? localPlayer.hand.length : 0) >= 9;
+    const offers = Array.isArray(miragePlayer.shopOffers ?? miragePlayer.ShopOffers)
+        ? (miragePlayer.shopOffers ?? miragePlayer.ShopOffers)
+        : [];
+    const pendingTickets = Array.isArray(miragePlayer.pendingTickets ?? miragePlayer.PendingTickets)
+        ? (miragePlayer.pendingTickets ?? miragePlayer.PendingTickets)
+        : [];
+    const leaderCandidates = Array.isArray(miragePlayer.leaderCandidates ?? miragePlayer.LeaderCandidates)
+        ? (miragePlayer.leaderCandidates ?? miragePlayer.LeaderCandidates)
+        : [];
+
+    const canRefresh = !isSpectator && !isReady && currentPp >= refreshCost;
+    const canFreeze = !isSpectator && !isReady;
+    const canUpgrade = !isSpectator && !isReady && canUpgradeTier && tavernTier < maxTavernTier;
+
+    if (upperFieldZone) {
+        upperFieldZone.classList.add('is-tavern');
+        upperFieldZone.classList.toggle('is-frozen', isShopFrozen);
+    }
+    if (upperZoneTag) {
+        upperZoneTag.textContent = `MIRAGE TAVERN · R${roundNumber} · ★${tavernTier}${isShopFrozen ? ' · FROZEN' : ''}`;
+    }
+    if (lowerZoneTag) {
+        const warbandCount = Array.isArray(localPlayer?.field) ? localPlayer.field.length : 0;
+        lowerZoneTag.textContent = `WARBAND · ${warbandCount}`;
+    }
+
+    if (mirageSubActions) {
+        mirageSubActions.hidden = false;
+        mirageSubActions.innerHTML = `
+            <button type="button" class="mirage-sub-console-btn is-amber" data-mirage-action="refresh" ${canRefresh ? '' : 'disabled'}>
+                <span>刷新 ${refreshCost}G</span>
+            </button>
+            <button type="button" class="mirage-sub-console-btn is-ice ${isShopFrozen ? 'is-active' : ''}" data-mirage-action="freeze" ${canFreeze ? '' : 'disabled'}>
+                <span>${isShopFrozen ? '已冻结' : '冻结'}</span>
+            </button>
+        `;
+    }
+
+    const offersHtml = offers.length === 0
+        ? `<div class="mirage-tavern-empty">本轮星界酒馆暂无可招募随从</div>`
+        : offers.map(offer => {
+            const offerId = escapeAttributeValue(offer.offerId ?? offer.OfferId ?? '');
+            const name = escapeAttributeValue(offer.name ?? offer.Name ?? '未知随从');
+            const desc = escapeAttributeValue(offer.description ?? offer.Description ?? '');
+            const artPreview = escapeAttributeValue(offer.artPreview ?? offer.ArtPreview ?? '');
+            const tier = Number(offer.tavernTier ?? offer.TavernTier ?? 1);
+            const atk = Number(offer.attack ?? offer.Attack ?? 0);
+            const hp = Number(offer.health ?? offer.Health ?? 0);
+            const buyCost = Number(offer.buyCost ?? offer.BuyCost ?? 3);
+            const canBuy = !isSpectator && !isReady && !isHandFull && currentPp >= buyCost;
+            const artStyle = artPreview ? `background-image:url('${artPreview}');` : '';
+            return `<div class="mirage-offer-card mirage-shop-offer-card ${isShopFrozen ? 'is-frozen' : ''}" data-offer-id="${offerId}" title="${desc || name}">
+                <div class="mirage-offer-art" style="${artStyle}"></div>
+                <div class="mirage-offer-top">
+                    <span class="mirage-offer-tier">★${tier}</span>
+                    <span class="mirage-offer-name">${name}</span>
+                </div>
+                ${desc ? `<div class="mirage-offer-desc">${desc}</div>` : ''}
+                <div class="mirage-offer-stats-row">
+                    <span class="mirage-offer-stat mirage-offer-atk" title="攻击力">${atk}</span>
+                    <button type="button" class="mirage-offer-buy-btn mirage-buy-offer-btn" data-mirage-buy-offer="${offerId}" ${canBuy ? '' : 'disabled'}>招募 ${buyCost}G</button>
+                    <span class="mirage-offer-stat mirage-offer-hp" title="生命值">${hp}</span>
+                </div>
+            </div>`;
+        }).join('');
+
+    stageEl.innerHTML = `<div class="mirage-tavern-offers mirage-shop-offers">${offersHtml}</div>`;
+    void canUpgrade;
+    void upgradeCost;
+
+    const needsLeaderSelection = !hasSelectedLeader && leaderCandidates.length > 0 && roundNumber === 1;
+    if (needsLeaderSelection) {
+        const canSelectLeader = !isSpectator && !isReady;
+        drawerEl.style.display = 'block';
+        drawerEl.innerHTML = `
+            <div class="mirage-drawer-header">
+                <span class="mirage-drawer-title">选择你的幻境主战者 (3 选 1)</span>
+                <span class="mirage-drawer-subtitle">决定本局专属技能与初始生命值</span>
+            </div>
+            <div class="mirage-drawer-grid">
+                ${leaderCandidates.map(cand => {
+                    const defId = Number(cand.cardDefinitionId ?? cand.CardDefinitionId ?? 0);
+                    const cName = escapeAttributeValue(cand.name ?? cand.Name ?? `#${defId}`);
+                    const cDesc = escapeAttributeValue(cand.description ?? cand.Description ?? '');
+                    const cHp = Number(cand.health ?? cand.Health ?? 20);
+                    const cArt = escapeAttributeValue(cand.artPreview ?? cand.ArtPreview ?? '');
+                    const avatarStyle = cArt ? `background-image:url('${cArt}');` : '';
+                    return `<button type="button" class="mirage-choice-card" data-mirage-select-leader="${defId}" ${canSelectLeader ? '' : 'disabled'}>
+                        <div class="mirage-choice-card-top">
+                            <div class="mirage-choice-avatar" style="${avatarStyle}"></div>
+                            <div class="mirage-choice-meta">
+                                <div class="mirage-choice-name">${cName}</div>
+                                <div class="mirage-choice-stats">${cHp} HP · 主战者</div>
+                            </div>
+                        </div>
+                        <div class="mirage-choice-desc">${cDesc || '无技能说明'}</div>
+                        <span class="mirage-choice-cta">选择该主战者</span>
+                    </button>`;
+                }).join('')}
+            </div>
+        `;
+    } else if (pendingTickets.length > 0) {
+        const activeTicket = pendingTickets[0];
+        const ticketId = escapeAttributeValue(activeTicket.ticketId ?? activeTicket.TicketId ?? '');
+        const targetTier = Number(activeTicket.targetTier ?? activeTicket.TargetTier ?? 1);
+        const candidates = Array.isArray(activeTicket.candidates ?? activeTicket.Candidates)
+            ? (activeTicket.candidates ?? activeTicket.Candidates)
+            : (Array.isArray(activeTicket.candidateCardDefinitionIds ?? activeTicket.CandidateCardDefinitionIds)
+                ? (activeTicket.candidateCardDefinitionIds ?? activeTicket.CandidateCardDefinitionIds).map(id => ({ cardDefinitionId: id, name: `#${id}`, tavernTier: targetTier, attack: 0, health: 0 }))
+                : []);
+        const canRedeem = !isSpectator && !isReady && !isHandFull;
+        drawerEl.style.display = 'block';
+        drawerEl.innerHTML = `
+            <div class="mirage-drawer-header">
+                <span class="mirage-drawer-title">三连奖励 · 发现 ★${targetTier} 随从</span>
+                <span class="mirage-drawer-subtitle">待兑现凭据：${pendingTickets.length} 张</span>
+            </div>
+            <div class="mirage-drawer-grid">
+                ${candidates.map(cand => {
+                    const defId = Number(cand.cardDefinitionId ?? cand.CardDefinitionId ?? 0);
+                    const cName = escapeAttributeValue(cand.name ?? cand.Name ?? `#${defId}`);
+                    const cDesc = escapeAttributeValue(cand.description ?? cand.Description ?? '');
+                    const cAtk = Number(cand.attack ?? cand.Attack ?? 0);
+                    const cHp = Number(cand.health ?? cand.Health ?? 0);
+                    const cTier = Number(cand.tavernTier ?? cand.TavernTier ?? targetTier);
+                    const cArt = escapeAttributeValue(cand.artPreview ?? cand.ArtPreview ?? '');
+                    const avatarStyle = cArt ? `background-image:url('${cArt}');` : '';
+                    return `<button type="button" class="mirage-choice-card" data-mirage-redeem-ticket="${ticketId}" data-mirage-redeem-card="${defId}" title="${cDesc}" ${canRedeem ? '' : 'disabled'}>
+                        <div class="mirage-choice-card-top">
+                            <div class="mirage-choice-avatar" style="${avatarStyle}"></div>
+                            <div class="mirage-choice-meta">
+                                <div class="mirage-choice-name">${cName}</div>
+                                <div class="mirage-choice-stats">★${cTier} · ATK ${cAtk} / HP ${cHp}</div>
+                            </div>
+                        </div>
+                        <div class="mirage-choice-desc">${cDesc || '白板战棋随从'}</div>
+                        <span class="mirage-choice-cta">领取随从</span>
+                    </button>`;
+                }).join('')}
+            </div>
+        `;
+    } else {
+        drawerEl.style.display = 'none';
+        drawerEl.innerHTML = '';
+    }
+}
+
+function ensureMirageCombatOverlayElement() {
+    if (!gameContainerEl) return null;
+    let overlayEl = document.getElementById('mirage-combat-playback-overlay');
+    if (!overlayEl) {
+        overlayEl = document.createElement('div');
+        overlayEl.id = 'mirage-combat-playback-overlay';
+        overlayEl.className = 'mirage-combat-overlay';
+        overlayEl.style.display = 'none';
+        overlayEl.addEventListener('click', e => {
+            const skipBtn = e.target?.closest?.('[data-mirage-skip-combat]');
+            if (skipBtn) {
+                e.stopPropagation();
+                abortMirageCombatPlayback('skip');
+            }
+        });
+        gameContainerEl.appendChild(overlayEl);
+    }
+    return overlayEl;
+}
+
+function renderMirageCombatBoardFromStateDto(stateDto, activeAttackerUid = null, activeDefenderUid = null) {
+    if (!stateDto) return;
+    const playersDto = Array.isArray(stateDto.players ?? stateDto.Players)
+        ? (stateDto.players ?? stateDto.Players)
+        : [];
+    if (playersDto.length === 0) return;
+
+    const localId = String(gameState.localPlayerId ?? '').trim().toLowerCase();
+    const localDto = playersDto.find(p => String(p?.playerId ?? p?.PlayerId ?? '').trim().toLowerCase() === localId) ?? playersDto[0];
+    const opponentDto = playersDto.find(p => p !== localDto) ?? playersDto[1];
+
+    const hydrateCombatField = (fieldDtos, ownerId) => {
+        if (!Array.isArray(fieldDtos)) return [];
+        return fieldDtos
+            .map(dto => {
+                const inst = createDiscoverPreviewCard(dto);
+                if (!inst) return null;
+                inst.ownerId = ownerId;
+                inst.zone = 'Field';
+                inst.isEvolved = Boolean(dto.isEvolved ?? dto.IsEvolved ?? inst.isEvolved);
+                inst.isMirageTriple = Boolean(dto.isMirageTriple ?? dto.IsMirageTriple ?? inst.isMirageTriple);
+                inst.currentAttack = dto.currentAttack ?? dto.CurrentAttack ?? inst.attack;
+                inst.currentHealth = dto.currentHealth ?? dto.CurrentHealth ?? inst.health;
+                inst.keywords = Array.isArray(dto.keywords ?? dto.Keywords) ? [...(dto.keywords ?? dto.Keywords)] : [];
+                return inst;
+            })
+            .filter(Boolean);
+    };
+
+    if (localDto && player1FieldEl) {
+        const localOwnerId = localDto.playerId ?? localDto.PlayerId ?? gameState.localPlayerId;
+        const localField = hydrateCombatField(localDto.field ?? localDto.Field, localOwnerId);
+        renderField(localField, player1FieldEl, false);
+    }
+    if (opponentDto && player2FieldEl) {
+        const oppOwnerId = opponentDto.playerId ?? opponentDto.PlayerId ?? 'opponent';
+        const oppField = hydrateCombatField(opponentDto.field ?? opponentDto.Field, oppOwnerId);
+        renderField(oppField, player2FieldEl, true);
+    }
+
+    clearSelectionHighlights();
+    if (activeAttackerUid) {
+        highlightAttacker(String(activeAttackerUid));
+    }
+    if (activeDefenderUid) {
+        const defenderEl = document.querySelector(`.field-card[data-uid="${activeDefenderUid}"]`);
+        if (defenderEl) {
+            defenderEl.classList.add('valid-target');
+        }
+    }
+}
+
+export function startMirageCombatPlaybackUi(replayDto) {
+    const shopPanel = document.getElementById('mirage-shop-panel');
+    if (shopPanel) shopPanel.style.display = 'none';
+    const stageEl = document.getElementById('mirage-tavern-stage');
+    if (stageEl) stageEl.style.display = 'none';
+    const drawerEl = document.getElementById('mirage-decision-drawer');
+    if (drawerEl) drawerEl.style.display = 'none';
+    const overlayEl = ensureMirageCombatOverlayElement();
+    if (overlayEl) {
+        const roundNumber = Number(replayDto?.roundNumber ?? replayDto?.RoundNumber ?? gameState.mirage?.roundNumber ?? 1);
+        const totalSteps = Array.isArray(replayDto?.steps ?? replayDto?.Steps)
+            ? (replayDto.steps ?? replayDto.Steps).length
+            : 0;
+        overlayEl.style.display = 'flex';
+        overlayEl.innerHTML = `
+            <div class="mirage-combat-overlay-info">
+                <div class="mirage-combat-overlay-title">幻境第 ${roundNumber} 轮 · 自动交战回放</div>
+                <div id="mirage-combat-playback-status" class="mirage-combat-overlay-sub">战斗开始（共 ${totalSteps} 步）</div>
+            </div>
+            <button type="button" class="mirage-combat-skip-btn" data-mirage-skip-combat="1">跳过战斗</button>
+        `;
+    }
+    const initialState = replayDto?.initialState ?? replayDto?.InitialState;
+    renderMirageCombatBoardFromStateDto(initialState);
+}
+
+export function renderMirageCombatStep(stepDto, replayDto, stepIndex = 0) {
+    const overlayEl = ensureMirageCombatOverlayElement();
+    const totalSteps = Array.isArray(replayDto?.steps ?? replayDto?.Steps)
+        ? (replayDto.steps ?? replayDto.Steps).length
+        : 0;
+    const statusEl = overlayEl?.querySelector('#mirage-combat-playback-status');
+    if (statusEl) {
+        statusEl.textContent = `交战步数 ${stepIndex + 1} / ${totalSteps}`;
+    }
+    const attackerUid = String(stepDto?.attackerInstanceId ?? stepDto?.AttackerInstanceId ?? '').trim();
+    const defenderUid = String(stepDto?.defenderInstanceId ?? stepDto?.DefenderInstanceId ?? '').trim();
+    const postState = stepDto?.postStepState ?? stepDto?.PostStepState;
+
+    if (!postState || !isGamePageActive()) {
+        renderMirageCombatBoardFromStateDto(postState, attackerUid || null, defenderUid || null);
+        return;
+    }
+
+    const motion = getBattleMotionController();
+    const prevSnap = motion.captureSnapshot();
+    const prevShieldSet = new Set();
+    gameContainerEl?.querySelectorAll('#player1-field > .card.has-shield[data-uid], #player2-field > .card.has-shield[data-uid]')
+        .forEach(el => {
+            if (el.dataset?.uid) {
+                prevShieldSet.add(el.dataset.uid);
+            }
+        });
+
+    const postUnitMap = new Map();
+    const postPlayers = Array.isArray(postState.players ?? postState.Players)
+        ? (postState.players ?? postState.Players)
+        : [];
+    postPlayers.forEach(pDto => {
+        const fieldList = Array.isArray(pDto?.field ?? pDto?.Field) ? (pDto.field ?? pDto.Field) : [];
+        fieldList.forEach(cardDto => {
+            const uid = String(cardDto?.instanceId ?? cardDto?.InstanceId ?? cardDto?.uid ?? '').trim();
+            if (!uid) return;
+            const kw = Array.isArray(cardDto?.keywords ?? cardDto?.Keywords) ? (cardDto.keywords ?? cardDto.Keywords) : [];
+            postUnitMap.set(uid, {
+                hp: Number(cardDto?.currentHealth ?? cardDto?.CurrentHealth ?? cardDto?.health ?? cardDto?.Health ?? 0),
+                hasShield: kw.some(k => equalsIgnoreCase(k, 'Shield'))
+            });
+        });
+    });
+
+    const attackerSnap = (attackerUid && prevSnap?.entities?.get(attackerUid)) || null;
+    const targetSnap = (defenderUid && prevSnap?.entities?.get(defenderUid)) || null;
+    const attackerFatal = Boolean(attackerUid && !postUnitMap.has(attackerUid));
+
+    const applyPostImpactBoard = () => {
+        if (prevSnap) {
+            for (const [uid, snapItem] of prevSnap.entities.entries()) {
+                if ((snapItem.zone === 'self:field' || snapItem.zone === 'opp:field') && !postUnitMap.has(uid)) {
+                    markTimedUidFlag(suppressedExitUids, uid, 1200);
+                }
+            }
+        }
+
+        renderMirageCombatBoardFromStateDto(postState, attackerUid || null, defenderUid || null);
+
+        if (!prevSnap) return;
+
+        const hits = [];
+        for (const [uid, snapItem] of prevSnap.entities.entries()) {
+            if (snapItem.zone !== 'self:field' && snapItem.zone !== 'opp:field') continue;
+            const postInfo = postUnitMap.get(uid);
+            const shieldBroken = prevShieldSet.has(uid) && (!postInfo || !postInfo.hasShield);
+            if (!postInfo) {
+                const dmg = Math.max(1, Number(snapItem.hp ?? 1));
+                hits.push({ targetUid: uid, damage: dmg, shieldBroken, fallbackRect: snapItem.rect });
+                if (!(attackerFatal && uid === attackerUid) && snapItem.cloneEl) {
+                    motion.spawnSemanticExitClone(snapItem, 'destroy');
+                }
+            } else if (snapItem.hp !== null && postInfo.hp < snapItem.hp) {
+                hits.push({
+                    targetUid: uid,
+                    damage: snapItem.hp - postInfo.hp,
+                    shieldBroken
+                });
+            } else if (shieldBroken) {
+                hits.push({ targetUid: uid, damage: 0, shieldBroken: true });
+            }
+        }
+
+        if (hits.length > 0) {
+            motion.triggerWaveHits(hits, prevSnap);
+        }
+    };
+
+    if (attackerSnap && targetSnap) {
+        motion.playAttackSequence({
+            attackerSnap,
+            targetSnap,
+            attackerFatal,
+            onImpactFrame: () => applyPostImpactBoard()
+        });
+    } else {
+        applyPostImpactBoard();
+    }
+}
+
+export function renderMirageCombatOutcome(replayDto) {
+    const overlayEl = ensureMirageCombatOverlayElement();
+    const statusEl = overlayEl?.querySelector('#mirage-combat-playback-status');
+    if (!statusEl) return;
+    const outcome = replayDto?.outcome ?? replayDto?.Outcome ?? {};
+    const isTie = Boolean(outcome.isTie ?? outcome.IsTie);
+    const damage = Number(outcome.leaderDamage ?? outcome.LeaderDamage ?? 0);
+    const winnerId = String(outcome.winnerPlayerId ?? outcome.WinnerPlayerId ?? '').trim().toLowerCase();
+    const localId = String(gameState.localPlayerId ?? '').trim().toLowerCase();
+    if (isTie || damage <= 0) {
+        statusEl.textContent = '本轮交战平局（0 伤害）';
+    } else if (winnerId && winnerId === localId) {
+        statusEl.textContent = `本轮获胜！对敌方主战者造成 ${damage} 点伤害`;
+    } else {
+        statusEl.textContent = `本轮落败，我方主战者受到 ${damage} 点伤害`;
+    }
+}
+
+export function hideMirageCombatPlaybackOverlay() {
+    cancelAllBattleMotions();
+    const overlayEl = document.getElementById('mirage-combat-playback-overlay');
+    if (overlayEl) {
+        overlayEl.style.display = 'none';
+        overlayEl.innerHTML = '';
+    }
+}
+
+export function showMirageReconnectLockOverlay() {
+    const shopPanel = document.getElementById('mirage-shop-panel');
+    if (shopPanel) shopPanel.style.display = 'none';
+    const stageEl = document.getElementById('mirage-tavern-stage');
+    if (stageEl) stageEl.style.display = 'none';
+    const drawerEl = document.getElementById('mirage-decision-drawer');
+    if (drawerEl) drawerEl.style.display = 'none';
+    const overlayEl = ensureMirageCombatOverlayElement();
+    if (overlayEl) {
+        overlayEl.style.display = 'flex';
+        overlayEl.innerHTML = `
+            <div class="mirage-combat-overlay-sync">正在同步最新幻境对局状态，请稍候...</div>
+        `;
+    }
+}
+
 // --- 具体渲染辅助函数 (占位符) ---
-function updateEmblemDisplay(playerState, statsContainer) {
-    if (!statsContainer) return;
-    const emblemZone = statsContainer.querySelector('.emblem-zone');
+function updateEmblemDisplay(playerState, prefix) {
+    const emblemZone = document.getElementById(`${prefix}-emblem-zone`)
+        ?? document.getElementById(`${prefix}-info`)?.querySelector('.emblem-zone');
     if (!emblemZone) return;
 
-    const emblems = Array.isArray(playerState?.emblem)
+    const rawEmblems = Array.isArray(playerState?.emblem)
         ? playerState.emblem
         : Array.isArray(playerState?.Emblem)
             ? playerState.Emblem
             : [];
+    const activeEmblems = rawEmblems.filter(Boolean).slice(0, EMBLEM_SLOT_COUNT);
 
     emblemZone.innerHTML = '';
+    emblemZone.classList.toggle('is-empty', activeEmblems.length === 0);
+    emblemZone.dataset.emblemCount = String(activeEmblems.length);
+
+    // Top-right opponent emblems fill right-to-left in the W-shaped 5-ring grid [2, 1, 0, 4, 3]
+    const alignRight = prefix === 'player2';
+    const slotOrder = alignRight ? [2, 1, 0, 4, 3] : [0, 1, 2, 3, 4];
+    const slotMap = new Array(EMBLEM_SLOT_COUNT).fill(null);
+    activeEmblems.forEach((emblem, idx) => {
+        slotMap[slotOrder[idx]] = emblem;
+    });
 
     for (let i = 0; i < EMBLEM_SLOT_COUNT; i++) {
         const slot = document.createElement('div');
         slot.classList.add('emblem-slot');
 
-        const emblem = emblems[i];
+        const emblem = slotMap[i];
         if (emblem) {
             const emblemUid = emblem.uid ?? emblem.InstanceId ?? emblem.instanceId ?? '';
             const previewPath = emblem.artPreview ?? emblem.ArtPreview ?? emblem.artDetail ?? emblem.ArtDetail ?? '';
@@ -2688,6 +3668,7 @@ function updateEmblemDisplay(playerState, statsContainer) {
             if (emblemUid) {
                 slot.dataset.uid = String(emblemUid);
             }
+            slot.title = emblem.name ?? emblem.Name ?? '';
             slot.appendChild(artWrapper);
 
             if (showCountdown) {
@@ -2706,9 +3687,7 @@ function updateEmblemZone(playerState) {
     if (!playerState) return;
     const isLocal = playerState.id === gameState.localPlayerId;
     const prefix = isLocal ? 'player1' : 'player2';
-    const infoContainer = document.getElementById(`${prefix}-info`);
-    const statsContainer = infoContainer ? infoContainer.querySelector('.player-stats') : null;
-    updateEmblemDisplay(playerState, statsContainer);
+    updateEmblemDisplay(playerState, prefix);
 }
 
 const CARD_CLASS_ENUM_KEYS = Object.freeze([
@@ -2873,6 +3852,177 @@ function getPlayerCounterValue(playerState, key, fallbackValue = 0) {
     return Number.isFinite(parsedFallback) ? Math.max(0, Math.trunc(parsedFallback)) : 0;
 }
 
+const CORNER_PINNED_COUNTER_KEYS = new Set(['spellboost', 'earthsigil', 'necromancy', 'resonance', 'artifactsdestroyed']);
+
+function renderCornerExtraCounters(playerState, prefix) {
+    const extraContainer = document.getElementById(`${prefix}-extra-counters`);
+    if (!extraContainer) return;
+    if (!playerState || isMirageMode(gameState)) {
+        extraContainer.innerHTML = '';
+        return;
+    }
+
+    const ownerLabelMap = playerState.counterDisplayNames ?? playerState.CounterDisplayNames ?? {};
+    const ownerCounterMap = playerState.counters ?? playerState.Counters ?? {};
+    const entries = buildCounterSummaryEntries({
+        summaryEntries: playerState.counterSummaryEntries ?? playerState.CounterSummaryEntries ?? [],
+        localCounterMap: null,
+        localLabelMap: null,
+        ownerCounterMap,
+        ownerLabelMap,
+        ownerReferenceKeys: Object.keys(ownerLabelMap),
+        includeOwnerCounters: true,
+        hideOwnerSystemKeys: true,
+        showZeroSummaryEntries: false,
+        showZeroOwnerEntries: false,
+        resolveLabel: getCounterLabel
+    }).filter(entry => {
+        const normalizedKey = String(entry?.key ?? '').trim().toLowerCase();
+        if (!normalizedKey || PLAYER_SYSTEM_COUNTER_KEYS.has(normalizedKey)) return false;
+        if (!(Number(entry?.value) > 0)) return false;
+        if (CORNER_PINNED_COUNTER_KEYS.has(normalizedKey)) return true;
+        const label = String(entry?.label ?? '').trim();
+        return label.length > 0 && label.length <= 5 && !label.includes('次数') && !label.includes('回合');
+    });
+
+    extraContainer.innerHTML = entries
+        .slice(0, 2)
+        .map(entry => `
+            <div class="resource-box extra-counter-box">
+                <span class="resource-label">${escapeAttributeValue(entry.label)}</span>
+                <span class="resource-value">${entry.value}</span>
+            </div>
+        `.trim())
+        .join('');
+}
+
+function renderMirageLeaderSkillPod(playerState, statsContainer, isLocal, prefix = 'player1') {
+    if (!statsContainer) return;
+    const slotsRow = document.getElementById(`${prefix}-slots-row`) ?? statsContainer.querySelector('.leader-rpg-slots-row');
+    let podEl = statsContainer.querySelector('.mirage-leader-skill-pod');
+    const leaderCard = playerState?.leaderCard;
+    const leaderCardId = Number(leaderCard?.id ?? leaderCard?.Id ?? 0);
+    if (!isMirageMode(gameState) || !leaderCard || leaderCardId <= 0) {
+        if (podEl) {
+            podEl.style.display = 'none';
+            podEl.innerHTML = '';
+        }
+        return;
+    }
+
+    if (!podEl) {
+        podEl = document.createElement('div');
+        podEl.className = 'mirage-leader-skill-pod';
+        if (slotsRow) {
+            slotsRow.appendChild(podEl);
+        } else {
+            statsContainer.appendChild(podEl);
+        }
+    }
+    podEl.style.display = 'inline-flex';
+
+    const mirageInfo = playerState?.mirage ?? {};
+    const tavernTier = Number(mirageInfo.tavernTier ?? mirageInfo.TavernTier ?? 1);
+    const maxTavernTier = Number(mirageInfo.maxTavernTier ?? mirageInfo.MaxTavernTier ?? 6);
+    const upgradeCost = Number(mirageInfo.upgradeCost ?? mirageInfo.UpgradeCost ?? 0);
+    const canUpgradeTier = Boolean(mirageInfo.canUpgradeTier ?? mirageInfo.CanUpgradeTier);
+    const isReady = Boolean(mirageInfo.isReady ?? mirageInfo.IsReady);
+
+    const rawActAbilities = Array.isArray(leaderCard.actAbilities)
+        ? leaderCard.actAbilities
+        : (Array.isArray(leaderCard.ActAbilities) ? leaderCard.ActAbilities : []);
+    const actionState = isLocal ? getCardActionState(leaderCard, 'leader') : null;
+    const actAbilities = (actionState?.actAbilities && actionState.actAbilities.length > 0)
+        ? actionState.actAbilities
+        : rawActAbilities;
+    const hasAct = actAbilities.length > 0 || Boolean(actionState?.showAct);
+    const desc = escapeAttributeValue(leaderCard.description ?? leaderCard.Description ?? '无技能说明');
+    const leaderUid = escapeAttributeValue(getCardUid(leaderCard) ?? '');
+
+    let upgradeChipHtml = '';
+    if (isLocal && !gameState.isSpectator) {
+        const canUp = gameState.phase === 'Recruit' && !isReady && canUpgradeTier && tavernTier < maxTavernTier;
+        const nextTierText = tavernTier >= maxTavernTier ? 'MAX' : `升★${Math.min(maxTavernTier, tavernTier + 1)}`;
+        const costValText = tavernTier >= maxTavernTier ? `★${maxTavernTier}` : `${upgradeCost}G`;
+        upgradeChipHtml = `
+            <button type="button" class="leader-rpg-chip is-ep mirage-hud-upgrade-btn" data-mirage-action="upgrade" ${canUp ? '' : 'disabled'} title="升级幻境酒馆星级">
+                <span class="resource-label ep-label">${nextTierText}</span>
+                <span class="mirage-chip-val">${costValText}</span>
+            </button>
+        `;
+    } else {
+        upgradeChipHtml = `
+            <span class="leader-rpg-chip is-ep">
+                <span class="resource-label ep-label">酒馆</span>
+                <span class="mirage-chip-val">★${tavernTier}</span>
+            </span>
+        `;
+    }
+
+    let skillChipHtml = '';
+    if (hasAct) {
+        if (isLocal && !gameState.isSpectator) {
+            const firstAbility = actAbilities[0] ?? {};
+            const rawAbilityCost = firstAbility.actCost ?? firstAbility.ActCost ?? actionState?.actCost;
+            const hasAbilityCost = rawAbilityCost !== null && rawAbilityCost !== undefined && Number.isFinite(Number(rawAbilityCost));
+            const abilityCost = hasAbilityCost ? Number(rawAbilityCost) : null;
+            const abilityRuntimeId = escapeAttributeValue(firstAbility.abilityRuntimeId ?? firstAbility.AbilityRuntimeId ?? '');
+            const actsThisTurn = Number(leaderCard.actsThisTurn ?? leaderCard.ActsThisTurn ?? 0);
+            const maxActsPerTurn = Number(leaderCard.maxActsPerTurn ?? leaderCard.MaxActsPerTurn ?? 1);
+            const isUsed = (Number.isFinite(actsThisTurn) && Number.isFinite(maxActsPerTurn) && actsThisTurn >= maxActsPerTurn)
+                || Boolean(actionState?.actUsedThisTurn);
+            const syncPending = actionState?.actPlayabilityKnown !== true;
+            const abilityExplicitPlayable = firstAbility.isPlayable ?? firstAbility.IsPlayable;
+            const isPlayable = gameState.phase === 'Recruit'
+                && !isReady
+                && !isUsed
+                && !syncPending
+                && (abilityExplicitPlayable !== undefined ? abilityExplicitPlayable === true : actionState?.actPlayable === true);
+            const failureReason = isUsed
+                ? '本回合已发动'
+                : (syncPending
+                    ? ACT_PLAYABILITY_SYNC_PENDING_REASON
+                    : String(firstAbility.failureReason ?? firstAbility.FailureReason ?? actionState?.actFailureReason ?? ''));
+            const valLabel = isUsed
+                ? '已用'
+                : (syncPending
+                    ? '同步'
+                    : (abilityCost !== null ? `${abilityCost}G` : '发动'));
+            const runtimeAttr = abilityRuntimeId ? `data-act-ability-id="${abilityRuntimeId}"` : '';
+            const tooltip = escapeAttributeValue(failureReason ? `${desc}（${failureReason}）` : desc);
+            skillChipHtml = `
+                <button type="button" class="act-button leader-rpg-chip is-skill mirage-leader-act-btn ${isPlayable ? 'playable' : 'disabled'}" data-act-uid="${leaderUid}" ${runtimeAttr} ${isPlayable ? '' : 'disabled'} title="${tooltip}">
+                    <span class="resource-label skill-label">统帅技</span>
+                    <span class="mirage-chip-val">${valLabel}</span>
+                </button>
+            `;
+        } else {
+            const firstAbility = actAbilities[0] ?? {};
+            const rawAbilityCost = firstAbility.actCost ?? firstAbility.ActCost;
+            const hasAbilityCost = rawAbilityCost !== null && rawAbilityCost !== undefined && Number.isFinite(Number(rawAbilityCost));
+            const actsThisTurn = Number(leaderCard.actsThisTurn ?? leaderCard.ActsThisTurn ?? 0);
+            const maxActsPerTurn = Number(leaderCard.maxActsPerTurn ?? leaderCard.MaxActsPerTurn ?? 1);
+            const isUsed = Number.isFinite(actsThisTurn) && Number.isFinite(maxActsPerTurn) && actsThisTurn >= maxActsPerTurn;
+            const badgeText = isUsed ? '已用' : (hasAbilityCost ? `${Number(rawAbilityCost)}G` : '主动');
+            skillChipHtml = `
+                <span class="leader-rpg-chip is-skill mirage-passive-skill-badge" title="${desc}">
+                    <span class="resource-label skill-label">统帅技</span>
+                    <span class="mirage-chip-val">${badgeText}</span>
+                </span>
+            `;
+        }
+    } else {
+        skillChipHtml = `
+            <span class="leader-rpg-chip is-skill mirage-passive-skill-badge" title="${desc}">
+                <span class="resource-label skill-label">被动</span>
+                <span class="mirage-chip-val">光环</span>
+            </span>
+        `;
+    }
+
+    podEl.innerHTML = `${upgradeChipHtml}${skillChipHtml}`;
+}
+
 function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'player2'
     if (!playerState) {
         return;
@@ -2881,6 +4031,7 @@ function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'play
     try {
         const infoContainer = document.getElementById(`${prefix}-info`);
         const statsContainer = infoContainer ? infoContainer.querySelector('.player-stats') : null;
+        const cornerPod = document.getElementById(`${prefix}-corner-pod`);
 
         if (!statsContainer) {
             console.warn(`UI: Stats container for ${prefix} not found.`);
@@ -2888,16 +4039,25 @@ function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'play
         }
 
         const currentHp = playerState.leaderCard?.currentHealth ?? 0;
+        const maxHpRaw = Number(playerState.leaderCard?.maxHealth ?? playerState.leaderCard?.MaxHealth ?? playerState.leaderCard?.health ?? playerState.leaderCard?.Health ?? 20);
+        const maxHp = Number.isFinite(maxHpRaw) && maxHpRaw > 0 ? Math.trunc(maxHpRaw) : 20;
+        const hpPercent = Math.max(0, Math.min(100, (Math.max(0, Number(currentHp) || 0) / maxHp) * 100));
+        const hpContainer = statsContainer.querySelector('.hp-display');
         const hpValueEl = statsContainer.querySelector('.hp-value');
+        const hpMaxEl = statsContainer.querySelector('.hp-max');
         if (hpValueEl) {
             hpValueEl.textContent = currentHp;
-            hpValueEl.style.color = currentHp <= 5 ? '#ef4444' : '#fff';
+            hpValueEl.style.color = currentHp <= 5 ? '#fda4af' : '';
+        }
+        if (hpMaxEl) {
+            hpMaxEl.textContent = `/ ${maxHp}`;
+        }
+        if (hpContainer) {
+            applyLeaderHpBarWithGhostSettle(hpContainer, hpPercent, Number(currentHp) <= 5);
         }
 
         const currentPp = playerState.pp ?? 0;
         const maxPp = playerState.maxPP ?? 0;
-        const ppTextEl = statsContainer.querySelector('.pp-text');
-        if (ppTextEl) ppTextEl.textContent = `${currentPp} / ${maxPp}`;
         updatePpDisplay(playerState.id, currentPp, maxPp, playerState.ppBoostArmed === true);
 
         const maxEp = (playerState.maxEP && playerState.maxEP > 0) ? playerState.maxEP : 2;
@@ -2949,13 +4109,42 @@ function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'play
         updateComboDisplay(playerState.id, nextComboCount);
         updateRallyDisplay(playerState.id, nextRallyCount);
 
+        const counterScope = cornerPod ?? statsContainer;
+        counterScope.querySelector('.blood-box')?.classList.toggle('is-zero', nextBloodPoolCount <= 0);
+        counterScope.querySelector('.combo-box')?.classList.toggle('is-zero', nextComboCount <= 0);
+        counterScope.querySelector('.rally-box')?.classList.toggle('is-zero', nextRallyCount <= 0);
+        renderCornerExtraCounters(playerState, prefix);
+
         const isLocal = prefix === 'player1';
         const displayName = resolvePlayerDisplayName(playerState, isLocal);
+        const classKey = normalizeCardClassKey(
+            playerState?.class
+            ?? playerState?.Class
+            ?? playerState?.deckClass
+            ?? playerState?.DeckClass
+            ?? 'Neutral'
+        ) || 'Neutral';
         const classLabel = resolvePlayerClassLabel(playerState);
+        const leaderCard = playerState.leaderCard;
+        const leaderCardId = Number(leaderCard?.id ?? leaderCard?.Id ?? 0);
+        const isCustomMirageLeader = isMirageMode(gameState) && leaderCardId > 0;
+
+        const classIconEl = document.getElementById(`${prefix}-class-icon`);
+        if (classIconEl) {
+            const iconUrl = CLASS_ICON_URL_MAP[classKey] ?? CLASS_ICON_URL_MAP.Neutral;
+            if (iconUrl) {
+                classIconEl.src = iconUrl;
+                classIconEl.hidden = false;
+            } else {
+                classIconEl.hidden = true;
+            }
+        }
 
         const classEl = statsContainer.querySelector('.class-name');
         if (classEl) {
-            classEl.textContent = classLabel || 'Neutral';
+            classEl.textContent = isCustomMirageLeader
+                ? (leaderCard.name ?? leaderCard.Name ?? classLabel ?? 'Neutral')
+                : (classLabel || 'Neutral');
         }
 
         const playerNameEl = statsContainer.querySelector('.player-name');
@@ -2978,16 +4167,22 @@ function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'play
         const avatarEl = statsContainer.querySelector('.stats-avatar');
         if (avatarEl) {
             const avatar = resolvePlayerAvatar(playerState, isLocal, displayName);
+            const leaderArt = isCustomMirageLeader
+                ? String(leaderCard?.artPreview ?? leaderCard?.ArtPreview ?? '').trim()
+                : '';
+            const effectiveImageSrc = leaderArt || avatar.imageSrc;
             avatarEl.textContent = '';
-            avatarEl.classList.toggle('has-image', Boolean(avatar.imageSrc));
+            avatarEl.classList.toggle('mirage-leader-avatar', isCustomMirageLeader && Boolean(effectiveImageSrc));
+            avatarEl.classList.toggle('has-image', Boolean(effectiveImageSrc));
 
-            if (avatar.imageSrc) {
+            if (effectiveImageSrc) {
                 const imageEl = document.createElement('img');
                 imageEl.className = 'stats-avatar-img';
-                imageEl.src = avatar.imageSrc;
+                imageEl.src = effectiveImageSrc;
                 imageEl.alt = `${displayName} avatar`;
                 imageEl.onerror = () => {
                     avatarEl.classList.remove('has-image');
+                    avatarEl.classList.remove('mirage-leader-avatar');
                     avatarEl.textContent = avatar.fallbackText;
                 };
                 avatarEl.appendChild(imageEl);
@@ -2996,38 +4191,84 @@ function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'play
             }
         }
 
-        updateEmblemDisplay(playerState, statsContainer);
+        renderMirageLeaderSkillPod(playerState, statsContainer, isLocal, prefix);
+        updateEmblemDisplay(playerState, prefix);
     } catch (error) {
         console.error(`UI Error rendering stats for ${prefix}:`, error);
     }
 }
 function renderPlayerHand(handCards = [], handElement) {
     if (!handElement) {
-        // console.error("UI Error: Hand element (player1HandEl or player2HandEl?) not provided for rendering hand.");
         return;
     }
-    const entries = buildFaceUpHandEntries(handCards, handElement === player1HandEl);
+    const isLocal = handElement === player1HandEl;
+    if (isLocal) {
+        applyHandOverlapCssVars(handElement, handCards.length);
+    } else {
+        handElement.classList.add('is-face-up-opponent');
+    }
+
+    const existingHandEls = Array.from(handElement.querySelectorAll(':scope > .card[data-uid]'));
+    const hadPreviousCards = existingHandEls.length > 0;
+    const previousUidSet = new Set(existingHandEls.map(el => normalizeMotionUidKey(el.dataset.uid)));
+    const canAnimateTurnDraw = hadPreviousCards
+        && isGamePageActive()
+        && !isMirageMode(gameState)
+        && (gameState.phase === 'TurnStart' || gameState.phase === 'Main')
+        && Number(gameState.turnNumber ?? 0) > 0;
+
+    const entries = buildFaceUpHandEntries(handCards, isLocal);
+    const newlyDrawnUids = [];
+    if (canAnimateTurnDraw) {
+        entries.forEach(entry => {
+            const uid = entry?.element?.dataset?.uid;
+            const normUid = normalizeMotionUidKey(uid);
+            if (normUid && !previousUidSet.has(normUid) && !hasActiveTimedUidFlag(suppressedEnterUids, uid)) {
+                markTimedUidFlag(suppressedEnterUids, uid, 1500);
+                newlyDrawnUids.push(uid);
+            }
+        });
+    }
+
     renderAnimatedCardCollection(handElement, entries, {
         animateEnter: true,
         animateExit: true,
         animateInitialEnter: false,
-        animateMove: false
+        animateMove: true
     });
-    if (handElement === player1HandEl) {
+
+    if (newlyDrawnUids.length > 0) {
+        const motion = getBattleMotionController();
+        const anchors = motion.getAnchorRects();
+        const sourceRect = isLocal ? anchors?.selfDeckRect : anchors?.oppDeckRect;
+        if (sourceRect) {
+            newlyDrawnUids.forEach((uid, idx) => {
+                const targetEl = handElement.querySelector(`.card[data-uid="${uid}"]`);
+                if (targetEl) {
+                    motion.runCrossZoneCarrierFlight({
+                        targetUid: uid,
+                        targetEl,
+                        sourceRect,
+                        delayMs: Math.min(idx * 45, 180),
+                        durationMs: 240,
+                        pulseTone: 'cyan'
+                    });
+                }
+            });
+        }
+    }
+
+    if (isLocal) {
         syncCommittedHandPlayVisual(handCards);
     }
-    // Optional: Add visual feedback if hand reaches max size
-    // const maxHandSize = 9; // Or get from playerState if available
-    // if (handCards.length >= maxHandSize) { handElement.classList.add('full-hand'); }
-    // else { handElement.classList.remove('full-hand'); }
 }
 
 // --- 渲染对方手牌（只显示牌背）---
 function renderOpponentHand(handCards = [], handElement) {
     if (!handElement) {
-        // console.error("UI Error: Opponent hand element (player2HandEl) not provided.");
         return;
     }
+    handElement.classList.remove('is-face-up-opponent');
     const entries = buildFaceDownHandEntries(handCards);
     renderAnimatedCardCollection(handElement, entries, {
         animateEnter: false,
@@ -3042,11 +4283,8 @@ function renderField(fieldCards = [], fieldElement, isOpponent = false) {
     }
     void isOpponent;
     const entries = buildFieldEntries(fieldCards);
+    syncFieldZoneDensity(fieldElement, entries.length);
     renderAnimatedCardCollection(fieldElement, entries);
-    // Optional: Add visual feedback if the field reaches max size
-    // const maxFieldSize = 5; // Or get from playerState/gameState constant
-    // if (fieldCards.length >= maxFieldSize) { fieldElement.classList.add('full-field'); }
-    // else { fieldElement.classList.remove('full-field'); }
 }
 // --- 创建卡牌 DOM 元素的辅助函数 ---
 function isEnhanceModeValue(value) {
@@ -3133,8 +4371,11 @@ function getUseActionState(cardInstance, context) {
     }
 
     const playerState = getPlayerState(localPlayerId);
+    const isMirageRecruit = gameState.mode === 'Mirage'
+        && gameState.phase === 'Recruit'
+        && playerState?.mirage?.isReady !== true;
     const isLocalTurn = gameState.currentPlayerId === localPlayerId;
-    if (!playerState || !isLocalTurn || gameState.phase !== 'Main') {
+    if (!playerState || (!isMirageRecruit && (!isLocalTurn || gameState.phase !== 'Main'))) {
         return empty;
     }
 
@@ -3199,6 +4440,55 @@ function getCardActionState(cardInstance, context) {
     const currentPlayerId = getCurrentPlayerId();
     const playerState = getPlayerState(currentPlayerId);
     const cardOwnerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId;
+
+    if (isMirageMode(gameState)) {
+        const localPlayer = getPlayerState(gameState.localPlayerId);
+        const isLocalReady = Boolean(localPlayer?.mirage?.isReady ?? localPlayer?.mirage?.IsReady);
+        if (!localPlayer || cardOwnerId !== gameState.localPlayerId || gameState.phase !== 'Recruit' || isLocalReady) {
+            return empty;
+        }
+        const cardType = cardInstance.type ?? cardInstance.Type;
+        const isLeaderCard = equalsIgnoreCase(cardType, 'Leader')
+            || resolvedContext === 'leader'
+            || equalsIgnoreCase(cardInstance.zone ?? cardInstance.Zone, 'Leader');
+        if (isLeaderCard) {
+            const actAbilityList = Array.isArray(cardInstance.actAbilities)
+                ? cardInstance.actAbilities
+                : (Array.isArray(cardInstance.ActAbilities) ? cardInstance.ActAbilities : []);
+            const actsThisTurn = Number(cardInstance.actsThisTurn ?? cardInstance.ActsThisTurn ?? 0);
+            const maxActsPerTurn = Number(cardInstance.maxActsPerTurn ?? cardInstance.MaxActsPerTurn ?? 1);
+            const actUsedThisTurn = Number.isFinite(actsThisTurn) && Number.isFinite(maxActsPerTurn) && actsThisTurn >= maxActsPerTurn;
+            const cardUid = getCardUid(cardInstance);
+            const actInfo = cardUid ? getActPlayabilityForCard(cardUid, cardOwnerId) : null;
+            const actPlayabilityKnown = Boolean(actInfo);
+            const actPlayable = actPlayabilityKnown ? actInfo?.isPlayable === true : false;
+            const actFailureReason = actPlayabilityKnown ? (actInfo?.failureReason ?? '') : ACT_PLAYABILITY_SYNC_PENDING_REASON;
+            const actCost = Number.isFinite(actInfo?.actCost) ? actInfo.actCost : null;
+            const actAbilities = actPlayabilityKnown
+                ? (Array.isArray(actInfo?.abilities) ? actInfo.abilities : [])
+                : actAbilityList;
+            const hasActCapability = actAbilityList.length > 0
+                || (Array.isArray(actInfo?.abilities) && actInfo.abilities.length > 0);
+            return {
+                ...empty,
+                showAct: hasActCapability,
+                actUsedThisTurn,
+                actPlayabilityKnown,
+                actPlayable,
+                actFailureReason,
+                actCost,
+                actAbilities
+            };
+        }
+        return {
+            ...empty,
+            showUse: useActionState.showUse,
+            usePlayable: useActionState.usePlayable,
+            useFailureReason: useActionState.useFailureReason,
+            useSyncPending: useActionState.useSyncPending,
+            useHint: useActionState.useHint
+        };
+    }
 
     if (!playerState ||
         currentPlayerId !== gameState.localPlayerId ||
@@ -3349,57 +4639,59 @@ function buildKeywordBadgesHtml(cardInstance, context) {
         if (!badgeSrc) return;
         seen.add(normalized);
         const label = escapeAttributeValue(getCardKeywordLabel(keyword) || normalizeEnumName(keyword));
+        const wardClass = normalized === 'ward' ? ' is-ward' : '';
         badges.push(
-            `<div class="keyword-badge" title="${label}" data-keyword="${normalized}">` +
+            `<div class="keyword-badge${wardClass}" title="${label}" data-keyword="${normalized}">` +
             `<img class="badge-icon" src="${badgeSrc}" alt="${label}">` +
             `</div>`
         );
     });
 
     if (badges.length === 0) return '';
-    return `<div class="keyword-badges">${badges.join('')}</div>`;
+    const denseClass = badges.length >= 4 ? ' is-dense' : '';
+    return `<div class="keyword-badges${denseClass}">${badges.join('')}</div>`;
 }
 
 function createCardElement(cardInstance, context = 'hand') { // context: 'hand', 'field'
     if (!cardInstance) {
-        // console.error("UI Error: createCardElement called with null cardInstance.");
         return null;
     }
 
     const cardDiv = document.createElement('div');
     cardDiv.classList.add('card'); // Base card class
-    // 添加卡牌类型作为 class (方便样式化)
-    // 【修复】使用正确的属性名：Type（大写）而不是type（小写）
     const cardType = cardInstance.Type ?? cardInstance.type;
     if (cardType) {
-        // 将类型转为小写，例如 'Follower' -> 'follower'
         cardDiv.classList.add(cardType.toLowerCase().split('_')[0]); // Handle 'Follower_Evolved' -> 'follower'
     }
-    // 【修复】使用正确的UID属性：优先使用uid，备用InstanceId
-    cardDiv.dataset.uid = cardInstance.uid ?? cardInstance.InstanceId; // Store UID for event handling & state lookup
+    cardDiv.dataset.uid = cardInstance.uid ?? cardInstance.InstanceId;
 
-    // 添加上下文特定的 class
+    const isEvolvedVisual = (cardInstance.isEvolved ?? cardInstance.IsEvolved) === true
+        || (cardInstance.isMirageTriple ?? cardInstance.IsMirageTriple) === true;
+    if ((context === 'hand' || context === 'field') && isEvolvedVisual) {
+        cardDiv.classList.add('evolved');
+    }
+
+    const isSuperEvolvedField = context === 'field' && (cardInstance.isSuperEvolved ?? cardInstance.IsSuperEvolved) === true;
     if (context === 'hand') {
         cardDiv.classList.add('hand-card');
     } else if (context === 'field') {
         cardDiv.classList.add('field-card');
-        // 如果是已进化的随从，添加 'evolved' class
-        if (cardInstance.isEvolved === true) {
-            cardDiv.classList.add('evolved');
-        }
-        if ((cardInstance.isSuperEvolved ?? cardInstance.IsSuperEvolved) === true) {
+        if (isSuperEvolvedField) {
             cardDiv.classList.add('super-evolved');
         }
     }
 
     applyAttackReadinessClasses(cardDiv, cardInstance, context);
 
-    // --- ADDED: Ward Indicator ---
-    // Check if keywords array exists and includes 'Ward' (Only for field context)
-    if (context === 'field' && Array.isArray(cardInstance.keywords) && cardInstance.keywords.includes('Ward')) {
+    const rawKeywordList = Array.isArray(cardInstance.keywords)
+        ? cardInstance.keywords
+        : (Array.isArray(cardInstance.Keywords) ? cardInstance.Keywords : []);
+    if (context === 'field' && rawKeywordList.some(k => equalsIgnoreCase(k, 'Ward'))) {
         cardDiv.classList.add('has-ward');
     }
-    // --- END Ward Indicator ---
+    if (rawKeywordList.some(k => equalsIgnoreCase(k, 'Shield'))) {
+        cardDiv.classList.add('has-shield');
+    }
 
     const costInfo = resolveCardCostDisplay(cardInstance, context);
     if (costInfo.enhanceActive) {
@@ -3408,23 +4700,17 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
 
     cardDiv.classList.toggle('alternate-active', costInfo.modeVisual.alternate);
     cardDiv.dataset.playModeLabel = costInfo.modeVisual.label;
-        cardDiv.style.setProperty('--play-mode-label', JSON.stringify(costInfo.modeVisual.label));
+    cardDiv.style.setProperty('--play-mode-label', JSON.stringify(costInfo.modeVisual.label));
 
-    // 基本的 Inner HTML 结构 - 需要根据 style.css 进行调整
-    // 使用 ?? 提供默认值，防止属性缺失导致显示错误
-    // 【修复】使用正确的属性名：Name（大写）而不是name（小写）
-
-    // Determine Countdown / Earthsigil visibility (Amulets only)
     const countdownValue = cardInstance.countdown
         ?? cardInstance.CurrentCountdown
         ?? cardInstance.currentCountdown
         ?? cardInstance.Countdown;
     const isFollowerType = equalsIgnoreCase(cardType, 'Follower') || equalsIgnoreCase(cardType, 'Follower_Evolved');
     const isAmuletType = equalsIgnoreCase(cardType, 'Amulet');
-    const hasCountdownKeyword = Array.isArray(cardInstance.keywords)
-        && cardInstance.keywords.some(keyword => equalsIgnoreCase(keyword, 'Countdown'));
-    const hasEarthsigilKeyword = Array.isArray(cardInstance.keywords)
-        && cardInstance.keywords.some(keyword => equalsIgnoreCase(keyword, 'EarthSigil'));
+    const isSpellType = equalsIgnoreCase(cardType, 'Spell');
+    const hasCountdownKeyword = rawKeywordList.some(keyword => equalsIgnoreCase(keyword, 'Countdown'));
+    const hasEarthsigilKeyword = rawKeywordList.some(keyword => equalsIgnoreCase(keyword, 'EarthSigil'));
     const showCountdown = isAmuletType && hasCountdownKeyword
         && (countdownValue !== null && countdownValue !== undefined);
     const earthsigilValue = cardInstance.earthsigil
@@ -3434,20 +4720,25 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
         ?? cardInstance.Counters?.Earthsigil
         ?? 0;
     const showEarthsigil = isAmuletType && hasEarthsigilKeyword;
-    const showEvidence = isAmuletType && (cardInstance.keywords ?? cardInstance.Keywords ?? [])
-        .some(keyword => equalsIgnoreCase(keyword, 'Evidence'));
+    const showEvidence = isAmuletType && rawKeywordList.some(keyword => equalsIgnoreCase(keyword, 'Evidence'));
     const evidenceValue = cardInstance.evidence ?? cardInstance.Evidence ?? cardInstance.counters?.evidence ?? cardInstance.Counters?.evidence ?? 0;
 
     const keywordBadgesHtml = buildKeywordBadgesHtml(cardInstance, context);
+    const archetypeOrnamentHtml = isAmuletType
+        ? '<span class="bui-amulet-gem-dot" aria-hidden="true"></span>'
+        : (isSpellType ? '<span class="bui-spell-crest" aria-hidden="true">─ ✦ ─</span>' : '');
+    const sevoRingHtml = isSuperEvolvedField
+        ? '<span class="bui-sevo-ring" aria-hidden="true"></span>'
+        : '';
 
     cardDiv.innerHTML = `
           <div class="card-art"></div>
+          ${archetypeOrnamentHtml}
+          ${sevoRingHtml}
           <div class="cost"><span>${costInfo.displayCost ?? '?'}</span></div>
           <div class="name">${cardInstance.Name ?? cardInstance.name ?? 'Unknown Card'}</div>
           ${
-        // 仅为随从显示攻击力和生命值区域
         isFollowerType ?
-            // Use CurrentAttack and CurrentHealth from the DTO received from server
             `<div class="stats">
                 <span class="attack">${cardInstance.CurrentAttack ?? cardInstance.currentAttack ?? '?'}</span>
                 <span class="health">${cardInstance.CurrentHealth ?? cardInstance.currentHealth ?? '?'}</span>
@@ -3458,10 +4749,9 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
                 ${showEarthsigil ? `<span class="earthsigil">${earthsigilValue}</span>` : ''}
                 ${showCountdown ? `<span class="countdown">${countdownValue}</span>` : ''}
             </div>`
-                : '' // 法术和护符不显示 stats 区域
+                : ''
         }
         ${keywordBadgesHtml}
-        <!-- Description removed for minimalist design -->
     `;
 
     const previewPath = cardInstance.artPreview ?? cardInstance.ArtPreview ?? '';
@@ -3552,6 +4842,50 @@ function createCardElement(cardInstance, context = 'hand') { // context: 'hand',
         });
     }
     applyCardActionButtonStack(cardDiv);
+
+    if (context === 'field' && isMirageMode(gameState) && gameState.phase === 'Recruit' && !gameState.isSpectator) {
+        const localPlayerId = gameState.localPlayerId;
+        const localPlayer = getPlayerState(localPlayerId);
+        const ownerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId;
+        const isLocalReady = Boolean(localPlayer?.mirage?.isReady ?? localPlayer?.mirage?.IsReady);
+        if (localPlayer && ownerId === localPlayerId && !isLocalReady) {
+            const cardUid = String(cardInstance.uid ?? cardInstance.InstanceId ?? cardInstance.instanceId ?? '');
+            const fieldCards = Array.isArray(localPlayer.field) ? localPlayer.field : [];
+            const fieldIndex = fieldCards.findIndex(c => String(getCardUid(c) ?? '') === cardUid);
+            const controlsDiv = document.createElement('div');
+            controlsDiv.className = 'mirage-field-controls';
+            if (fieldIndex > 0) {
+                const leftBtn = document.createElement('button');
+                leftBtn.type = 'button';
+                leftBtn.className = 'mirage-move-left-btn';
+                leftBtn.dataset.mirageMoveLeft = cardUid;
+                leftBtn.textContent = '◀';
+                leftBtn.title = '左移站位';
+                controlsDiv.appendChild(leftBtn);
+            }
+            if (isFollowerType) {
+                const sellBtn = document.createElement('button');
+                sellBtn.type = 'button';
+                sellBtn.className = 'mirage-sell-button';
+                sellBtn.dataset.mirageSellUid = cardUid;
+                sellBtn.textContent = '出售+1G';
+                sellBtn.title = '出售该随从并获得1金币';
+                controlsDiv.appendChild(sellBtn);
+            }
+            if (fieldIndex >= 0 && fieldIndex < fieldCards.length - 1) {
+                const rightBtn = document.createElement('button');
+                rightBtn.type = 'button';
+                rightBtn.className = 'mirage-move-right-btn';
+                rightBtn.dataset.mirageMoveRight = cardUid;
+                rightBtn.textContent = '▶';
+                rightBtn.title = '右移站位';
+                controlsDiv.appendChild(rightBtn);
+            }
+            if (controlsDiv.childElementCount > 0) {
+                cardDiv.appendChild(controlsDiv);
+            }
+        }
+    }
     // --- END Action Buttons ---
 
     // 【修复】移除鼠标悬停时的可玩性检查请求，改为依赖服务器主动推送
@@ -3693,7 +5027,10 @@ function resolveActButtonState(actionState, actAbility) {
         return { disabled: true, title: '该卡牌本回合已启动过。' };
     }
     if (actionState.actPlayabilityKnown !== true) {
-        return { disabled: false, title: ACT_PLAYABILITY_SYNC_PENDING_REASON };
+        return {
+            disabled: isMirageMode(gameState),
+            title: ACT_PLAYABILITY_SYNC_PENDING_REASON
+        };
     }
 
     const abilityHasPlayability = actAbility && (
@@ -4302,35 +5639,41 @@ function renderTurnInfo(turnNumber, currentPlayerId) {
             const localPlayerId = gameState.localPlayerId;
             let displayResult = "GAME OVER";
             let displayColor = 'var(--color-secondary)';
+            let ownerState = 'over';
 
             if (winnerId && localPlayerId) {
                 if (winnerId === localPlayerId) {
                     displayResult = "YOU WIN";
                     displayColor = 'var(--color-success)';
+                    ownerState = 'win';
                 } else {
                     displayResult = "YOU LOSE";
                     displayColor = 'var(--color-accent)';
+                    ownerState = 'lose';
                 }
             }
 
             turnInfoEl.textContent = displayResult;
+            turnInfoEl.dataset.turnOwner = ownerState;
             turnInfoEl.style.color = displayColor;
+            return;
+        }
+        if (isMirageMode(gameState)) {
+            const roundNum = Number(gameState.mirage?.roundNumber ?? gameState.mirage?.RoundNumber ?? turnNumber ?? 1);
+            const phaseLabel = gameState.phase === 'Recruit' ? 'RECRUIT' : 'COMBAT';
+            turnInfoEl.textContent = `ROUND ${roundNum} · ${phaseLabel}`;
+            turnInfoEl.dataset.turnOwner = 'mirage';
+            turnInfoEl.style.color = '';
             return;
         }
         // Display "Starting..." or similar if turnNumber is 0 (initial hydration)
         const displayTurn = turnNumber === 0 ? "GAME START" : `TURN ${turnNumber}`;
 
-        // Simplified display: Just the Turn Number.
-        // The active player is indicated by the turn badge or other UI cues (like glowing avatar).
         turnInfoEl.textContent = displayTurn;
 
-        // Optional: Add a class to indicate whose turn it is for styling the text
         const isLocalPlayerTurn = (currentPlayerId === gameState.localPlayerId);
-        if (isLocalPlayerTurn) {
-            turnInfoEl.style.color = 'var(--color-primary)';
-        } else {
-            turnInfoEl.style.color = 'var(--color-secondary)';
-        }
+        turnInfoEl.dataset.turnOwner = isLocalPlayerTurn ? 'self' : 'opponent';
+        turnInfoEl.style.color = '';
     }
 }
 
@@ -4610,14 +5953,22 @@ function renderAbilityTargetHighlights(currentGameState) {
 
 // Helper 3: Render Playable Card Highlights (in hand) using Playability Cache - ONLY for local player
 function renderPlayableCardHighlights(currentGameState) {
-    const currentPlayerId = getCurrentPlayerId();
-
-    // Only highlight if it's the LOCAL player's turn and in Main phase
-    if (currentPlayerId !== gameState.localPlayerId || currentGameState.phase !== 'Main') {
-        return;
+    const localPlayerId = gameState.localPlayerId;
+    const isMirage = isMirageMode(currentGameState);
+    if (isMirage) {
+        const localPlayer = getPlayerState(localPlayerId);
+        if (!localPlayer || currentGameState.phase !== 'Recruit' || localPlayer.mirage?.isReady === true) {
+            return;
+        }
+    } else {
+        const currentPlayerId = getCurrentPlayerId();
+        // Only highlight if it's the LOCAL player's turn and in Main phase
+        if (currentPlayerId !== localPlayerId || currentGameState.phase !== 'Main') {
+            return;
+        }
     }
 
-    const playerState = getPlayerState(currentPlayerId);
+    const playerState = getPlayerState(localPlayerId);
     if (!playerState || !player1HandEl) {
         console.warn("UI Highlights Error: Missing local player state or hand element for highlights.");
         return;
@@ -4632,7 +5983,7 @@ function renderPlayableCardHighlights(currentGameState) {
         const cardElement = player1HandEl.querySelector(`.card[data-uid="${handCardUid}"]`);
         if (!cardElement) return; // Skip if element not found
 
-        const playabilityInfo = handCardUid ? getPlayabilityForCard(handCardUid, currentPlayerId) : null;
+        const playabilityInfo = handCardUid ? getPlayabilityForCard(handCardUid, localPlayerId) : null;
 
         // Remove previous highlights first
         cardElement.classList.remove('playable', 'requires-target', 'no-valid-targets', 'can-play-without-target');
@@ -4779,6 +6130,17 @@ export function updateCardActionButtons(cardInstance) {
 }
 
 export function updateActButtonState(cardInstance) {
+    const zone = String(cardInstance?.zone ?? cardInstance?.Zone ?? '').trim().toLowerCase();
+    const type = String(cardInstance?.type ?? cardInstance?.Type ?? '').trim().toLowerCase();
+    if (zone === 'leader' || type === 'leader') {
+        const ownerId = cardInstance?.ownerId ?? cardInstance?.OwnerPlayerId;
+        const owner = ownerId ? getPlayerState(ownerId) : null;
+        if (owner) {
+            const prefix = owner.id === gameState.localPlayerId ? 'player1' : 'player2';
+            renderPlayerStats(owner, prefix);
+        }
+        return;
+    }
     updateCardActionButtons(cardInstance);
     const cardUid = cardInstance?.uid ?? cardInstance?.InstanceId ?? cardInstance?.instanceId;
     if (!cardUid) return;
@@ -4792,6 +6154,7 @@ function refreshCardActionControls(cardInstance) {
     if (!cardInstance) return;
 
     const zone = String(cardInstance.zone ?? cardInstance.Zone ?? '').trim().toLowerCase();
+    const type = String(cardInstance.type ?? cardInstance.Type ?? '').trim().toLowerCase();
     if (zone === 'hand') {
         const ownerId = cardInstance.ownerId ?? cardInstance.OwnerPlayerId;
         if (!ownerId) return;
@@ -4803,7 +6166,7 @@ function refreshCardActionControls(cardInstance) {
         return;
     }
 
-    if (zone === 'field') {
+    if (zone === 'field' || zone === 'leader' || type === 'leader') {
         updateActButtonState(cardInstance);
     }
 }
@@ -4847,6 +6210,29 @@ function renderActionButtons(currentGameState) {
 
     // --- REVISED BUTTON LOGIC: Base visibility/enabled state on localPlayerId vs currentPlayerId ---
     const isLocalPlayerTurn = currentGameState.localPlayerId === currentGameState.currentPlayerId;
+    const endTurnLabelEl = endTurnButtonEl.querySelector('.end-turn-label');
+
+    endTurnButtonEl.classList.remove('is-self-turn', 'is-enemy-turn', 'is-mirage-recruit', 'is-mirage-locked');
+
+    if (isMirageMode(currentGameState)) {
+        confirmMulliganButtonEl.style.display = 'none';
+        confirmMulliganButtonEl.disabled = true;
+        if (currentGameState.phase === 'Recruit') {
+            const localPlayer = getPlayerState(currentGameState.localPlayerId);
+            const isReady = Boolean(localPlayer?.mirage?.isReady ?? localPlayer?.mirage?.IsReady);
+            endTurnButtonEl.style.display = 'inline-block';
+            endTurnButtonEl.disabled = isConnectionLocked || isReady;
+            endTurnButtonEl.classList.add(isReady ? 'is-mirage-locked' : 'is-mirage-recruit');
+            if (endTurnLabelEl) {
+                endTurnLabelEl.textContent = isReady ? 'LOCKED' : 'LOCK LINEUP';
+            }
+            endTurnButtonEl.title = isReady ? '已锁定阵容，等待对手或招募结束' : '锁定本轮幻境阵容';
+        } else {
+            endTurnButtonEl.style.display = 'none';
+            endTurnButtonEl.disabled = true;
+        }
+        return;
+    }
 
     if (currentGameState.phase === 'Mulligan') {
         const localPlayer = getPlayerState(currentGameState.localPlayerId);
@@ -4867,6 +6253,10 @@ function renderActionButtons(currentGameState) {
         confirmMulliganButtonEl.disabled = isConnectionLocked;
         confirmMulliganButtonEl.textContent = '确认调度';
         endTurnButtonEl.style.display = 'inline-block';
+        endTurnButtonEl.classList.add(isLocalPlayerTurn ? 'is-self-turn' : 'is-enemy-turn');
+        if (endTurnLabelEl) {
+            endTurnLabelEl.textContent = isLocalPlayerTurn ? 'END TURN' : 'ENEMY TURN';
+        }
         // ADDED: Detailed log before setting disabled state
         endTurnButtonEl.disabled = isConnectionLocked || !isLocalPlayerTurn; // Disable if not local player's turn
     } else {
@@ -4937,86 +6327,53 @@ function setOpponentConnectionStatus(isConnected) {
 }
 // --- 显示伤害数字的函数 ---
 function showDamageNumber(targetUid, damageAmount) {
-    if (!targetUid || damageAmount === undefined || damageAmount === null || damageAmount < 0 || !isGamePageActive()) { // Allow zero damage
-        // console.warn("UI: showDamageNumber called with invalid arguments (UID missing, damage invalid, or damage <= 0).");
+    if (!targetUid || damageAmount === undefined || damageAmount === null || damageAmount < 0 || !isGamePageActive()) {
         return;
     }
 
     const targetElement = resolveRenderableTargetElement(targetUid);
-
     if (!targetElement) {
-        // console.warn(`UI: Could not find target element for UID: ${targetUid}`);
         return;
     }
 
-    // 使用 document.body 作为参照物，简化定位计算
-    const transientRoot = ensureTransientVisualRoot();
-    if (!transientRoot) {
-        return;
-    }
+    const safeDamage = Math.max(0, Math.trunc(Number(damageAmount) || 0));
+    const targetInstance = findCardInstanceByUid(targetUid);
+    const targetHasShieldNow = Array.isArray(targetInstance?.keywords)
+        && targetInstance.keywords.some(keyword => equalsIgnoreCase(keyword, 'Shield'));
+    const shieldBroken = safeDamage === 0 && (
+        targetHasShieldNow
+        || targetElement.classList?.contains('has-shield') === true
+        || hasActiveTimedUidFlag(recentShieldBrokenUntil, targetUid)
+    );
 
-    const targetRect = targetElement.getBoundingClientRect();
-
-    const damageElement = document.createElement('div');
-    damageElement.classList.add('damage-number');
-    damageElement.textContent = damageAmount === 0 ? '0' : `-${damageAmount}`; // Display damage as negative number
-
-    // 设置初始位置 (定位在目标元素的顶部中心)
-    damageElement.style.position = 'fixed';
-    // Initial position calculation needs refinement AFTER element is added to DOM to get offsetWidth
-    // Set temporary position first
-    damageElement.style.left = `${targetRect.left + targetRect.width / 2}px`;
-    damageElement.style.top = `${targetRect.top - 30}px`; // Approx. 30px above target
-
-    // Add to body for global positioning and to avoid parent overflow issues
-    transientRoot.appendChild(damageElement);
-
-    // Refine position calculation AFTER appending to get actual width/height
-    // Center horizontally based on its own width
-    damageElement.style.left = `${targetRect.left + (targetRect.width / 2) - (damageElement.offsetWidth / 2)}px`;
-
-    // Ensure the element is removed after animation completes
-    damageElement.addEventListener('animationend', () => {
-        if (damageElement.parentNode) {
-            damageElement.remove();
+    getBattleMotionController().triggerWaveHits([
+        {
+            targetUid: String(targetUid),
+            damage: safeDamage,
+            shieldBroken
         }
-    }, { once: true }); // Use { once: true } for efficiency
+    ]);
 }
 
 function showHealNumber(targetUid, healAmount) {
-    if (!targetUid || healAmount === undefined || healAmount === null || healAmount < 0 || !isGamePageActive()) {
+    if (!targetUid || healAmount === undefined || healAmount === null || healAmount <= 0 || !isGamePageActive()) {
         return;
     }
 
     const targetElement = resolveRenderableTargetElement(targetUid);
-
     if (!targetElement) {
         return;
     }
 
-    const transientRoot = ensureTransientVisualRoot();
-    if (!transientRoot) {
-        return;
-    }
+    const safeHeal = Math.max(0, Math.trunc(Number(healAmount) || 0));
+    if (safeHeal <= 0) return;
 
-    const targetRect = targetElement.getBoundingClientRect();
-    const healElement = document.createElement('div');
-    healElement.classList.add('heal-number');
-    healElement.textContent = `+${healAmount}`;
-
-    healElement.style.position = 'fixed';
-    healElement.style.left = `${targetRect.left + targetRect.width / 2}px`;
-    healElement.style.top = `${targetRect.top - 30}px`;
-
-    transientRoot.appendChild(healElement);
-
-    healElement.style.left = `${targetRect.left + (targetRect.width / 2) - (healElement.offsetWidth / 2)}px`;
-
-    healElement.addEventListener('animationend', () => {
-        if (healElement.parentNode) {
-            healElement.remove();
+    getBattleMotionController().triggerWaveHits([
+        {
+            targetUid: String(targetUid),
+            heal: safeHeal
         }
-    }, { once: true });
+    ]);
 }
 // --- 浜嬩欢澶勭悊 ---
 
@@ -5226,29 +6583,18 @@ function handleAttackDragPointerMove(event) {
 
     const targetInfo = resolveAttackDragDropTarget(attackDragState.currentX, attackDragState.currentY);
     updateAttackDragHover(targetInfo);
-    updateAttackDragLeaderZoneLayout();
-    updateAttackDragLeaderZoneState();
     updateAttackDragLine();
     event.preventDefault();
 }
 
-function markAttackDragLeaderZoneConfirmed(zoneEl) {
-    if (!zoneEl) return;
-    zoneEl.classList.remove('is-active', 'is-invalid');
-    zoneEl.classList.add('is-valid', 'is-confirmed');
-}
-
-function scheduleAttackDragLeaderZoneConfirmationCleanup(zoneEl) {
-    if (!zoneEl) return;
+function triggerOpponentHudAttackConfirmPulse(hudEl) {
+    if (!hudEl) return;
+    hudEl.classList.remove('is-attack-confirmed');
+    void hudEl.offsetWidth;
+    hudEl.classList.add('is-attack-confirmed');
     runTrackedVisualTimeout(() => {
-        if (!zoneEl.isConnected) return;
-        if (!zoneEl.classList.contains('is-confirmed')) return;
-        if (attackDragState.leaderZoneElement === zoneEl) {
-            removeAttackDragLeaderZoneElement();
-            return;
-        }
-        zoneEl.remove();
-    }, ATTACK_DRAG_LEADER_ZONE_CONFIRM_MS);
+        hudEl.classList.remove('is-attack-confirmed');
+    }, ATTACK_DRAG_LEADER_CONFIRM_MS);
 }
 
 function finalizeAttackDrag(event, { wasCancelled = false } = {}) {
@@ -5269,14 +6615,15 @@ function finalizeAttackDrag(event, { wasCancelled = false } = {}) {
         }
     }
 
-    const committedToLeaderZone = dropTargetInfo.kind === 'leader-zone' && Boolean(dropTargetUid);
-    if (committedToLeaderZone) {
-        markAttackDragLeaderZoneConfirmed(dropTargetInfo.element);
-    }
+    const committedToLeaderHud = (dropTargetInfo.kind === 'leader-hud' || dropTargetInfo.kind === 'avatar') && Boolean(dropTargetUid);
+    const leaderHudEl = dropTargetInfo.kind === 'leader-hud'
+        ? dropTargetInfo.element
+        : document.getElementById('player2-info');
 
-    resetAttackDragState({ keepLeaderZone: committedToLeaderZone });
-    if (committedToLeaderZone) {
-        scheduleAttackDragLeaderZoneConfirmationCleanup(dropTargetInfo.element);
+    resetAttackDragState();
+
+    if (committedToLeaderHud && leaderHudEl) {
+        triggerOpponentHudAttackConfirmPulse(leaderHudEl);
     }
 
     if (wasActiveDrag) {
@@ -5353,8 +6700,9 @@ function updatePpBoostDisplay(playerId, usesAvailable, isArmed = false) {
     const buttonEl = document.getElementById(`${prefix}-pp-boost-button`);
 
     if (countEl) {
-        // 隐藏次数显示
-        countEl.style.display = 'none';
+        const safeLeft = Math.max(0, Number(usesAvailable) || 0);
+        countEl.textContent = `×${safeLeft}`;
+        countEl.style.display = (!isArmed && safeLeft > 0) ? 'inline' : 'none';
     }
 
     if (buttonEl) {
@@ -5373,7 +6721,7 @@ function updatePpBoostDisplay(playerId, usesAvailable, isArmed = false) {
 
         const textEl = buttonEl.querySelector('.pp-boost-action-text');
         if (textEl) {
-            textEl.textContent = isArmed ? '取消PP+1' : 'PP+1';
+            textEl.textContent = isArmed ? '取消 PP+1' : 'PP+1 BOOST';
         }
 
         buttonEl.title = '';
@@ -5424,6 +6772,14 @@ async function handleGameClick(event) {
         return;
     }
 
+    const clickedPortraitDismiss = event.target.closest('#battle-portrait-dismiss-btn');
+    if (clickedPortraitDismiss) {
+        event.preventDefault();
+        event.stopPropagation();
+        document.getElementById('game-page')?.classList.add('portrait-guard-dismissed');
+        return;
+    }
+
     if (isConnectionLocked) {
         return;
     }
@@ -5432,7 +6788,7 @@ async function handleGameClick(event) {
     const clickedPreviewTooltip = event.target.closest('.preview-description-tooltip');
     const clickedDetailModal = event.target.closest('#card-detail-modal, #card-detail-image-modal');
     const clickedMatchHistoryRow = event.target.closest('.match-history-card-row');
-    const clickedCardOrAvatar = event.target.closest('.card, #player1-avatar, #player2-avatar, .emblem-slot[data-uid]');
+    const clickedCardOrAvatar = event.target.closest('.card, #player1-info, #player2-info, .emblem-slot[data-uid], .mirage-offer-card[data-offer-id]');
     if (!clickedPreviewRoot && !clickedPreviewTooltip && !clickedDetailModal && !clickedMatchHistoryRow && !clickedCardOrAvatar) {
         renderBattleCardPreview(null);
         setFloatingHandCard(null);
@@ -5551,21 +6907,133 @@ async function handleGameClick(event) {
 
     // If not in Mulligan phase, continue with normal game interactions:
 
-    // Check if the click was on the End Turn button
+    const clickedMirageActionBtn = event.target.closest('[data-mirage-action]');
+    if (clickedMirageActionBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (isAwaitingPlayerChoice || gameState.isSpectator || clickedMirageActionBtn.disabled) return;
+        const action = clickedMirageActionBtn.dataset.mirageAction;
+        if (action === 'upgrade') void mirageUpgradeTierRequest();
+        else if (action === 'refresh') void mirageRefreshShopRequest();
+        else if (action === 'freeze') void mirageToggleFreezeRequest();
+        else if (action === 'ready') void mirageSetReadyRequest();
+        return;
+    }
+
+    const clickedMirageBuyBtn = event.target.closest('[data-mirage-buy-offer]');
+    if (clickedMirageBuyBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (isAwaitingPlayerChoice || gameState.isSpectator || clickedMirageBuyBtn.disabled) return;
+        const offerId = clickedMirageBuyBtn.dataset.mirageBuyOffer;
+        if (offerId) void mirageBuyOfferRequest(offerId);
+        return;
+    }
+
+    const clickedMirageOfferCard = event.target.closest('.mirage-offer-card[data-offer-id]');
+    if (clickedMirageOfferCard) {
+        const offerId = String(clickedMirageOfferCard.dataset.offerId || '').trim();
+        const localPlayer = getPlayerState(gameState.localPlayerId);
+        const offers = Array.isArray(localPlayer?.mirage?.shopOffers ?? localPlayer?.mirage?.ShopOffers)
+            ? (localPlayer.mirage.shopOffers ?? localPlayer.mirage.ShopOffers)
+            : [];
+        const matchedOffer = offers.find(o => String(o?.offerId ?? o?.OfferId ?? '') === offerId);
+        if (matchedOffer) {
+            const previewCard = createDiscoverPreviewCard({
+                ...matchedOffer,
+                CardDefinitionId: matchedOffer.cardDefinitionId ?? matchedOffer.CardDefinitionId ?? 0,
+                Name: matchedOffer.name ?? matchedOffer.Name ?? '未知随从',
+                Description: matchedOffer.description ?? matchedOffer.Description ?? '',
+                ArtPreview: matchedOffer.artPreview ?? matchedOffer.ArtPreview ?? '',
+                Type: matchedOffer.type ?? matchedOffer.Type ?? 'Follower',
+                Cost: matchedOffer.buyCost ?? matchedOffer.BuyCost ?? 3,
+                Attack: matchedOffer.attack ?? matchedOffer.Attack ?? 0,
+                Health: matchedOffer.health ?? matchedOffer.Health ?? 0
+            });
+            if (previewCard) {
+                renderBattleCardPreview(previewCard);
+            }
+        }
+        return;
+    }
+
+    const clickedMirageSelectLeaderBtn = event.target.closest('[data-mirage-select-leader]');
+    if (clickedMirageSelectLeaderBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (isAwaitingPlayerChoice || gameState.isSpectator || clickedMirageSelectLeaderBtn.disabled) return;
+        const leaderDefId = Number(clickedMirageSelectLeaderBtn.dataset.mirageSelectLeader);
+        if (Number.isInteger(leaderDefId) && leaderDefId > 0) {
+            void mirageSelectLeaderRequest(leaderDefId);
+        }
+        return;
+    }
+
+    const clickedMirageRedeemBtn = event.target.closest('[data-mirage-redeem-ticket]');
+    if (clickedMirageRedeemBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (isAwaitingPlayerChoice || gameState.isSpectator || clickedMirageRedeemBtn.disabled) return;
+        const ticketId = clickedMirageRedeemBtn.dataset.mirageRedeemTicket;
+        const chosenCardDefId = Number(clickedMirageRedeemBtn.dataset.mirageRedeemCard);
+        if (ticketId && Number.isInteger(chosenCardDefId) && chosenCardDefId > 0) {
+            void mirageRedeemTicketRequest(ticketId, chosenCardDefId);
+        }
+        return;
+    }
+
+    const clickedMirageSellBtn = event.target.closest('[data-mirage-sell-uid]');
+    if (clickedMirageSellBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (isAwaitingPlayerChoice || gameState.isSpectator || clickedMirageSellBtn.disabled) return;
+        const sellUid = clickedMirageSellBtn.dataset.mirageSellUid;
+        if (sellUid) void mirageSellCardRequest(sellUid);
+        return;
+    }
+
+    const clickedMirageMoveBtn = event.target.closest('[data-mirage-move-left], [data-mirage-move-right]');
+    if (clickedMirageMoveBtn) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (isAwaitingPlayerChoice || gameState.isSpectator || clickedMirageMoveBtn.disabled) return;
+        const moveUid = String(clickedMirageMoveBtn.dataset.mirageMoveLeft || clickedMirageMoveBtn.dataset.mirageMoveRight || '');
+        const delta = clickedMirageMoveBtn.dataset.mirageMoveLeft ? -1 : 1;
+        const localPlayer = getPlayerState(gameState.localPlayerId);
+        const fieldUids = (Array.isArray(localPlayer?.field) ? localPlayer.field : [])
+            .map(c => String(getCardUid(c) ?? ''))
+            .filter(Boolean);
+        const idx = fieldUids.indexOf(moveUid);
+        const targetIdx = idx + delta;
+        if (idx >= 0 && targetIdx >= 0 && targetIdx < fieldUids.length) {
+            const swapped = [...fieldUids];
+            [swapped[idx], swapped[targetIdx]] = [swapped[targetIdx], swapped[idx]];
+            void mirageReorderFieldRequest(swapped);
+        }
+        return;
+    }
+
+    // Check if the click was on the End Turn / Lock Lineup button
     const clickedEndTurnButton = event.target.closest('#end-turn-button');
     if (clickedEndTurnButton) {
         if (gameState.isSpectator) return;
-        if (clickedEndTurnButton.disabled || !await confirmEndTurnAction()) return;
-        // Correctly check for the imported endTurnRequest function
-        if (typeof endTurnRequest === 'function') {
-            endTurnButtonEl.disabled = true; // Disable button immediately on click
-            endTurnRequest(); // Call new SignalR wrapper
-        } else {
-            // This error should ideally not happen if imports are correct, but keep for safety
-            console.error(`UI Error: endTurnRequest function is not available/imported!`);
-            showAlert("错误：结束回合功能未加载（endTurnRequest）"); // Update alert message
+        if (clickedEndTurnButton.disabled) return;
+        if (isMirageMode(gameState)) {
+            if (gameState.phase === 'Recruit' && typeof mirageSetReadyRequest === 'function') {
+                endTurnButtonEl.disabled = true;
+                void mirageSetReadyRequest();
+            }
+            return;
         }
-        return; // Stop processing this click further
+        if (!await confirmEndTurnAction()) return;
+        if (typeof endTurnRequest === 'function') {
+            endTurnButtonEl.disabled = true;
+            endTurnRequest();
+        } else {
+            console.error(`UI Error: endTurnRequest function is not available/imported!`);
+            showAlert("错误：结束回合功能未加载（endTurnRequest）");
+        }
+        return;
     }
 
     const clickedPpBoostButton = event.target.closest('.pp-boost-button');
@@ -5680,32 +7148,27 @@ async function handleGameClick(event) {
 
     const clickedCardElement = event.target.closest('.card');
     const clickedEmblemElement = event.target.closest('.emblem-slot[data-uid]');
-    const clickedPlayer1Avatar = event.target.closest('#player1-avatar'); // Check player avatar
-    const clickedPlayer2Avatar = event.target.closest('#player2-avatar'); // Check opponent avatar
+    const clickedPlayer1Hud = event.target.closest('#player1-info');
+    const clickedPlayer2Hud = event.target.closest('#player2-info');
 
     let targetUid = null;
     if (clickedCardElement) {
         targetUid = clickedCardElement.dataset.uid;
     } else if (clickedEmblemElement) {
         targetUid = clickedEmblemElement.dataset.uid;
-        // --- BUG-017 FIX: Get actual leader UID instead of hardcoding L1/L2 ---
-    } else if (clickedPlayer1Avatar || clickedPlayer2Avatar) {
-        const clickedAvatarId = clickedPlayer1Avatar ? 'player1-avatar' : 'player2-avatar';
+    } else if ((clickedPlayer1Hud || clickedPlayer2Hud) && !event.target.closest('button')) {
+        const clickedAvatarId = clickedPlayer1Hud ? 'player1-avatar' : 'player2-avatar';
 
-        // 【关键修复】正确映射DOM ID到实际玩家
-        // 根据renderGame函数的逻辑：localPlayer总是映射到player1，opponent总是映射到player2
         const localPlayerId = gameState.localPlayerId;
         const opponentPlayerId = gameState.players.find(p => p.id !== localPlayerId)?.id;
 
-        // 确定点击的是哪个玩家的头像
         let clickedPlayerActualId = null;
-        if (clickedAvatarId === 'player2-avatar') { // 对手头像总是 player2-avatar
+        if (clickedAvatarId === 'player2-avatar') {
             clickedPlayerActualId = opponentPlayerId;
         } else {
             clickedPlayerActualId = localPlayerId;
         }
 
-        // Player choice mode: both leaders may be valid targets.
         if (isAwaitingPlayerChoice) {
             const player = getPlayerState(clickedPlayerActualId);
             const leaderUid = player?.leaderCard?.uid ?? player?.leaderCard?.InstanceId ?? null;
@@ -5713,8 +7176,6 @@ async function handleGameClick(event) {
                 targetUid = leaderUid;
             }
         } else {
-            // Always resolve the clicked leader UID so spells/abilities can target either leader.
-            // Combat legality is still enforced later in handleCardClick/selectAttackTarget.
             const clickedPlayer = clickedPlayerActualId ? getPlayerState(clickedPlayerActualId) : null;
             const leaderUid = clickedPlayer?.leaderCard?.uid ?? clickedPlayer?.leaderCard?.InstanceId ?? null;
             if (leaderUid) {
@@ -5723,7 +7184,6 @@ async function handleGameClick(event) {
                 console.error(`UI Error: Could not find leader card instance or UID for player ${clickedPlayerActualId}`, clickedPlayer);
             }
         }
-        // --- END BUG-017 FIX ---
     }
 
     if (targetUid) {
@@ -6045,16 +7505,16 @@ function ensureAbilityTriggerToastRoot() {
 function positionAbilityTriggerToastRoot(root) {
     if (!root) return;
 
-    const playerInfo = document.getElementById('player1-info');
-    if (!playerInfo) {
-        root.style.left = '16px';
-        root.style.bottom = '220px';
+    const cornerPod = document.getElementById('player1-corner-pod');
+    if (!cornerPod) {
+        root.style.left = '18px';
+        root.style.bottom = '136px';
         return;
     }
 
-    const infoRect = playerInfo.getBoundingClientRect();
-    const left = Math.max(12, Math.round(infoRect.left + 6));
-    const bottom = Math.max(120, Math.round(window.innerHeight - infoRect.top + 10));
+    const podRect = cornerPod.getBoundingClientRect();
+    const left = Math.max(14, Math.round(podRect.left));
+    const bottom = Math.max(120, Math.round(window.innerHeight - podRect.top + 12));
 
     root.style.left = `${left}px`;
     root.style.bottom = `${bottom}px`;
@@ -6117,8 +7577,11 @@ function renderAbilityTriggerToast(root, payload) {
 
 // Route switch lifecycle: remove combat toasts immediately when leaving game page.
 document.addEventListener('cleanupGame', () => {
+    cancelAllBattleMotions();
     cardAnimationSystem?.dispose();
     cardAnimationSystem = null;
+    hpGhostSettleTimers.forEach(timerId => window.clearTimeout(timerId));
+    hpGhostSettleTimers.clear();
     resetAttackDragState();
     hidePreviewDescriptionTooltip();
     removeChoiceOverlayUI();
@@ -6167,6 +7630,11 @@ export function showRevealOverlay(cardDto, options = {}) { return revealAnimator
 export function showFusionAnimation(fusingPlayerId, fusedCardInstanceIds = []) {
     const ids = Array.isArray(fusedCardInstanceIds) ? fusedCardInstanceIds : [];
     if (!fusingPlayerId || ids.length === 0 || !isGamePageActive()) return;
+
+    ids.forEach(uid => {
+        markTimedUidFlag(recentFusedUids, uid, 2200);
+        markTimedUidFlag(suppressedExitUids, uid, 2200);
+    });
 
     const transientRoot = ensureTransientVisualRoot();
     if (!transientRoot) return;

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Infrastructure.Data;
+using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Controllers;
@@ -30,8 +31,14 @@ public class TribesController : ControllerBase
 
     [HttpGet]
     [ProducesResponseType(typeof(List<TribeDefinitionDto>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<List<TribeDefinitionDto>>> GetAll(CancellationToken cancellationToken = default)
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<List<TribeDefinitionDto>>> GetAll([FromQuery] string? scope = null, CancellationToken cancellationToken = default)
     {
+        if (MirageCardPoolIsolationRules.TryParseEditorScope(scope, out var isMirageScope) && isMirageScope)
+        {
+            return BadRequest("幻境卡牌工坊不共享经典对战的全局种类定义管理。");
+        }
+
         await _tribeRegistry.RefreshAsync(cancellationToken);
 
         var definitions = await _db.TribeDefinitions
@@ -66,15 +73,17 @@ public class TribesController : ControllerBase
     public async Task<ActionResult<List<string>>> Suggest(
         [FromQuery] string? query = null,
         [FromQuery] int limit = DefaultSuggestionLimit,
+        [FromQuery] string? scope = "standard",
         CancellationToken cancellationToken = default)
     {
         await _tribeRegistry.RefreshAsync(cancellationToken);
 
+        var isMirageScope = MirageCardPoolIsolationRules.TryParseEditorScope(scope, out var parsedMirage) && parsedMirage;
         var normalizedQuery = NormalizeValue(query);
         var normalizedLimit = Math.Clamp(limit, 1, MaxSuggestionLimit);
         var definitions = await _db.TribeDefinitions
             .AsNoTracking()
-            .Where(item => item.IsEnabled)
+            .Where(item => item.IsEnabled && (!isMirageScope || item.IsReserved))
             .ToListAsync(cancellationToken);
 
         var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -88,6 +97,7 @@ public class TribesController : ControllerBase
 
         foreach (var cardTribes in await _db.CardDefinitions
                      .AsNoTracking()
+                     .Where(item => item.IsMirageCard == isMirageScope)
                      .Select(item => item.Tribe)
                      .ToListAsync(cancellationToken))
         {
@@ -115,8 +125,14 @@ public class TribesController : ControllerBase
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<ActionResult<TribeDefinitionDto>> Create(
         [FromBody] UpsertTribeDefinitionRequest request,
+        [FromQuery] string? scope = null,
         CancellationToken cancellationToken = default)
     {
+        if (MirageCardPoolIsolationRules.TryParseEditorScope(scope, out var isMirageScope) && isMirageScope)
+        {
+            return BadRequest("幻境卡牌工坊禁止写入经典对战的全局种类定义。");
+        }
+
         if (request == null)
         {
             return BadRequest("Request body is required.");
@@ -166,8 +182,14 @@ public class TribesController : ControllerBase
     public async Task<ActionResult<TribeDefinitionDto>> Update(
         [FromRoute] string name,
         [FromBody] UpdateTribeDefinitionRequest request,
+        [FromQuery] string? scope = null,
         CancellationToken cancellationToken = default)
     {
+        if (MirageCardPoolIsolationRules.TryParseEditorScope(scope, out var isMirageScope) && isMirageScope)
+        {
+            return BadRequest("幻境卡牌工坊禁止修改经典对战的全局种类定义。");
+        }
+
         var normalizedName = NormalizeValue(name);
         if (string.IsNullOrWhiteSpace(normalizedName))
         {
@@ -222,8 +244,13 @@ public class TribesController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Delete([FromRoute] string name, CancellationToken cancellationToken = default)
+    public async Task<IActionResult> Delete([FromRoute] string name, [FromQuery] string? scope = null, CancellationToken cancellationToken = default)
     {
+        if (MirageCardPoolIsolationRules.TryParseEditorScope(scope, out var isMirageScope) && isMirageScope)
+        {
+            return BadRequest("幻境卡牌工坊禁止删除经典对战的全局种类定义。");
+        }
+
         var normalizedName = NormalizeValue(name);
         if (string.IsNullOrWhiteSpace(normalizedName))
         {
@@ -259,6 +286,7 @@ public class TribesController : ControllerBase
         var usage = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var cardTribes = await _db.CardDefinitions
             .AsNoTracking()
+            .Where(item => !item.IsMirageCard)
             .Select(item => item.Tribe)
             .ToListAsync(cancellationToken);
 

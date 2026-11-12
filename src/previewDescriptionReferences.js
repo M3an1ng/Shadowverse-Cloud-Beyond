@@ -1,5 +1,6 @@
 import './styles/alternate-reference.css';
-import { ensureAbilityData } from './abilityDataCache.js';
+import { ensureAbilityData, getActiveAbilityDataScope } from './abilityDataCache.js';
+import { normalizeCardPoolScope } from './cardDefinitionsLoader.js';
 import { renderDescriptionHtml } from './descriptionParser.js';
 import { resolveDerivedCardMatch } from './previewDescriptionLookup.js';
 
@@ -34,7 +35,7 @@ function resolvePreviewUrl(card) {
 
 function normalizePreviewUrl(value) {
     if (!value) return '';
-    return encodeURI(String(value)).replace(/'/g, '%27');
+    return encodeURI(String(value)).replace(/['"()\\]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 function escapeHtml(value) {
@@ -141,7 +142,8 @@ export function bindReferenceCardDetails(container, card, options = {}) {
                 const local = options.cards?.find(candidate => Number(resolveField(candidate, ['id','Id','CardId'])) === id);
                 if (local) detailCard = local;
                 else {
-                    const response = await fetch(`/api/cards/${id}`);
+                    const scope = normalizeCardPoolScope(options.scope || getActiveAbilityDataScope());
+                    const response = await fetch(`/api/cards/${id}?scope=${encodeURIComponent(scope)}`);
                     if (!response.ok) throw new Error(`Card detail request failed: ${response.status}`);
                     detailCard = await response.json();
                 }
@@ -231,7 +233,8 @@ export async function hydrateAlternatePlayReferences(container, cardId, options 
     const marker = String(cardId); container.dataset.alternateCardId = marker;
     try {
         const supplied = Array.isArray(options.references);
-        const data = supplied ? null : await ensureAbilityData();
+        const scope = normalizeCardPoolScope(options.scope || getActiveAbilityDataScope());
+        const data = supplied ? null : await ensureAbilityData(scope);
         if (!container.isConnected || container.dataset.alternateCardId !== marker) return;
         const references = supplied ? options.references.map(card => ({ id: Number(card.Id ?? card.id), label: card.Label ?? card.label, card })) : collectAlternateReferences(data.abilitiesByCard.get(Number(cardId)) || []);
         const host = document.createElement('section'); host.className = 'alternate-play-references';

@@ -28,6 +28,7 @@
     <link rel="stylesheet" href="src/styles/forms.css">
     <link rel="stylesheet" href="src/styles/devtools.css">
     <link rel="stylesheet" href="src/styles/game.css"> <!-- Legacy styles, to be refactored -->
+    <link rel="stylesheet" href="src/styles/mirage.css">
     <link rel="stylesheet" href="src/styles/ability-editor.css">
     <link rel="stylesheet" href="src/styles/card-editor.css">
     <link rel="stylesheet" href="src/styles/deck-builder.css">
@@ -253,8 +254,15 @@
                             </div>
                         </div>
                     </div>
-                    <div class="about-block">
-                        <div class="about-block-title">更新日志</div>
+                    <div class="about-block about-changelog-block">
+                        <div class="about-changelog-header">
+                            <div class="about-changelog-heading">
+                                <span class="about-block-title">更新日志</span>
+                                <span id="about-changelog-date" class="about-changelog-date" hidden></span>
+                            </div>
+                            <select id="about-changelog-version" class="about-changelog-version-select" aria-label="选择更新版本" hidden></select>
+                        </div>
+                        <div id="about-changelog-filters" class="about-changelog-filters" role="tablist" aria-label="按更新类型筛选" hidden></div>
                         <ul id="about-changelog" class="about-changelog"></ul>
                     </div>
                     <div class="about-policy">
@@ -408,7 +416,13 @@
                 <div class="mp-grid">
                     <div class="mp-card">
                         <div class="mp-card-title">创建房间</div>
-                        <p class="mp-card-desc">邀请好友加入，共享 GameId &amp; JoinCode</p>
+                        <p class="mp-card-desc">创建房间并生成邀请码，等待对手加入并自动就绪</p>
+                        <div class="mp-field mp-field-checkbox">
+                            <label for="mp-is-public" title="公开房间允许其他玩家在「查看房间」列表中一键加入；私密房需凭6位邀请码加入（开局后仍允许观战）">
+                                <input id="mp-is-public" type="checkbox" checked>
+                                <span>公开房间</span>
+                            </label>
+                        </div>
                         <button id="mp-create-host" class="mp-btn primary">创建房间</button>
                         <div id="mp-create-output" class="mp-output"></div>
                     </div>
@@ -430,14 +444,14 @@
 
                     <div class="mp-card">
                         <div class="mp-card-title">加入房间</div>
-                        <p class="mp-card-desc">输入房主提供的 GameId 与 JoinCode</p>
+                        <p class="mp-card-desc">直接输入 6 位邀请码即可加入（GameId 可选），或从「查看房间」一键加入公开房</p>
                         <div class="mp-field">
-                            <label for="mp-join-game">GameId</label>
-                            <input id="mp-join-game" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                            <label for="mp-join-game">GameId（可选）</label>
+                            <input id="mp-join-game" type="text" placeholder="不填则直接按 6 位邀请码匹配房间"
                                 autocomplete="off">
                         </div>
                         <div class="mp-field">
-                            <label for="mp-join-code">JoinCode</label>
+                            <label for="mp-join-code">JoinCode（6位邀请码）</label>
                             <input id="mp-join-code" type="text" placeholder="6位邀请码" autocomplete="off" maxlength="10">
                         </div>
                         <button id="mp-join-btn" class="mp-btn primary">加入并准备</button>
@@ -546,259 +560,315 @@
                 </div>
             </div>
             <div id="game-container">
-                <div id="battle-card-preview" class="card-preview-container battle-card-preview">
-                    <div class="preview-placeholder">
-                        <p class="tech-text-dim">NO CARD SELECTED</p>
+                <div id="battle-portrait-rotate-overlay" class="battle-portrait-rotate-overlay" role="region" aria-label="横屏游玩建议">
+                    <div class="battle-portrait-rotate-card">
+                        <div class="battle-portrait-rotate-icon" aria-hidden="true">
+                            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="14" y="6" width="20" height="36" rx="3"></rect>
+                                <line x1="22" y1="37" x2="26" y2="37"></line>
+                                <path d="M8 24a16 16 0 0 1 6-12.5"></path>
+                                <polyline points="8 17 8 24 15 24"></polyline>
+                            </svg>
+                        </div>
+                        <div class="battle-portrait-rotate-title">建议横置屏幕进行对战</div>
+                        <div class="battle-portrait-rotate-desc">横屏视野可完整展现双层全息战场、主战者铭牌与扇形手牌</div>
+                        <button id="battle-portrait-dismiss-btn" class="battle-portrait-dismiss-btn" type="button">仍以竖屏查看</button>
                     </div>
                 </div>
-                <!-- 对手信息区 (Top Right) -->
-                <div id="player2-info" class="player-info opponent-info">
-                    <div class="player-stats" id="player2-stats">
-                        <button
-                            id="player2-info-collapse-btn"
-                            class="player-info-collapse-btn"
-                            data-target="player2-info"
-                            type="button"
-                            aria-label="收起对手信息栏"
-                            aria-pressed="false"
-                            title="收起信息栏">
-                            <span class="player-info-collapse-icon">−</span>
-                        </button>
-                        <div class="stats-header">
-                            <div class="stats-avatar" id="player2-avatar">OPP</div>
-                            <div class="stats-info">
-                                <div class="class-name">NEUTRAL</div>
-                                <div class="player-name">OPPONENT</div>
-                            </div>
-                            <div class="hp-display" id="player2-hp">
-                                <span class="hp-value">20</span>
-                                <span class="hp-label">HP</span>
-                            </div>
+                <div id="battle-card-preview" class="card-preview-container battle-card-preview is-empty"></div>
+
+                <!-- 右上角对手纹章与紧凑变量舱 -->
+                <aside id="player2-corner-pod" class="battle-corner-pod is-top-right" aria-label="敌方纹章与变量栏">
+                    <div id="player2-emblem-zone" class="emblem-zone is-opponent-emblems is-empty" aria-label="Emblems">
+                        <div class="emblem-slot"></div>
+                        <div class="emblem-slot"></div>
+                        <div class="emblem-slot"></div>
+                        <div class="emblem-slot"></div>
+                        <div class="emblem-slot"></div>
+                    </div>
+                    <div id="player2-var-strip" class="battle-var-strip">
+                        <div class="resource-box deck-box">
+                            <span class="resource-label">DECK</span>
+                            <span class="resource-value" id="player2-deck-count">0</span>
                         </div>
-                        <div class="emblem-zone" aria-label="Emblems">
-                            <div class="emblem-slot"></div>
-                            <div class="emblem-slot"></div>
-                            <div class="emblem-slot"></div>
-                            <div class="emblem-slot"></div>
-                            <div class="emblem-slot"></div>
+                        <div class="resource-box hand-box">
+                            <span class="resource-label">HAND</span>
+                            <span class="resource-value" id="player2-hand-count">0</span>
                         </div>
-                        <div class="resources-grid">
-                            <!-- PP -->
-                            <div class="pp-container">
-                                <div class="pp-header">
-                                    <span class="pp-label">PP</span>
-                                    <span class="pp-text">0 / 0</span>
-                                </div>
-                                <div class="pp-bar-segments" id="player2-pp-bar">
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                </div>
-                            </div>
-                            <!-- EP -->
-                            <div class="resource-box ep-box">
-                                <span class="resource-label ep-label">EP</span>
-                                <div class="ep-dots" id="player2-ep-dots">
-                                    <div class="ep-dot"></div>
-                                    <div class="ep-dot"></div>
-                                </div>
-                            </div>
-                            <!-- SEP -->
-                            <div class="resource-box sep-box">
-                                <span class="resource-label sep-label">SEP</span>
-                                <div class="sep-dots" id="player2-sep-dots">
-                                    <div class="sep-dot"></div>
-                                    <div class="sep-dot"></div>
-                                </div>
-                            </div>
-                            <!-- Deck/Grave -->
-                            <div class="resource-box deck-box">
-                                <span class="resource-label">DECK</span>
-                                <span class="resource-value" id="player2-deck-count">0</span>
-                            </div>
-                            <div class="resource-box hand-box">
-                                <span class="resource-label">HAND</span>
-                                <span class="resource-value" id="player2-hand-count">0</span>
-                            </div>
-                            <div class="resource-box grave-box">
-                                <span class="resource-label">GRAVE</span>
-                                <span class="resource-value" id="player2-grave-count">0</span>
-                            </div>
-                            <div class="resource-box blood-box">
-                                <span class="resource-label">BLOOD</span>
-                                <span class="resource-value" id="player2-blood-count">0</span>
-                            </div>
-                            <div class="resource-box combo-box">
-                                <span class="resource-label">COMBO</span>
-                                <span class="resource-value" id="player2-combo-count">0</span>
-                            </div>
-                            <div class="resource-box rally-box">
-                                <span class="resource-label">RALLY</span>
-                                <span class="resource-value" id="player2-rally-count">0</span>
-                            </div>
+                        <div class="resource-box grave-box">
+                            <span class="resource-label">GRAVE</span>
+                            <span class="resource-value" id="player2-grave-count">0</span>
+                        </div>
+                        <div class="resource-box rally-box is-zero">
+                            <span class="resource-label">RALLY</span>
+                            <span class="resource-value" id="player2-rally-count">0</span>
+                        </div>
+                        <div class="resource-box combo-box is-zero">
+                            <span class="resource-label">COMBO</span>
+                            <span class="resource-value" id="player2-combo-count">0</span>
+                        </div>
+                        <div class="resource-box blood-box is-zero">
+                            <span class="resource-label">BLOOD</span>
+                            <span class="resource-value" id="player2-blood-count">0</span>
+                        </div>
+                        <span id="player2-extra-counters" class="battle-extra-counters"></span>
+                    </div>
+                </aside>
+
+                <!-- 左下角我方纹章与紧凑变量舱 -->
+                <aside id="player1-corner-pod" class="battle-corner-pod is-bottom-left" aria-label="我方纹章与变量栏">
+                    <div id="player1-emblem-zone" class="emblem-zone is-self-emblems is-empty" aria-label="Emblems">
+                        <div class="emblem-slot"></div>
+                        <div class="emblem-slot"></div>
+                        <div class="emblem-slot"></div>
+                        <div class="emblem-slot"></div>
+                        <div class="emblem-slot"></div>
+                    </div>
+                    <div id="player1-var-strip" class="battle-var-strip">
+                        <div class="resource-box rally-box is-zero">
+                            <span class="resource-label">RALLY</span>
+                            <span class="resource-value" id="player1-rally-count">0</span>
+                        </div>
+                        <div class="resource-box combo-box is-zero">
+                            <span class="resource-label">COMBO</span>
+                            <span class="resource-value" id="player1-combo-count">0</span>
+                        </div>
+                        <div class="resource-box blood-box is-zero">
+                            <span class="resource-label">BLOOD</span>
+                            <span class="resource-value" id="player1-blood-count">0</span>
+                        </div>
+                        <span id="player1-extra-counters" class="battle-extra-counters"></span>
+                        <div class="resource-box deck-box">
+                            <span class="resource-label">DECK</span>
+                            <span class="resource-value" id="player1-deck-count">0</span>
+                        </div>
+                        <div class="resource-box hand-box">
+                            <span class="resource-label">HAND</span>
+                            <span class="resource-value" id="player1-hand-count">0</span>
+                        </div>
+                        <div class="resource-box grave-box">
+                            <span class="resource-label">GRAVE</span>
+                            <span class="resource-value" id="player1-grave-count">0</span>
                         </div>
                     </div>
-                </div>
+                </aside>
 
                 <!-- 对手手牌 (Top Center) -->
-                <div id="player2-hand" class="hand opponent-hand">
-                    <div class="card-back"></div>
-                    <div class="card-back"></div>
-                    <div class="card-back"></div>
-                </div>
+                <div id="player2-hand" class="hand opponent-hand"></div>
 
-                <!-- 战场区 (Center) -->
-                <div id="battlefield">
-                    <div id="player2-field" class="field opponent-field"></div>
-                    <div id="player1-field" class="field player-field"></div>
-                </div>
-
-                <!-- 玩家手牌 (Bottom Center) -->
-                <div id="player1-hand" class="hand player-hand">
-                    <!-- 玩家手牌 -->
-                </div>
-
-                <!-- 玩家信息区 (Bottom Left) -->
-                <div id="player1-info" class="player-info player-info-self">
-                    <div class="player-stats" id="player1-stats">
-                        <button
-                            id="player1-info-collapse-btn"
-                            class="player-info-collapse-btn"
-                            data-target="player1-info"
-                            type="button"
-                            aria-label="收起玩家信息栏"
-                            aria-pressed="false"
-                            title="收起信息栏">
-                            <span class="player-info-collapse-icon">−</span>
-                        </button>
-                        <div class="stats-header">
-                            <div class="stats-avatar" id="player1-avatar">YOU</div>
-                            <div class="stats-info">
-                                <div class="class-name">NEUTRAL</div>
-                                <div class="player-name">PLAYER</div>
+                <!-- 中轴五层核心纵列：敌方主战者 + 双层全息战场 + 我方主战者 -->
+                <section class="battle-center-stack" aria-label="中轴主战者与双层战场">
+                    <!-- 对手信息区 (Top Center RPG HUD — Crescent-Docked 2-Row Unified Plate) -->
+                    <div id="player2-info" class="player-info opponent-info leader-rpg-hud is-opponent">
+                        <div class="player-stats leader-rpg-inner" id="player2-stats">
+                            <div class="leader-rpg-portrait">
+                                <div class="stats-avatar leader-rpg-portrait-inner" id="player2-avatar">OPP</div>
                             </div>
-                            <div class="hp-display" id="player1-hp">
-                                <span class="hp-value">20</span>
-                                <span class="hp-label">HP</span>
-                            </div>
-                        </div>
-                        <div class="emblem-zone" aria-label="Emblems">
-                            <div class="emblem-slot"></div>
-                            <div class="emblem-slot"></div>
-                            <div class="emblem-slot"></div>
-                            <div class="emblem-slot"></div>
-                            <div class="emblem-slot"></div>
-                        </div>
-                        <div class="resources-grid">
-                            <!-- PP -->
-                            <div class="pp-container">
-                                <div class="pp-header">
-                                    <span class="pp-label">PP</span>
-                                    <span class="pp-text">0 / 0</span>
+                            <div class="leader-rpg-body">
+                                <svg class="leader-rpg-spine-svg leader-rpg-chassis-svg" viewBox="0 0 408 62" preserveAspectRatio="none" aria-hidden="true">
+                                    <path class="leader-rpg-spine-bg" d="M 7.14,0.75 L 397.25,0.75 L 407.25,10.75 L 407.25,57.25 L 403.25,61.25 L 7.14,61.25 A 42,42 0 0,0 7.14,0.75 Z"></path>
+                                    <path class="leader-rpg-spine-divider" d="M 26,31.5 L 396,31.5"></path>
+                                    <path class="leader-rpg-spine-accent" d="M 391,0.75 L 397.25,0.75 L 407.25,10.75 L 407.25,25"></path>
+                                </svg>
+                                <div class="leader-rpg-identity-row">
+                                    <div class="leader-rpg-identity-left">
+                                        <div class="leader-rpg-name-wrap">
+                                            <img class="leader-rpg-class-icon" id="player2-class-icon" alt="" aria-hidden="true" hidden>
+                                            <div class="player-name">OPPONENT</div>
+                                        </div>
+                                        <div class="leader-rpg-meta">
+                                            <div class="class-name">NEUTRAL</div>
+                                        </div>
+                                    </div>
+                                    <div class="leader-rpg-slots-row" id="player2-slots-row">
+                                        <div class="leader-rpg-slots">
+                                            <div class="resource-box ep-box leader-rpg-chip is-ep" title="进化点 (EP)">
+                                                <span class="resource-label ep-label">EP</span>
+                                                <div class="ep-dots" id="player2-ep-dots">
+                                                    <div class="ep-dot"></div>
+                                                    <div class="ep-dot"></div>
+                                                </div>
+                                            </div>
+                                            <div class="resource-box sep-box leader-rpg-chip is-sep" title="超进化点 (SEP)">
+                                                <span class="resource-label sep-label">SEP</span>
+                                                <div class="sep-dots" id="player2-sep-dots">
+                                                    <div class="sep-dot"></div>
+                                                    <div class="sep-dot"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <span class="leader-rpg-target-hint" aria-hidden="true">TARGET · 可直击</span>
+                                    </div>
                                 </div>
-                                <div class="pp-bar-segments" id="player1-pp-bar">
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
-                                    <div class="pp-segment empty"></div>
+                                <div class="hp-display leader-rpg-spine" id="player2-hp">
+                                    <div class="hp-bar-track leader-rpg-gauge" aria-hidden="true">
+                                        <div class="hp-bar-ghost" style="width: 100%;"></div>
+                                        <div class="hp-bar-fill" style="width: 100%;"></div>
+                                    </div>
+                                    <div class="hp-main-row leader-rpg-hp-nums">
+                                        <span class="hp-value">20</span>
+                                        <span class="hp-max">/ 20</span>
+                                    </div>
                                 </div>
-                            </div>
-                            <!-- EP -->
-                            <div class="resource-box ep-box">
-                                <span class="resource-label ep-label">EP</span>
-                                <div class="ep-dots" id="player1-ep-dots">
-                                    <div class="ep-dot"></div>
-                                    <div class="ep-dot"></div>
-                                </div>
-                            </div>
-                            <!-- SEP -->
-                            <div class="resource-box sep-box">
-                                <span class="resource-label sep-label">SEP</span>
-                                <div class="sep-dots" id="player1-sep-dots">
-                                    <div class="sep-dot"></div>
-                                    <div class="sep-dot"></div>
-                                </div>
-                            </div>
-                            <!-- Deck/Grave -->
-                            <div class="resource-box deck-box">
-                                <span class="resource-label">DECK</span>
-                                <span class="resource-value" id="player1-deck-count">0</span>
-                            </div>
-                            <div class="resource-box hand-box">
-                                <span class="resource-label">HAND</span>
-                                <span class="resource-value" id="player1-hand-count">0</span>
-                            </div>
-                            <div class="resource-box grave-box">
-                                <span class="resource-label">GRAVE</span>
-                                <span class="resource-value" id="player1-grave-count">0</span>
-                            </div>
-                            <div class="resource-box blood-box">
-                                <span class="resource-label">BLOOD</span>
-                                <span class="resource-value" id="player1-blood-count">0</span>
-                            </div>
-                            <div class="resource-box combo-box">
-                                <span class="resource-label">COMBO</span>
-                                <span class="resource-value" id="player1-combo-count">0</span>
-                            </div>
-                            <div class="resource-box rally-box">
-                                <span class="resource-label">RALLY</span>
-                                <span class="resource-value" id="player1-rally-count">0</span>
                             </div>
                         </div>
                     </div>
-                </div>
 
-                <!-- Turn Info Display -->
-                <div id="turn-info" class="turn-info-display">TURN 1</div>
+                    <!-- 战场区 (Center Dual Holographic Stage) -->
+                    <div id="battlefield" class="battlefield-dual-stage">
+                        <div id="upper-field-zone" class="battle-field-zone is-upper">
+                            <span id="upper-zone-tag" class="battle-zone-tag"></span>
+                            <div id="player2-field" class="field opponent-field"></div>
+                        </div>
+                        <div class="battle-field-divider">
+                            <div id="turn-info" class="turn-info-display">TURN 1</div>
+                        </div>
+                        <div id="lower-field-zone" class="battle-field-zone is-lower">
+                            <span id="lower-zone-tag" class="battle-zone-tag"></span>
+                            <div id="player1-field" class="field player-field"></div>
+                        </div>
+                    </div>
 
-                <!-- Action Buttons -->
-                <button id="reconnect-button" class="action-button" style="display: none;">重新连接</button>
-                <button id="confirm-mulligan-button" class="action-button" style="display: none;">CONFIRM
-                    MULLIGAN</button>
-                <button id="spectator-toggle-view" class="action-button" style="display: none;">切换视角</button>
-                <div id="pp-boost-action" class="pp-boost-action">
-                    <div class="pp-boost-action-label">PP+1</div>
-                    <button class="pp-boost-button" id="player1-pp-boost-button" type="button">
-                        <span class="pp-boost-action-text">BOOST</span>
-                        <span class="pp-boost-count" id="player1-pp-boost-count">0</span>
+                    <!-- 玩家信息区 (Bottom Center RPG HUD — Crescent-Docked 2-Row Unified Plate) -->
+                    <div id="player1-info" class="player-info player-info-self leader-rpg-hud is-self">
+                        <div class="player-stats leader-rpg-inner" id="player1-stats">
+                            <div class="leader-rpg-portrait">
+                                <div class="stats-avatar leader-rpg-portrait-inner" id="player1-avatar">YOU</div>
+                            </div>
+                            <div class="leader-rpg-body">
+                                <svg class="leader-rpg-spine-svg leader-rpg-chassis-svg" viewBox="0 0 408 62" preserveAspectRatio="none" aria-hidden="true">
+                                    <path class="leader-rpg-spine-bg" d="M 7.14,0.75 L 397.25,0.75 L 407.25,10.75 L 407.25,57.25 L 403.25,61.25 L 7.14,61.25 A 42,42 0 0,0 7.14,0.75 Z"></path>
+                                    <path class="leader-rpg-spine-divider" d="M 26,31.5 L 396,31.5"></path>
+                                    <path class="leader-rpg-spine-accent" d="M 391,0.75 L 397.25,0.75 L 407.25,10.75 L 407.25,25"></path>
+                                </svg>
+                                <div class="leader-rpg-identity-row">
+                                    <div class="leader-rpg-identity-left">
+                                        <div class="leader-rpg-name-wrap">
+                                            <img class="leader-rpg-class-icon" id="player1-class-icon" alt="" aria-hidden="true" hidden>
+                                            <div class="player-name">PLAYER</div>
+                                        </div>
+                                        <div class="leader-rpg-meta">
+                                            <div class="class-name">NEUTRAL</div>
+                                        </div>
+                                    </div>
+                                    <div class="leader-rpg-slots-row" id="player1-slots-row">
+                                        <div class="leader-rpg-slots">
+                                            <div class="resource-box ep-box leader-rpg-chip is-ep" title="进化点 (EP)">
+                                                <span class="resource-label ep-label">EP</span>
+                                                <div class="ep-dots" id="player1-ep-dots">
+                                                    <div class="ep-dot"></div>
+                                                    <div class="ep-dot"></div>
+                                                </div>
+                                            </div>
+                                            <div class="resource-box sep-box leader-rpg-chip is-sep" title="超进化点 (SEP)">
+                                                <span class="resource-label sep-label">SEP</span>
+                                                <div class="sep-dots" id="player1-sep-dots">
+                                                    <div class="sep-dot"></div>
+                                                    <div class="sep-dot"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="hp-display leader-rpg-spine" id="player1-hp">
+                                    <div class="hp-bar-track leader-rpg-gauge" aria-hidden="true">
+                                        <div class="hp-bar-ghost" style="width: 100%;"></div>
+                                        <div class="hp-bar-fill" style="width: 100%;"></div>
+                                    </div>
+                                    <div class="hp-main-row leader-rpg-hp-nums">
+                                        <span class="hp-value">20</span>
+                                        <span class="hp-max">/ 20</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 玩家手牌 (Bottom Center) -->
+                <div id="player1-hand" class="hand player-hand"></div>
+
+                <!-- 右侧中轴对齐能量点 / 回合结束战术中控台 -->
+                <aside id="battle-right-dock" class="battle-right-dock" aria-label="右侧能量与回合结束中控台">
+                    <div id="right-dock-upper-pp" class="pp-container is-opp">
+                        <div class="pp-header">
+                            <span id="player2-pp-label" class="pp-label">OPP PP</span>
+                            <span id="player2-pp-text" class="pp-text">0 / 0</span>
+                        </div>
+                        <div class="pp-bar-segments" id="player2-pp-bar">
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                        </div>
+                    </div>
+
+                    <button id="end-turn-button" class="action-button">
+                        <span class="end-turn-surface">
+                            <span class="end-turn-text">
+                                <span class="end-turn-label">END TURN</span>
+                                <span class="end-turn-countdown">03:00</span>
+                            </span>
+                            <span class="end-turn-indicator-trench indicator-trench-bottom" aria-hidden="true">
+                                <span class="end-turn-indicator-light"></span>
+                                <span class="end-turn-indicator-light"></span>
+                                <span class="end-turn-indicator-light"></span>
+                                <span class="end-turn-indicator-light"></span>
+                                <span class="end-turn-indicator-light"></span>
+                                <span class="end-turn-indicator-light"></span>
+                                <span class="end-turn-indicator-light"></span>
+                                <span class="end-turn-indicator-light"></span>
+                                <span class="end-turn-indicator-light"></span>
+                                <span class="end-turn-indicator-light"></span>
+                                <span class="end-turn-indicator-light"></span>
+                                <span class="end-turn-indicator-light"></span>
+                            </span>
+                            <span class="end-turn-sweep" aria-hidden="true"></span>
+                        </span>
                     </button>
-                </div>
-                <button id="end-turn-button" class="action-button">
-                    <span class="end-turn-surface">
-                        <span class="end-turn-text">
-                            <span class="end-turn-label">END TURN</span>
-                            <span class="end-turn-countdown">03:00</span>
-                        </span>
-                        <span class="end-turn-indicator-trench indicator-trench-bottom" aria-hidden="true">
-                            <span class="end-turn-indicator-light"></span>
-                            <span class="end-turn-indicator-light"></span>
-                            <span class="end-turn-indicator-light"></span>
-                            <span class="end-turn-indicator-light"></span>
-                            <span class="end-turn-indicator-light"></span>
-                            <span class="end-turn-indicator-light"></span>
-                            <span class="end-turn-indicator-light"></span>
-                            <span class="end-turn-indicator-light"></span>
-                            <span class="end-turn-indicator-light"></span>
-                            <span class="end-turn-indicator-light"></span>
-                            <span class="end-turn-indicator-light"></span>
-                            <span class="end-turn-indicator-light"></span>
-                        </span>
-                        <span class="end-turn-sweep" aria-hidden="true"></span>
-                    </span>
-                </button>
+
+                    <div class="battle-dock-divider" aria-hidden="true"></div>
+
+                    <div id="right-dock-self-pp" class="pp-container is-self">
+                        <div class="pp-header">
+                            <span id="player1-pp-label" class="pp-label">PP</span>
+                            <span id="player1-pp-text" class="pp-text">0 / 0</span>
+                        </div>
+                        <div class="pp-bar-segments" id="player1-pp-bar">
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                            <div class="pp-segment empty"></div>
+                        </div>
+                    </div>
+
+                    <div id="pp-boost-action" class="pp-boost-action">
+                        <button class="pp-boost-button" id="player1-pp-boost-button" type="button">
+                            <span class="pp-boost-action-text">PP+1 BOOST</span>
+                            <span class="pp-boost-count" id="player1-pp-boost-count">0</span>
+                        </button>
+                    </div>
+
+                    <div id="mirage-dock-sub-actions" class="mirage-dock-sub-actions" hidden></div>
+                </aside>
+
+                <!-- 悬浮功能按钮（留换牌确认 / 断线重连 / 再战 / 观战切换） -->
+                <button id="reconnect-button" class="action-button" style="display: none;">重新连接</button>
+                <button id="rematch-room-button" class="action-button" style="display: none; z-index: 120;">返回房间再战</button>
+                <button id="confirm-mulligan-button" class="action-button" style="display: none;">确认调度</button>
+                <button id="spectator-toggle-view" class="action-button" style="display: none;">切换视角</button>
             </div>
         </div>
 
@@ -816,11 +886,103 @@
                         </div>
                         <span class="back-text-art">卡牌工坊</span>
                     </button>
+                    <div class="workshop-header-tools" aria-label="工坊模式与卡包工具">
+                        <div class="workshop-scope-switch" role="group" aria-label="工坊切换">
+                            <span class="workshop-scope-pill is-active" aria-current="page">经典工坊</span>
+                            <button class="workshop-scope-pill" data-route="mirage-card-editor" type="button">幻境工坊</button>
+                        </div>
+                        <button id="card-editor-pack-manager-btn" class="workshop-header-btn" type="button">卡包管理</button>
+                    </div>
                 </div>
             </div>
             <div id="card-editor-container">
                 <!-- 卡牌编辑器内容将在这里动态加载 -->
                 <div class="loading-message">正在加载编辑器...</div>
+            </div>
+        </div>
+
+        <div id="devtools-cardset-env-modal" class="log-viewer-modal devtools-copy-limit-modal" aria-hidden="true">
+            <div class="log-viewer-panel devtools-copy-limit-dialog" role="dialog" aria-modal="true" aria-label="卡包管理与环境配置">
+                <div class="log-viewer-panel-header">
+                    <div class="log-viewer-panel-title">卡包管理与环境配置</div>
+                    <button id="devtools-cardset-env-close-btn" class="tool-button" type="button">关闭</button>
+                </div>
+                <div id="devtools-cardset-env-message" class="devtools-copy-limit-message" data-tone="neutral"></div>
+                <div id="devtools-cardset-env-management-panel" class="devtools-copy-limit-management-panel">
+                    <div class="devtools-copy-limit-controls">
+                        <label class="devtools-copy-limit-field" for="devtools-cardset-env-environment">
+                            <span>当前环境</span>
+                            <select id="devtools-cardset-env-environment" class="form-input"></select>
+                        </label>
+                        <label class="devtools-copy-limit-field pack-manager-search" for="devtools-cardset-env-search">
+                            <span>搜索卡包</span>
+                            <input id="devtools-cardset-env-search" class="form-input" type="search" placeholder="按卡包 ID / 名称 / 简称 / 代码过滤">
+                        </label>
+                        <label class="devtools-copy-limit-field" for="devtools-cardset-logo-filter">
+                            <span>显示范围</span>
+                            <select id="devtools-cardset-logo-filter" class="form-input">
+                                <option value="">全部卡包</option>
+                                <option value="with-logo">已上传 Logo</option>
+                                <option value="without-logo">未上传 Logo</option>
+                                <option value="included">当前环境包含</option>
+                            </select>
+                        </label>
+                        <button id="devtools-cardset-env-refresh-btn" class="tool-button" type="button">刷新</button>
+                        <button id="devtools-cardset-env-save-btn" class="tool-button" type="button" disabled hidden>保存环境配置</button>
+                    </div>
+                    <div id="devtools-cardset-create-row" class="pack-manager-create-row" hidden>
+                        <input id="devtools-cardset-new-name" class="form-input" type="text" maxlength="100" placeholder="新卡包名称" aria-label="新卡包名称">
+                        <input id="devtools-cardset-new-abbr" class="form-input" type="text" maxlength="20" placeholder="简称 (可选，如 SBD)" aria-label="卡包简称">
+                        <button id="devtools-cardset-create-btn" class="btn-tech btn-small" type="button">+ 新建卡包</button>
+                    </div>
+                    <input type="file" id="devtools-cardset-logo-input" accept="image/png,image/jpeg,image/webp" hidden>
+                    <div class="devtools-copy-limit-meta">当前结果：<span id="devtools-cardset-env-count">0</span> 个卡包</div>
+                    <div class="devtools-copy-limit-table-wrap">
+                        <table class="devtools-copy-limit-table devtools-cardset-env-table">
+                            <thead>
+                                <tr>
+                                    <th>当前环境包含</th>
+                                    <th>ID</th>
+                                    <th>代码</th>
+                                    <th>卡包名称</th>
+                                    <th>简称</th>
+                                    <th>卡包 Logo</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="devtools-cardset-env-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="devtools-copy-limit-guidance">可检视所有普通卡包；管理员可保存当前环境的卡包归属、上传 Logo 和新建卡包。</div>
+            </div>
+        </div>
+
+        <!-- 幻境卡牌编辑器页面（独立卡池隔离入口） -->
+        <div id="mirage-card-editor-page" class="page">
+            <div class="page-header">
+                <div class="page-header-left">
+                    <button class="back-nav-btn" data-route="navigation" aria-label="Back to Home">
+                        <div class="back-icon-wrapper">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="11 17 6 12 11 7"></polyline>
+                                <polyline points="18 17 13 12 18 7"></polyline>
+                            </svg>
+                        </div>
+                        <span class="back-text-art">幻境卡牌工坊</span>
+                    </button>
+                    <div class="workshop-header-tools" aria-label="工坊模式切换">
+                        <div class="workshop-scope-switch" role="group" aria-label="工坊切换">
+                            <button class="workshop-scope-pill" data-route="card-editor" type="button">经典工坊</button>
+                            <span class="workshop-scope-pill is-active is-mirage" aria-current="page">幻境工坊</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="mirage-card-editor-container">
+                <!-- 幻境卡牌编辑器内容将在这里动态加载 -->
+                <div class="loading-message">正在加载幻境编辑器...</div>
             </div>
         </div>
 
@@ -893,6 +1055,11 @@
                         <p>在卡牌工坊中查看和编辑实际卡牌、能力数据</p>
                         <button class="tool-button" data-route="card-editor" type="button">打开卡牌工坊</button>
                     </div>
+                    <div class="tool-card">
+                        <h3>幻境卡牌工坊</h3>
+                        <p>独立录入与管理幻境战棋专属卡牌，支持从普通卡深拷贝导入</p>
+                        <button class="tool-button" data-route="mirage-card-editor" type="button">打开幻境工坊</button>
+                    </div>
 
                     <section id="admin-user-management" class="tool-card admin-user-management" aria-label="用户管理">
                         <h3>用户管理</h3>
@@ -903,11 +1070,6 @@
                         <h3>禁限卡牌管理</h3>
                         <p>仅管理员可访问，可按环境/规则编辑卡牌携带上限。</p>
                         <button id="devtools-copy-limit-open-btn" class="tool-button" type="button">打开禁限卡牌</button>
-                    </section>
-                    <section id="devtools-cardset-env-panel" class="tool-card admin-copy-limit-management" aria-label="环境卡包配置">
-                        <h3>环境卡包配置</h3>
-                        <p>仅管理员可访问，可配置当前环境包含哪些卡包。</p>
-                        <button id="devtools-cardset-env-open-btn" class="tool-button" type="button">打开环境配置</button>
                     </section>
                     <section id="devtools-winrate-panel" class="tool-card" aria-label="胜率看板">
                         <h3>胜率看板</h3>
@@ -1118,52 +1280,6 @@
                                 <button class="btn-tech btn-secondary" id="devtools-copy-limit-card-picker-cancel" type="button">取消</button>
                                 <button class="btn-tech btn-primary" id="devtools-copy-limit-card-picker-confirm" type="button" disabled>确认选择</button>
                             </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="devtools-cardset-env-modal" class="log-viewer-modal devtools-copy-limit-modal" aria-hidden="true">
-                    <div class="log-viewer-panel devtools-copy-limit-dialog" role="dialog" aria-label="环境卡包配置">
-                        <div class="log-viewer-panel-header">
-                            <div class="log-viewer-panel-title">环境卡包配置</div>
-                            <button id="devtools-cardset-env-close-btn" class="tool-button" type="button">关闭</button>
-                        </div>
-                        <div id="devtools-cardset-env-message" class="devtools-copy-limit-message" data-tone="neutral">
-                            请登录后加载环境卡包配置。
-                        </div>
-                        <div id="devtools-cardset-env-management-panel" class="devtools-copy-limit-management-panel" hidden>
-                            <div class="devtools-copy-limit-controls">
-                                <label class="devtools-copy-limit-field" for="devtools-cardset-env-environment">
-                                    <span>环境</span>
-                                    <select id="devtools-cardset-env-environment" class="form-input"></select>
-                                </label>
-                                <label class="devtools-copy-limit-field" for="devtools-cardset-env-search">
-                                    <span>筛选</span>
-                                    <input id="devtools-cardset-env-search" class="form-input" type="text" placeholder="按卡包 ID / 名称 / 代码过滤">
-                                </label>
-                                <button id="devtools-cardset-env-refresh-btn" class="tool-button" type="button">刷新</button>
-                                <button id="devtools-cardset-env-save-btn" class="tool-button" type="button">保存配置</button>
-                            </div>
-                            <div class="devtools-copy-limit-meta">
-                                当前结果：<span id="devtools-cardset-env-count">0</span> 个卡包
-                            </div>
-                            <div class="devtools-copy-limit-table-wrap">
-                                <table class="devtools-copy-limit-table devtools-cardset-env-table">
-                                    <thead>
-                                        <tr>
-                                            <th>包含</th>
-                                            <th>CardSetDefinitionId</th>
-                                            <th>代码</th>
-                                            <th>名称</th>
-                                            <th>缩写</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="devtools-cardset-env-table-body"></tbody>
-                                </table>
-                            </div>
-                        </div>
-                        <div class="devtools-copy-limit-guidance">
-                            勾选“包含”后保存，即可将对应卡包加入当前环境。
                         </div>
                     </div>
                 </div>
@@ -1398,6 +1514,14 @@
                         <div class="match-lab-field">
                             <label for="match-lab-seed">随机种子</label>
                             <input id="match-lab-seed" class="form-input" type="number" placeholder="可选">
+                        </div>
+                        <div class="match-lab-field">
+                            <label for="match-lab-first-player">先后手规则</label>
+                            <select id="match-lab-first-player" class="form-input">
+                                <option value="random">随机先后手</option>
+                                <option value="host">玩家固定先手</option>
+                                <option value="guest">玩家固定后手</option>
+                            </select>
                         </div>
                         <div class="match-lab-presets">
                             <button id="match-lab-preset-standard" class="tool-button" type="button">标准开局</button>

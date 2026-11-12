@@ -213,8 +213,11 @@ export class MetadataManager {
     /**
      * 获取卡牌类型选项
      */
-    async getCardTypeOptions() {
+    async getCardTypeOptions({ includeLeader = false } = {}) {
         const options = await this.getEnumOptions('CardType');
+        if (includeLeader) {
+            return options;
+        }
         return options.filter(option => String(option.value ?? '').toLowerCase() !== 'leader');
     }
 

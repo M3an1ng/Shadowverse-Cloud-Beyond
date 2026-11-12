@@ -42,15 +42,40 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
         public DomainOperationResult Commit(GameContext context)
         {
             var result = new DomainOperationResult();
+            bool isMirageRecruit = context.CurrentGameState.Mode == GameMode.Mirage && !context.CurrentGameState.IsCombatSandbox;
 
-            if (context.CurrentGameState.CurrentPlayerId != PlayerId)
+            if (isMirageRecruit)
             {
-                return new DomainOperationResult { Success = false, ErrorMessage = "It's not your turn to use Act." };
+                var mirage = context.CurrentGameState.Mirage;
+                if (mirage == null)
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Mirage state is not initialized." };
+                }
+
+                lock (mirage.RoundSyncLock)
+                {
+                    if (context.CurrentGameState.Phase != GamePhase.Recruit)
+                    {
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Act can only be used during Mirage Recruit phase." };
+                    }
+
+                    if (mirage.ReadyPlayerIds.Contains(PlayerId) || mirage.ClosingRecruitRoundNumber == mirage.RoundNumber)
+                    {
+                        return new DomainOperationResult { Success = false, ErrorMessage = "Mirage lineup is already locked for this round." };
+                    }
+                }
             }
-
-            if (context.CurrentGameState.Phase != GamePhase.Main)
+            else
             {
-                return new DomainOperationResult { Success = false, ErrorMessage = "Act can only be used during Main phase." };
+                if (context.CurrentGameState.CurrentPlayerId != PlayerId)
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "It's not your turn to use Act." };
+                }
+
+                if (context.CurrentGameState.Phase != GamePhase.Main)
+                {
+                    return new DomainOperationResult { Success = false, ErrorMessage = "Act can only be used during Main phase." };
+                }
             }
 
             var card = context.CurrentGameState.FindCardInstance(ActionDto.CardUid);
@@ -67,6 +92,17 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
             if (card.CurrentZone != CardZone.Field)
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "Act can only be used while the card is on the field." };
+            }
+
+            var owner = context.CurrentGameState.GetPlayerState(PlayerId);
+            if (owner == null)
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = $"Player state not found for {PlayerId}." };
+            }
+
+            if (isMirageRecruit && (!card.IsLeader || owner.Leader?.InstanceId != card.InstanceId))
+            {
+                return new DomainOperationResult { Success = false, ErrorMessage = "Only the active Mirage Leader can use Act during Recruit phase." };
             }
 
             var abilities = context.AbilityManager.GetEffectiveAbilitiesForCard(card.InstanceId, context)
@@ -107,15 +143,38 @@ namespace ShadowverseBeyond.Server.Domain.Events.ActionRequests
                 return new DomainOperationResult { Success = false, ErrorMessage = "This card has no Act ability." };
             }
 
-            var owner = context.CurrentGameState.GetPlayerState(PlayerId);
-            if (owner == null)
-            {
-                return new DomainOperationResult { Success = false, ErrorMessage = $"Player state not found for {PlayerId}." };
-            }
-
             if (card.HasUsedActThisTurn())
             {
                 return new DomainOperationResult { Success = false, ErrorMessage = "This card has already used Act this turn." };
+            }
+
+            var candidateAbilities = selectedAbility != null
+                ? new List<Ability> { selectedAbility }
+                : abilities.OfType<Ability>().Where(a => a.HasKeyword(AbilityKeyword.Act)).ToList();
+
+            if (candidateAbilities.Count > 0 && candidateAbilities.All(a => a.Targets.Any(t => t.Config.ShouldBlockPlayerOperationOnInsufficientTargets())))
+            {
+                bool anyAvailable = false;
+                string? failureReason = null;
+                foreach (var candidate in candidateAbilities)
+                {
+                    var availability = candidate.CheckTargetAvailabilityAsync(context).GetAwaiter().GetResult();
+                    if (availability.IsAvailable)
+                    {
+                        anyAvailable = true;
+                        break;
+                    }
+                    failureReason ??= availability.FailureReason;
+                }
+
+                if (!anyAvailable)
+                {
+                    return new DomainOperationResult
+                    {
+                        Success = false,
+                        ErrorMessage = failureReason ?? "没有有效的目标。"
+                    };
+                }
             }
 
             var paidCost = selectedAbility != null

@@ -84,6 +84,14 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <param name="buff">The buff instance to add.</param>
         public void RegisterBuffInstance(Buff buff, GameState gameState)
         {
+            RestoreBuffInstanceWithoutCreatingAbilities(buff, gameState);
+
+            // Automatically handle the registration of granted abilities.
+            HandleAbilityBuffRegistration(buff, gameState);
+        }
+
+        public void RestoreBuffInstanceWithoutCreatingAbilities(Buff buff, GameState gameState)
+        {
             var cardId = buff.TargetCardInstanceId;
             if (!_buffsByCardInstanceId.TryGetValue(cardId, out var buffList))
             {
@@ -94,9 +102,6 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             _cardIdByBuffId[buff.Id] = cardId;
 
             gameState.InGameIds.GetOrCreate(InGameIdKind.Buff, buff.Id);
-
-            // Automatically handle the registration of granted abilities.
-            HandleAbilityBuffRegistration(buff, gameState);
         }
 
         /// <summary>
@@ -152,7 +157,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             try
             {
                 var abilityEffects = buff.Effects.OfType<AbilityBuffEffect>().ToList();
-                if (!abilityEffects.Any())
+                if (!abilityEffects.Any() || _abilityManager.GetAbilityRuntimeIdsForBuff(buff.Id).Count > 0)
                     return;
 
                 // The dependency is now the minimal required: GameState.
@@ -184,6 +189,34 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling AbilityBuffEffect registration for Buff {BuffId}", buff.Id);
+                if (SandboxExecutionGuard.IsSuspended)
+                {
+                    throw;
+                }
+            }
+        }
+
+        internal IReadOnlyList<Buff> GetAllRegisteredBuffs()
+        {
+            return _buffsByCardInstanceId.Values
+                .SelectMany(static list => list)
+                .ToList();
+        }
+
+        internal void ReplaceStateFrom(BuffManager source)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+
+            _buffsByCardInstanceId.Clear();
+            foreach (var (cardId, list) in source._buffsByCardInstanceId)
+            {
+                _buffsByCardInstanceId[cardId] = new List<Buff>(list);
+            }
+
+            _cardIdByBuffId.Clear();
+            foreach (var (buffId, cardId) in source._cardIdByBuffId)
+            {
+                _cardIdByBuffId[buffId] = cardId;
             }
         }
 

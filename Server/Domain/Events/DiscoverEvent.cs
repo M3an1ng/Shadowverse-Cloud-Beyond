@@ -17,6 +17,7 @@ public sealed class DiscoverRequestEvent : GameEventBase, ICommittableEvent {
  public DiscoverRequestEvent(PlayerState player,List<CardInstance> cards,DiscoverMode mode,Guid abilityId):base(EventType.DiscoverRequest) {this.player=player;candidates=cards;this.mode=mode;this.abilityId=abilityId;Source=TargetInfo.ForPlayer(player);}
  public async Task ResolveAsync(GameContext context) {
   if(Selected!=null || candidates.Count==0)return;
+  if(context.CurrentGameState.IsCombatSandbox || context.InvocationOptions.AutoRandomTargetSelection){Selected=candidates[Random.Shared.Next(candidates.Count)];return;}
   var request=new PlayerChoiceRequest{PendingChoiceId=Guid.NewGuid(),GameId=context.CurrentGameState.GameId,TargetKey="discover",RequestingPlayerId=player.PlayerId,SourceAbilityRuntimeId=abilityId,Message="请选一张卡片加入手牌",MinSelectionCount=1,MaxSelectionCount=1,IsCancellable=false,SelectableTargetIds=candidates.Select(c=>c.InstanceId).ToList(),SelectableCardInstances=candidates.Select(c=>CardInstanceProjection.Create(c,context)).ToList()};
   var result=await context.ServiceProvider.GetRequiredService<IPendingActionService>().WaitForPlayerChoiceAsync(context.CurrentGameState.GameId,request,context.CancellationToken);
   if(result.WasCancelled)return;

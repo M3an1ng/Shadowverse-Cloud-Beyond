@@ -94,9 +94,6 @@ export function mountCatalogSearch(
           ).values(),
         ];
     }));
-  const styleIds = new Set(
-    styles.filter((c) => c.styles.length).map((c) => c.cardId),
-  );
   const renderTop = (target, apply, rerender) => {
     const row = document.createElement("div");
     row.className = "gallery-search-row";
@@ -125,13 +122,17 @@ export function mountCatalogSearch(
     );
     target.append(row);
   };
-  const apply = () =>
+  const apply = () => {
+    const styleIds = new Set(
+      styles.filter((c) => c.styles.length).map((c) => c.cardId),
+    );
     onSearch(
       structuredClone(draft),
       cards
         .filter((c) => matchCatalogCard(c, draft, styleIds, keywordLabels))
         .sort(compareCatalogCards),
     );
+  };
   const render = () => {
     host.replaceChildren();
     renderTop(host, apply, render);
@@ -469,9 +470,12 @@ export async function showCardGallery(container, onBack) {
     search.apply();
     document.addEventListener(
       "svb:card-style-changed",
-      (event) => {
+      async (event) => {
         if (!page.isConnected) return;
-        if (event.detail.styleId)
+        if (!("styleId" in (event.detail || {}))) {
+          styles.splice(0, styles.length, ...await loadStyles(true));
+          if (!page.isConnected) return;
+        } else if (event.detail.styleId)
           preferences[event.detail.cardId] = event.detail.styleId;
         else delete preferences[event.detail.cardId];
         cards.splice(

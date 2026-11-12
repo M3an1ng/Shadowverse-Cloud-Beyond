@@ -2,7 +2,7 @@ async function createHttpError(response) {
     let message = response?.statusText || '';
     try {
         const payload = await response.json();
-        message = payload?.message || payload?.Message || message;
+        message = payload?.message || payload?.Message || payload?.error || message;
     } catch {
         // Ignore parse errors and fall back to status text.
     }
@@ -17,15 +17,19 @@ function readCache(getCached) {
 }
 
 function writeCache(setCached, cards) {
-    if (typeof setCached === 'function') {
-        setCached(cards);
-    }
+    if (typeof setCached !== 'function') return;
+    setCached(cards);
+}
+
+export function normalizeCardPoolScope(scope) {
+    return String(scope ?? '').trim().toLowerCase() === 'mirage' ? 'mirage' : 'standard';
 }
 
 export async function loadCardDefinitions(options = {}) {
     const {
         useCache = true,
         force = false,
+        scope = 'standard',
         getCached,
         setCached,
         onResponse
@@ -38,7 +42,10 @@ export async function loadCardDefinitions(options = {}) {
         }
     }
 
-    const response = await fetch('/api/cards', {
+    const normalizedScope = normalizeCardPoolScope(scope);
+    const url = `/api/cards?scope=${encodeURIComponent(normalizedScope)}`;
+
+    const response = await fetch(url, {
         method: 'GET',
         cache: 'no-store'
     });

@@ -110,15 +110,8 @@ namespace ShadowverseBeyond.Server.Infrastructure.Services
             }
 
             var json = Encoding.UTF8.GetString(payload);
-            GameStateDto snapshot;
-            try
-            {
-                snapshot = JsonSerializer.Deserialize<GameStateDto>(json) ?? new GameStateDto();
-            }
-            catch
-            {
-                snapshot = new GameStateDto();
-            }
+            var snapshot = JsonSerializer.Deserialize<GameStateDto>(json)
+                ?? throw new InvalidDataException($"Legacy replay snapshot is null: {gameId}/{record.AtSeq}");
 
             return new RecordedSnapshotDto(
                 record.GameId,

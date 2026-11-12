@@ -9,6 +9,7 @@ using ShadowverseBeyond.Server.Models; // <<< ADDED for GameActionContext
 using System; // For Guid
 using System.Collections.Generic; // Needed for List
 using System.Threading;
+using System.Text.Json;
 
 // Corrected Namespace
 namespace ShadowverseBeyond.Server.Services
@@ -41,6 +42,9 @@ namespace ShadowverseBeyond.Server.Services
         /// <returns>The GameStateDto if found, otherwise null.</returns>
         GameState? GetGameState(string gameId); // Return Domain Entity
 
+        Task<JsonElement> ReadSnapshotAsync(string gameId, CancellationToken cancellationToken);
+        Task<JsonElement> ReadStateAsync(string gameId, Func<GameState, IServiceProvider, Task<JsonElement>> reader, CancellationToken cancellationToken);
+
         // BroadcastEventsAsync removed - Broadcasting responsibility moved to Hub after context processing.
 
         // /// <summary>
@@ -60,6 +64,9 @@ namespace ShadowverseBeyond.Server.Services
         /// <param name="action">The wrapper object containing action details.</param>
         /// <returns>True when the action was admitted to the queue; false when the request or game is invalid.</returns>
         Task<bool> EnqueuePlayerActionAsync(string gameId, PlayerActionWrapper action);
+
+        void TriggerMirageAiRecruitIfNeeded(string gameId, int expectedRoundNumber,
+            Task<PlayerActionCompletion>? prerequisiteCompletion = null);
 
         /// <summary>
         /// Handles the submission of a player's target choice, bypassing the main action queue.
@@ -91,6 +98,7 @@ namespace ShadowverseBeyond.Server.Services
         /// </summary>
         Task RefreshActPlayabilityAsync(string gameId, Guid playerId, CancellationToken cancellationToken);
         Task<PlayabilityResultDto> GetCardPlayabilityAsync(string gameId, Guid playerId, Guid cardInstanceId, CancellationToken cancellationToken);
+        Task<ActPlayabilityResultDto> GetActPlayabilityAsync(string gameId, Guid playerId, Guid cardInstanceId, CancellationToken cancellationToken);
         Task<PlayabilityResultDto> GetCardPlayabilityForModeAsync(string gameId, Guid playerId, Guid cardInstanceId,
             ShadowverseBeyond.Server.Dtos.Enums.PlayMode mode, CancellationToken cancellationToken);
 

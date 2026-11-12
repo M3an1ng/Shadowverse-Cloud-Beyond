@@ -30,8 +30,9 @@ export function normalizeEmoteCatalogResponse(rawCatalog) {
     return { packs };
 }
 
-export async function loadEmoteCatalog() {
-    if (cachedLoadResult?.ok) {
+export async function loadEmoteCatalog(options = {}) {
+    const forceReload = options?.force === true;
+    if (!forceReload && cachedLoadResult?.ok && hasUsableEmotes(cachedLoadResult.catalog)) {
         return cachedLoadResult;
     }
 
@@ -49,8 +50,9 @@ export async function loadEmoteCatalog() {
         }
 
         const catalog = normalizeEmoteCatalogResponse(await response.json());
-        cachedLoadResult = { ok: true, catalog, error: '' };
-        return cachedLoadResult;
+        const result = { ok: true, catalog, error: '' };
+        cachedLoadResult = hasUsableEmotes(catalog) ? result : null;
+        return result;
     } catch (error) {
         return buildFailedResult(error?.message || '表情清单加载失败。');
     }

@@ -293,15 +293,36 @@ namespace ShadowverseBeyond.Server.Controllers
                 return false;
             }
 
+            string? normalizedFirstPlayerMode = null;
+            if (!string.IsNullOrWhiteSpace(request.FirstPlayerMode))
+            {
+                var fpMode = request.FirstPlayerMode.Trim().ToLowerInvariant();
+                if (fpMode is "random" or "host" or "guest")
+                {
+                    normalizedFirstPlayerMode = fpMode;
+                }
+                else
+                {
+                    error = $"不支持的先后手规则: {request.FirstPlayerMode}";
+                    return false;
+                }
+            }
+
             config = new DevMatchConfig
             {
+                IgnoreDeckFormatConsistency = request.IgnoreDeckFormatConsistency,
+                AllowIncompleteDecks = request.AllowIncompleteDecks,
                 StartingPlayPoints = startingPp,
                 MaxPlayPoints = maxPp,
                 StartingHandSize = handSize,
                 StartingTurn = startingTurn,
                 StartingHealth = startingHp,
                 PpBoostUses = ppBoostUses,
-                Seed = request.Seed
+                TurnTimeoutSeconds = request.TurnTimeoutSeconds.HasValue
+                    ? Math.Clamp(request.TurnTimeoutSeconds.Value, 1, 600)
+                    : null,
+                Seed = request.Seed,
+                FirstPlayerMode = normalizedFirstPlayerMode
             };
             return true;
         }
@@ -317,13 +338,17 @@ namespace ShadowverseBeyond.Server.Controllers
 
         public class DevMatchConfigRequest
         {
+            public bool IgnoreDeckFormatConsistency { get; set; }
+            public bool AllowIncompleteDecks { get; set; }
             public int? StartingPlayPoints { get; set; }
             public int? MaxPlayPoints { get; set; }
             public int? StartingHandSize { get; set; }
             public int? StartingTurn { get; set; }
             public int? StartingHealth { get; set; }
             public int? PpBoostUses { get; set; }
+            public int? TurnTimeoutSeconds { get; set; }
             public int? Seed { get; set; }
+            public string? FirstPlayerMode { get; set; }
         }
 
         public class DevToolsMatchResponse

@@ -676,11 +676,10 @@ export async function openDraft(initial) {
         queueGeneration++;
         pending = 0;
         queue = Promise.resolve();
-        const state = await api(`/rooms/${room.id}?includePlans=false`, {
+        const state = await api(`/rooms/${room.id}`, {
           headers,
         }).catch(() => null);
         if (state) {
-          state.player.plans ??= player.plans;
           player = structuredClone(state.player);
           await checkState(state);
           render();
@@ -1091,9 +1090,14 @@ export function initializeTakeTwo() {
       pool = emptyPool(),
       savedPoolId = "",
       creating = false;
+    panel.dataset.roomMode = mode;
     const settings = document.createElement("div");
     settings.className = "take-two-create-settings";
     settings.hidden = true;
+    const mirageSettings = document.createElement("div");
+    mirageSettings.className = "mirage-create-settings mp-deck-current";
+    mirageSettings.textContent = "星界酒馆独立卡池（无需构筑卡组）";
+    mirageSettings.hidden = true;
     const environmentSelect = createPoolEnvironmentPicker(environment);
     let poolUpdate = Promise.resolve();
     const syncSelectedPool = () => {
@@ -1159,17 +1163,32 @@ export function initializeTakeTwo() {
     create.className = "mp-btn primary";
     create.hidden = true;
     create.id = "take-two-create";
+    const cardDesc = panel.querySelector(".mp-card-desc");
+    const modeDescriptions = {
+      standard: "创建房间并生成邀请码，等待对手加入并自动就绪",
+      takeTwo: "创建双选轮抽房间，与对手完成轮抽构筑后对战",
+      mirage: "创建幻境战棋房间，使用独立酒馆卡池招募交战",
+    };
     for (const [value, label] of [
       ["standard", "普通模式"],
       ["takeTwo", "双选模式"],
+      ["mirage", "幻境模式"],
     ]) {
       const b = button(label, () => {
         mode = value;
+        panel.dataset.roomMode = mode;
         for (const child of toggle.children)
           child.setAttribute("aria-pressed", child === b);
+        if (cardDesc && modeDescriptions[mode]) {
+          cardDesc.textContent = modeDescriptions[mode];
+        }
         settings.hidden = mode !== "takeTwo";
+        mirageSettings.hidden = mode !== "mirage";
         create.hidden = mode !== "takeTwo";
         normal.hidden = mode === "takeTwo";
+        for (const field of panel.querySelectorAll(".mp-field")) {
+          field.hidden = mode === "takeTwo";
+        }
         const go = document.getElementById("mp-go-game");
         if (go) {
           go.textContent = mode === "takeTwo" ? "本机对战" : "进入对战";
@@ -1179,9 +1198,9 @@ export function initializeTakeTwo() {
           "#multiplayer-panel .mp-deck-switcher",
         );
         switcher.querySelector(".mp-deck-label").textContent =
-          mode === "takeTwo" ? "当前卡池" : "当前卡组";
-        switcher.querySelector(".mp-deck-controls").hidden = mode === "takeTwo";
-        switcher.querySelector("#mp-deck-output").hidden = mode === "takeTwo";
+          mode === "standard" ? "当前卡组" : "当前卡池";
+        switcher.querySelector(".mp-deck-controls").hidden = mode !== "standard";
+        switcher.querySelector("#mp-deck-output").hidden = mode !== "standard";
       });
       b.setAttribute("aria-pressed", value === mode);
       toggle.append(b);
@@ -1190,7 +1209,7 @@ export function initializeTakeTwo() {
     panel.prepend(heading);
     document
       .querySelector("#multiplayer-panel .mp-deck-switcher")
-      .append(settings);
+      .append(settings, mirageSettings);
     normal.after(create);
 
   }
@@ -1263,9 +1282,25 @@ export function initializeTakeTwo() {
   }
 }
 
+export function stopTakeTwoWaitingLobby() {
+  waitingLobby?.stop();
+}
 export async function tryJoinTakeTwo(roomId, code) {
+  const trimmedRoomId = String(roomId || "").trim();
+  const trimmedCode = String(code || "").trim();
+  if (!trimmedCode) return false;
+  if (!trimmedRoomId) {
+    if (!/^[0-9]{6}$/.test(trimmedCode)) return false;
+    await enterTakeTwoRoom(
+      await api("/join", {
+        method: "POST",
+        body: JSON.stringify({ code: trimmedCode }),
+      }),
+    );
+    return true;
+  }
   const response = await fetch(
-    `/api/take-two/rooms/${encodeURIComponent(roomId)}/kind`,
+    `/api/take-two/rooms/${encodeURIComponent(trimmedRoomId)}/kind`,
   );
   if (response.status === 404) return false;
   if (!response.ok) throw Error("房间类型查询失败");
@@ -1274,7 +1309,7 @@ export async function tryJoinTakeTwo(roomId, code) {
   await enterTakeTwoRoom(
     await api("/join", {
       method: "POST",
-      body: JSON.stringify({ code, roomId: kind.roomId }),
+      body: JSON.stringify({ code: trimmedCode, roomId: kind.roomId }),
     }),
   );
   return true;

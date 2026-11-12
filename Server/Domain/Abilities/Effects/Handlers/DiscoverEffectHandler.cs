@@ -11,7 +11,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects.Handlers;
 [EffectHandler(EffectType.Discover)]
 public class DiscoverEffectHandler(ILogger<DiscoverEffectHandler> logger) : EffectHandlerBase<DiscoverEffectParams>(logger) {
  public override GameStateActionResult Apply(Effect effect,GameContext context,DiscoverEffectParams parameters) {
-  var player=context.CurrentGameState.GetPlayerState(context.SourceCard?.OwnerPlayerId ?? context.RequestingPlayerId);
+  var player=context.CurrentGameState.GetPlayerState(context.SourceCard?.OwnerPlayerId ?? effect.SourceAbility?.SourceCard?.OwnerPlayerId ?? (effect.RequestingPlayerId != Guid.Empty ? effect.RequestingPlayerId : context.RequestingPlayerId));
   if(player==null) return new(){Success=false,ErrorMessage="发现的玩家不存在"};
   List<CardInstance> pool;
   if(parameters.Mode is DiscoverMode.Copy or DiscoverMode.Instance) {
@@ -21,7 +21,10 @@ public class DiscoverEffectHandler(ILogger<DiscoverEffectHandler> logger) : Effe
     pool=pool.Where(c=>c.CurrentZone==Dtos.Enums.CardZone.Deck
      && ReferenceEquals(context.CurrentGameState.FindCardInstance(c.InstanceId),c)
      && context.CurrentGameState.GetPlayerState(c.OwnerPlayerId)?.Deck.Contains(c)==true).ToList();
-  } else pool=parameters.CardDefinitionIds.Where(id=>id>0 && GameDataProvider.Instance.GetCardDefinition(id)!=null).Distinct().Select(id=>new CardInstance(Guid.NewGuid(),id,player.PlayerId){CurrentZone=Dtos.Enums.CardZone.Staging}).ToList();
+  } else {
+   var expectMirage=context.CurrentGameState.Mode==Dtos.Enums.GameMode.Mirage;
+   pool=parameters.CardDefinitionIds.Where(id=>id>0 && GameDataProvider.Instance.GetCardDefinition(id) is { } def && def.IsMirageCard==expectMirage).Distinct().Select(id=>new CardInstance(Guid.NewGuid(),id,player.PlayerId){CurrentZone=Dtos.Enums.CardZone.Staging}).ToList();
+  }
   var candidates=Sample(pool.Where(c=>IsDiscoverableType(c.CardType)),context.BenchmarkRandom);
   return new(){Success=true,GeneratedEvents=candidates.Count==0?new():new(){new DiscoverRequestEvent(player,candidates,parameters.Mode,effect.SourceAbility?.RuntimeId ?? Guid.Empty)}};
  }
