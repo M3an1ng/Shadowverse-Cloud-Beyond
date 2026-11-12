@@ -626,7 +626,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 return selectableTargets.ToList();
             }
 
-            var rng = Random.Shared;
+            var rng = context.BenchmarkRandom ?? Random.Shared;
             for (var attempt = 0; attempt < 32; attempt++)
             {
                 var sampled = selectableTargets

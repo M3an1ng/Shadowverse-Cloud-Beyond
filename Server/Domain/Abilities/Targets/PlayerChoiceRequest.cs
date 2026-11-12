@@ -32,6 +32,9 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         public Guid SourceAbilityRuntimeId { get; set; }
 
         internal CardInstance? OptionSourceCard { get; set; }
+        // Server-only binding: presentation names and array order are not ability identities.
+        internal IReadOnlyDictionary<Guid, ShadowverseBeyond.Server.Domain.Abilities.AbilityConfig> DecisionOptions { get; set; }
+            = new Dictionary<Guid, ShadowverseBeyond.Server.Domain.Abilities.AbilityConfig>();
 
         /// <summary>
         /// The ID of the player who needs to make the choice.

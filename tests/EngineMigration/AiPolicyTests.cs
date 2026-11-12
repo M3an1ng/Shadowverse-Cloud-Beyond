@@ -157,6 +157,14 @@ internal static class AiPolicyTests
         Check((bool)Property(plan, "ProjectsLethal") && (bool)Property(plan, "SpendsSep"),
             "allow SEP when EP cannot reach lethal");
 
+        var terminal=game with {Players=[allies with {Field=[advance with {CurrentAttack=1,ZoneStayTurn=1}],Hand=[],CurrentEP=1,CurrentSEP=1,CanEvolve=true,CanSuperEvolve=true},
+            foes with {Field=[],LeaderCard=theirLeader with {CurrentHealth=3}}]};
+        object Terminal(bool super)=>find.Invoke(null,[terminal with {Players=terminal.Players.Select(p=>p.PlayerId==me
+            ?p with {CanEvolve=!super,CanSuperEvolve=super}:p).ToList()},me,CancellationToken.None,null,null])!;
+        var normalFinish=Terminal(false);var superFinish=Terminal(true);
+        Check((bool)Property(normalFinish,"ProjectsLethal")&&(bool)Property(superFinish,"ProjectsLethal")
+            &&Math.Abs((double)Property(normalFinish,"Gain")-(double)Property(superFinish,"Gain"))<1e-9,
+            "confirmed EP and SEP lethal routes have equal finishing value regardless of leftover points");
         var endingType = searchType.GetNestedType("EndTurnForecast", BindingFlags.NonPublic)!;
         var pendingType = searchType.GetNestedType("PendingDamage", BindingFlags.NonPublic)!;
         var withEnding = searchType.GetMethod("FindWithEndTurn", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -243,7 +251,7 @@ internal static class AiPolicyTests
 
         var estimate = searchType.GetMethod("EstimateBoardDamage", BindingFlags.Static | BindingFlags.NonPublic)!;
         int Threat(CardInstanceDto attacker, CardInstanceDto defender) =>
-            (int)estimate.Invoke(null, new object[] { new[] { attacker }, new[] { defender } })!;
+            (int)estimate.Invoke(null, new object?[] { new[] { attacker }, new[] { defender }, null })!;
         var blocker = Card(me,0,1,CardType.Follower,CardKeyword.Ward);
         var large = Card(enemy,10,10);
         Check(Threat(large, blocker) == 0, "one Ward consumes one complete attack");

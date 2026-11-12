@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
@@ -15,6 +15,14 @@ internal static class AiPlayCandidates
             PaidCost=Cost, AbilityRuntimeId=AbilityRuntimeId };
     }
 
+    internal static AiStrategyPlanner.TurnPlan? ForEmergency(AiStrategyPlanner.TurnPlan? plan,bool emergency,bool verifiedDefense)
+    {
+        if(!emergency)return plan;
+        if(!AiRecoveryPolicy.Enabled||verifiedDefense||plan==null)return null;
+        // No proven local escape: preserve a position-bound legal use suggestion, not speculative hoarding.
+        return plan with{Focus="stabilize",Hold=[],Prioritize=[],Ability=null,
+            Play=plan.Play?.Intent=="use"?plan.Play:null,PlayBinding=plan.Play?.Intent=="use"?plan.PlayBinding:null};
+    }
     internal static Candidate? Select(IReadOnlyList<Candidate> candidates, AiStrategyPlanner.TurnPlan? plan,
         string positionKey, Func<Candidate,double> score)
     {

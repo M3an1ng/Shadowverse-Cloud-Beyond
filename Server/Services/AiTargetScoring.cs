@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using ShadowverseBeyond.Server.Domain.Abilities.Common;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
@@ -13,11 +13,33 @@ internal static class AiTargetScoring
 {
     internal sealed record Effect(EffectType Type, double? Amount);
 
-    internal static IReadOnlyList<Effect> FindEffects(IEnumerable<EffectConfig> effects, string key)
+    private static bool IndependentOfCardTarget(EffectConfig effect)
+    {
+        // The verified Sacrifice branch changes the player's resources and targets their leader.
+        if (AiPpRefundFacts.TryReadOwnDamageRefund(effect, out _, out _, out _)) return true;
+        // These native handlers resolve a fixed player scope, not the chosen battlefield/hand card.
+        // Dynamic parameters or follow-up chains can depend on the selected card, so keep fallback.
+        if(effect.RepeatCount!=0||effect.RepeatCountValue!=null||effect.RepeatCondition!=null
+            ||effect.ChainedAbilities.Count>0||effect.Outputs?.Count is >0
+            ||effect.Parameters.Values.Any(v=>v is not StaticValueConfig))return false;
+        string? Text(string key)=>effect.Parameters.GetValueOrDefault(key) is StaticValueConfig value
+            ?value.Value is JsonElement {ValueKind:JsonValueKind.String} json?json.GetString():value.Value as string:null;
+        bool FalseOrMissing(string key)=>!effect.Parameters.TryGetValue(key,out var value)
+            ||value is StaticValueConfig s&&(s.Value is false||s.Value is JsonElement {ValueKind:JsonValueKind.False});
+        if(Text("PlayerScope") is not ("self" or "opponent" or "both"))return false;
+        return effect.Type==EffectType.Draw&&FalseOrMissing("UseSearchMode")
+                &&effect.Parameters.Keys.All(k=>k is "DrawAmount" or "PlayerScope" or "UseSearchMode")
+            ||effect.Type==EffectType.AddEmblem&&string.Equals(Text("CardSourceMode"),"definition",StringComparison.OrdinalIgnoreCase)
+                &&effect.Parameters.Keys.All(k=>k is "CardDefinitionId" or "Amount" or "PlayerScope" or "CardSourceMode" or "PreventDuplicate");
+    }
+    internal static IReadOnlyList<Effect> FindEffects(IEnumerable<EffectConfig> effects,string key)=>FindEffectsForChoice(effects,key,true);
+    internal static IReadOnlyList<Effect> FindEffectsForChoice(IEnumerable<EffectConfig> effects, string key,bool isolateIndependentEffects)
     {
         if (string.IsNullOrWhiteSpace(key)) return Array.Empty<Effect>();
         var targets = new Dictionary<string, List<TargetInfo>>(StringComparer.OrdinalIgnoreCase) { [key] = new() };
-        var matching = effects.Where(effect => effect.IsEnabled
+        // Choose opens a separate mode request; it does not apply its parent card targets.
+        var matching = effects.Where(effect => effect.IsEnabled && (!AiRecoveryPolicy.Enabled || effect.Type != EffectType.Choose)
+            && (!isolateIndependentEffects || !IndependentOfCardTarget(effect))
             && EffectTargetSelector.TrySelectTargets(effect.TargetSelector, targets, out _)).OrderBy(effect => effect.ExecutionOrder).ToArray();
 
         // Discard choices use hand resource valuation at the caller.

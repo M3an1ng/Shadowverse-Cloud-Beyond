@@ -1,4 +1,4 @@
-﻿using ShadowverseBeyond.Server.Domain.Query;
+using ShadowverseBeyond.Server.Domain.Query;
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
@@ -31,6 +31,194 @@ using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
+if(args.Length==3&&args[0]=="--planned-mode-real"){AiPlannedModeTests.RunReal(args[1],args[2]);return 0;}
+if(args.Length==2&&args[0]=="--planned-mode-native"){AiPlannedModeTests.Run(args[1]);return 0;}
+if(args.Length==1&&args[0]=="--plan-archives"){AiPlanArchiveTests.Run();return 0;}
+if(args.Length==1&&args[0]=="--hand-material-rules"){AiHandMaterialRuleTests.Run();return 0;}
+if(args.Length==4&&args[0]=="--planned-material-native"){AiPlannedTargetTests.Run(args[1],args[2],args[3],true);return 0;}
+if(args.Length==1&&args[0]=="--provider-usage"){AiProviderUsageTests.Run();return 0;}
+if(args.Length==1&&args[0]=="--resource-learning"){AiResourceLearningTests.Run();return 0;}
+if(args.Length==4&&args[0]=="--refund-continuation-native"){AiRefundContinuationTests.Run(args[1],args[2],args[3]);return 0;}
+if(args.Length==1&&args[0]=="--selected-hand-loss"){AiSelectedHandLossTests.Run();return 0;}
+if(args.Length==4&&args[0]=="--planned-target-native"){AiPlannedTargetTests.Run(args[1],args[2],args[3]);return 0;}
+if(args.Length==4 && args[0]=="--leader-recovery-native"){AiLeaderRecoveryTests.Run(args[1],args[2],args[3]);return 0;}
+if(args.Length is 3 or 4 && args[0]=="--weaver-native"){AiWeaverPlanTests.Run(args[1],args[2],args.Length==4?args[3]:null);return 0;}
+if(args.Length==4&&args[0]=="--planning-context-native"){AiPlanningContextTests.Run(args[1],args[2],args[3]);return 0;}
+if(args.Length==1&&args[0]=="--target-outcomes"){AiTargetOutcomeTests.Run();return 0;}
+if(args.Length==1&&args[0]=="--evaluation-size"){AiEvaluationLimitTests.Run();return 0;}
+if(args.Length==4&&args[0]=="--composite-target-native"){AiCompositeTargetTests.Run(args[1],args[2],args[3]);return 0;}
+if(args.Length is 3 or 4 && args[0]=="--turn-five-audit") { AiTurnFiveAuditTests.Run(args[1],args[2],args.Length==4?args[3]:null);return 0; }
+if(args.Length is 3 or 4 && args[0]=="--eternal-recovery-native") {
+    AiEternalRecoveryTests.Boundaries();AiEternalRecoveryTests.Run(args[1],args[2],args.Length==4?args[3]:null);return 0;
+}
+if(args.Length==2 && args[0]=="--decision-flow-native") {
+    AiDecisionFlowTests.Native(args[1]);return 0;
+}
+if(args.Length is 3 or 4 && args[0]=="--generated-defense-native") {
+    AiGeneratedTokenTests.DefenseNative(args[1],args[2],args.Length==4?args[3]:null);return 0;
+}
+if(args.Length is 2 or 3 && args[0]=="--zero-damage-policy") {
+    AiZeroDamagePolicyProbe.Run(args[1],args.Length==3?args[2]:null);return 0;
+}
+if(args.Length==2 && args[0]=="--zero-damage-native") {
+    AiZeroDamageTests.Native(args[1]);return 0;
+}
+if(args.Length==2 && args[0]=="--experience-excerpts") {
+    AiLessonRetrievalTests.ExcerptBoundaries();AiLessonRetrievalTests.ExcerptPlannerAndChoice(args[1]);return 0;
+}
+if(args.Length==1 && args[0]=="--hand-outcomes") {
+    AiActionOutcomeTests.RootCompletionAndRaces();AiActionOutcomeTests.TerminalPersistenceAndPrivacy();AiActionOutcomeTests.OwnHandEndpoints();
+    Console.WriteLine("Own-hand endpoint native boundaries, immutable facts and model/history delivery passed; real provider calls=0");return 0;
+}
+if(args.Length is 2 or 3 && args[0]=="--combat-limit-policy") {
+    AiCombatLimitPolicyProbe.Run(args[1],args.Length==3?args[2]:null);return 0;
+}
+if(args.Length==3 && args[0]=="--combat-limit-cards") {
+    AiCombatRuleProbe.Run(args[1],args[2],false,true);return 0;
+}
+if(args.Length==2 && args[0]=="--combat-limits-native") {
+    AiCombatLimitTests.Native(args[1]);return 0;
+}
+if(args.Length==5 && args[0]=="--situational-history-audit") {
+    AiSituationalHistoryProbe.Run(args[1],args[2],args[3],args[4]);return 0;
+}
+if(args.Length==2 && args[0]=="--situational-experience") {
+    AiLessonRetrievalTests.RankingAndBoundaries();AiLessonRetrievalTests.PlannerAndChoice(args[1]);return 0;
+}
+if(args.Length==2 && args[0]=="--expanded-combat-native") {
+    AiExpandedCombatTests.Native(args[1]);AiExpandedCombatTests.KeysAndComparisonIsolation();return 0;
+}
+if(args.Length==4 && args[0]=="--experience-input-audit") {
+    AiExperienceInputProbe.Run(args[1],args[2],args[3]);return 0;
+}
+if(args.Length is 4 or 5 && args[0]=="--real-tactical-probe") {
+    if(args.Length==5&&args[4]!="--paid")throw new ArgumentException("Unexpected probe option");
+    AiRealTacticalProbe.Run(args[1],args[2],args[3],args.Length==5);return 0;
+}
+if(args.Length==3 && args[0]=="--combat-rule-focus") {
+    AiCombatRuleProbe.Run(args[1],args[2],true);return 0;
+}
+if(args.Length==3 && args[0]=="--combat-rule-probe") {
+    AiCombatRuleProbe.Run(args[1],args[2]);return 0;
+}
+if(args.Length is 2 or 3 && args[0]=="--first-action-native") {
+    AiDrawContinuationTests.NativeFirstActions(args[1],args.Length==3?args[2]:null);return 0;
+}
+if(args.Length is 2 or 3 && args[0]=="--local-tactics-native") {
+    AiDrawContinuationTests.NativeTactics(args[1],args.Length==3?args[2]:null);return 0;
+}
+if(args.Length is 2 or 3 && args[0]=="--draw-continuation-native") {
+    AiDrawContinuationTests.Native(args[1],args.Length==3?args[2]:null);return 0;
+}
+if(args.Length>=4&&args[0]=="--rules-input-audit"){AiBuildInputAudit.Run(args[1],args.Skip(2).ToArray());return 0;}
+if(args.Length>=4 && args[0]=="--engine-rule-identities") {
+    AiEngineIdentityTests.CompareBuilds(args[1],args.Skip(2).ToArray());return 0;
+}
+if(args.Length==1 && args[0]=="--eternal-core") {
+    AiEternalEngineTests.CorePolicy();return 0;
+}
+if(args.Length is 3 or 4 && args[0]=="--eternal-source-native") {
+    AiEternalEngineTests.Native(args[1],args[2],args.Length==4?args[3]:null,true,true);return 0;
+}
+if(args.Length is 3 or 4 && args[0]=="--eternal-mode-native") {
+    AiEternalEngineTests.Native(args[1],args[2],args.Length==4?args[3]:null,true);return 0;
+}
+if(args.Length is 3 or 4 && args[0]=="--eternal-core-native") {
+    AiEternalEngineTests.Native(args[1],args[2],args.Length==4?args[3]:null);return 0;
+}
+if(args.Length==1 && args[0]=="--decision-facts") {
+    AiDecisionFactsTests.ExactBindingAndBudgets();
+    AiDecisionFactsTests.ModelAndExperience();
+    return 0;
+}
+if(args.Length==3 && args[0]=="--generated-token-engine") {
+    AiGeneratedTokenTests.Native(args[1],args[2]);return 0;
+}
+// Explicit offline native-engine probe. Never registers a model client or writes the source database.
+if (args.Length == 3 && args[0] == "--end-turn-engine") {
+    AiEndTurnEngineTests.Run(args[1], args[2]);
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--runtime-ability-facts") {
+    AiRuntimeAbilityFactsTests.RuntimeChanges();
+    AiRuntimeAbilityFactsTests.PrivacyAndBudget();
+    AiRuntimeAbilityFactsTests.DuplicatesAndSuppression();
+    AiDefinitionRulesTests.GuideAndExperience();
+    Console.WriteLine("Runtime ability facts and mock integration: 4/4; provider calls=0");
+    return 0;
+}
+if (args.Length == 4 && args[0] == "--training-replay") {
+    AiTrainingReplayTests.Diagnose(args[1], args[2], args[3]);
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--training-replay-checks") {
+    AiTrainingReplayTests.RoundTripAndIdentity();
+    AiTrainingReplayTests.EpochDiagnostics();
+    AiTrainingReplayTests.BestCheckpoint();
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--training-positions") {
+    AiTrainingPositionsTests.BoundedStrataAndLabels();
+    AiTrainingPositionsTests.SparseAndInvalidObservations();
+    AiTrainingPositionsTests.SuccessfulCompletionAndLeases();
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--value-search") {
+    AiSearchValueTests.BoundedDecisions();
+    AiSearchValueTests.CapturedDeckAndArtifact();
+    AiSearchValueTests.EndTurnValueCounters();
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--model-inference") {
+    AiModelInferenceTests.NativeMechanics();
+    AiModelInferenceTests.ShieldAndModelInputs();
+    Console.WriteLine("Native mechanics and learned inputs: passed; provider calls=0");
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--model-training") {
+    AiValueTrainingTests.IndependentDecks();
+    AiValueTrainingTests.RejectRegressions();
+    AiValueTrainingTests.RejectInvalidSamples();
+    Console.WriteLine("Independent local model training: 3/3; provider calls=0");
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--model-promotion") {
+    AiModelEvaluationTests.StrengthGate();
+    AiModelEvaluationTests.IsolatedModelsAndTrialPersistence();
+    Console.WriteLine("Frozen model comparison and promotion gate: 2/2; provider calls=0");
+    return 0;
+}
+if (args.Length == 3 && args[0] == "--model-promotion-report") {
+    AiModelEvaluationTests.Recheck(args[1],args[2]);
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--combat-threat") {
+    AiCombatThreatTests.NativeSequences();
+    AiCombatThreatTests.ResourcesAndBounds();
+    AiCombatThreatTests.ScopeIsolation();
+    Console.WriteLine("Native combat threat and resource decisions: 3/3; provider calls=0");
+    return 0;
+}
+if (args.Length == 3 && args[0] == "--combat-threat-source") {
+    AiCombatThreatTests.SourceCards(args[1],args[2]);
+    AiCombatThreatTests.ZeroAttackPlans();
+    Console.WriteLine("Real source cards and zero-attack plans: passed; provider calls=0");
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--combat-zero-plans") {
+    AiCombatThreatTests.ZeroAttackPlans();
+    Console.WriteLine("Useful and no-op zero-attack plans: passed; provider calls=0");
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--combat-bounds") {
+    AiCombatThreatTests.ResourcesAndBounds();
+    AiCombatThreatTests.ScopeIsolation();
+    return 0;
+}
+if (args.Length == 1 && args[0] == "--combat-enumeration") {
+    AiCombatThreatTests.ExhaustiveSmallBoards();
+    return 0;
+}
 var results = new List<object>();
 void Test(string name, Action action) { try { action(); results.Add(new { name, passed = true }); } catch(Exception e) { results.Add(new {name,passed=false,error=e.ToString()}); } }
 void Check(bool yes, string reason) { if(!yes) throw new Exception(reason); }
@@ -242,7 +430,100 @@ definitions[7].ArtPreview="/original.png";definitions[8].ArtPreview="/spell.png"
 definitions[8].Type=CardType.Spell;definitions[9].Type=CardType.Amulet;
 var data=Proxy<IGameDataProvider>.Make((method,args)=>method.Name switch {"GetCardDefinition"=>definitions.GetValueOrDefault((int)args![0]!),"GetAbilityConfigs"=>new List<AbilityConfig>(),"GetAllCardDefinitions"=>definitions,"get_Cards"=>definitions.Values.ToList(),_=>null});
 GameDataProvider.SetInstanceForTesting(data);
+Test("terminal transactions retain victory once and skip queued actions only after game over",AiEndTurnEngineTests.TerminalBoundary);
+Test("chained destruction after copy transform preserves the original effect source", ChainedTransformTests.DestroyReanimatedOriginalAfterCopyTransform);
+Test("runtime AI facts track actual grants, removals and counts without stale caches",AiRuntimeAbilityFactsTests.RuntimeChanges);
+Test("runtime AI facts exclude hidden zones and bound complete instance configurations",AiRuntimeAbilityFactsTests.PrivacyAndBudget);
+Test("runtime AI facts keep duplicate grants and suppression separate by instance",AiRuntimeAbilityFactsTests.DuplicatesAndSuppression);
+Test("ability owner perspective reverses correctly for enemy and observer seats without identifiers",AiRuntimeAbilityFactsTests.OwnerRelativePerspective);
+Test("learned value afterstates match native basic combat and resource features",AiModelInferenceTests.NativeMechanics);
+Test("imported model inputs recognize native shields and consumed attack opportunities",AiModelInferenceTests.ShieldAndModelInputs);
+Test("Eternal resource core controls mulligan, retention and setup without leaking across actors",AiEternalEngineTests.CorePolicy);
+Test("Emergency advice retains a bound use only when no native defense is proven",AiEternalRecoveryTests.Boundaries);
+Test("Production training Start accepts four LLM games and guards ordinary training",AiEvaluationLimitTests.Run);
+Test("Static player-scoped draw and crest do not suppress card-target scores",AiCompositeTargetTests.Boundaries);
+Test("Native self-expiry valuation rejects conditional, quota, choice and unrelated targets",AiTurnFiveAuditTests.Boundaries);
+Test("Recovery policy ablation isolates current and pre-fix actors without model fitting",AiRecoveryAblationTests.Boundaries);
+Test("Native summon mode facts distinguish current lethal from resource setup",AiEternalEngineTests.SummonModeRules);
+Test("native decision facts bind exact branches under a shared whole-rule budget",AiDecisionFactsTests.ExactBindingAndBudgets);
+Test("native choice flow preserves ordered proposals without fabricating settled effects",AiDecisionFlowTests.Boundaries);
+Test("mode cache and committed experience track actual native rule identity",AiDecisionFactsTests.ModelAndExperience);
+Test("generated Storm recipes read actual effects and reject unsafe dynamic shapes",AiGeneratedTokenTests.ConfigurationGuards);
+Test("generated-token decision bindings never leak after a submitted action",AiGeneratedTokenTests.DirectiveScope);
+Test("local learning keeps deck specialists independent and active weights immutable",AiValueTrainingTests.IndependentDecks);
+Test("local learning rejects held-out regressions and insufficient independent games",AiValueTrainingTests.RejectRegressions);
+Test("local learning rejects malformed samples and cancellation",AiValueTrainingTests.RejectInvalidSamples);
+Test("local numeric training replay binds exact model bytes and preserves complete data",AiTrainingReplayTests.RoundTripAndIdentity);
+Test("training diagnostics reproduce epoch and observation-stratum validation",AiTrainingReplayTests.EpochDiagnostics);
+Test("value fitting keeps the best whole-game checkpoint rather than the final epoch", AiTrainingReplayTests.BestCheckpoint);
+Test("training keeps bounded, balanced settled-position strata and exact outcome labels",AiTrainingPositionsTests.BoundedStrataAndLabels);
+Test("training fills sparse strata and rejects invalid observations",AiTrainingPositionsTests.SparseAndInvalidObservations);
+Test("training observes only successful completed local actions and releases exact leases",AiTrainingPositionsTests.SuccessfulCompletionAndLeases);
+Test("model promotion requires complete balanced evidence and no deck/role regression",AiModelEvaluationTests.StrengthGate);
+Test("LLM benchmark only scores complete four-game groups with the same actual opening",AiModelEvaluationTests.StrategyBenchmarkGroups);
+Test("LLM experience pairs exclude incomplete groups, changed openings, and history in controls",AiModelEvaluationTests.StrategyExperiencePairs);
+Test("benchmark mulligan is repeatable and independent of the other seat's submission order",AiModelEvaluationTests.SeededMulligan);
+Test("seeded battle sampling is reproducible without consuming settlement randomness in previews",AiSeededBattleTests.PreviewAndTransactionIsolation);
+Test("LLM opening evidence fingerprints actual ordered hands and decks without runtime identities",AiModelEvaluationTests.OpeningEvidence);
+Test("unvalidated model artifacts stay in isolated training seats and trial files",AiModelEvaluationTests.IsolatedModelsAndTrialPersistence);
+Test("native projection comparison isolates seats and counts only exact committed actions",AiCombatEvaluationTests.IsolationAndCommitMatching);
+Test("expanded combat and multi-attack lethal agree with native transactions",()=>AiExpandedCombatTests.Native());
+Test("search identity keeps changed combat resources distinct and comparison seats isolated",AiExpandedCombatTests.KeysAndComparisonIsolation);
+Test("finite precombat projection rejects unsupported conditions, chain, shared-name transaction limits, silence and stale rules",AiCombatProjectionTests.Guards);
+Test("situational experience retrieves observed relevant cases without hidden zones or outcome ranking",AiLessonRetrievalTests.RankingAndBoundaries);
+Test("finite trigger quotas match native attacks, isolate branches and refresh after commits",()=>AiCombatLimitTests.Native());
+Test("situational experience reaches planning and discover with unchanged request cap",()=>AiLessonRetrievalTests.PlannerAndChoice());
+Test("verified end-turn draw sources retrieve the exact settled action during planning",AiLessonRetrievalTests.DrawSourcePlanning);
+Test("precombat removal, health, healing and protections agree with native transactions",AiCombatRemovalTests.NativeEffectsAndProtections);
+Test("basic combat threat matches native legal attack routes including zero attack",AiCombatThreatTests.NativeSequences);
+Test("combat threat avoids false resource emergencies and preserves bounded uncertainty",AiCombatThreatTests.ResourcesAndBounds);
+Test("combat policy comparisons isolate concurrent execution scopes",AiCombatThreatTests.ScopeIsolation);
+Test("local search finds useful zero-attack routes without promoting no-op attacks",AiCombatThreatTests.ZeroAttackPlans);
+Test("learned search influences close decisions while preserving lethal, defense and reserves",AiSearchValueTests.BoundedDecisions);
+Test("search captures one exact deck network and frozen model artifact",AiSearchValueTests.CapturedDeckAndArtifact);
+Test("end-turn value features include isolated sequential damage and death resources",AiSearchValueTests.EndTurnValueCounters);
+Test("compact combat threat matches exhaustive basic-action enumeration",AiCombatThreatTests.ExhaustiveSmallBoards);
+Test("root action outcomes require completion and resist overlapping and subsequent action races",AiActionOutcomeTests.RootCompletionAndRaces);
+Test("completed AI decisions keep their exact local alternative and observed results in learning",AiActionOutcomeTests.CompletedDecisionAttribution);
+Test("committed discovers match the actual hand card and local alternative without leaking instances",AiActionOutcomeTests.CommittedDiscoverComparison);
+Test("terminal outcomes persist once with bounded public facts and hidden targets excluded",AiActionOutcomeTests.TerminalPersistenceAndPrivacy);
+Test("completed own hand endpoints preserve native identities, cost, keywords and bounded history without hidden data",AiActionOutcomeTests.OwnHandEndpoints);
+Test("retrieved middle observations stay in bounded model excerpts with original retained indices",AiLessonRetrievalTests.ExcerptBoundaries);
+Test("same retrieved episode reaches planning and discovery without extra model requests",()=>AiLessonRetrievalTests.ExcerptPlannerAndChoice());
+Test("unlimited self damage rewrites agree with native combat and conservatively reject unknown interventions",()=>AiZeroDamageTests.Native());
+Test("native AI avoids a health-losing attack into an unconditional zero-damage Ward",()=>AiZeroDamagePolicyProbe.Run());
+Test("historical model prose is preserved for review but excluded from live playing facts",AiLearningEvidenceTests.ProseIsReviewMaterial);
+Test("accepted planning explanations retain complete history with explicit archive bounds",AiPlanArchiveTests.Run);
+Test("committed public leader health is owner-bound, deduplicated and retained with coverage",AiLearningEvidenceTests.NativeLeaderHealthIsCommittedAndBounded);
 Test("strategy planner isolates hidden information and reuses finished match experience", AiStrategyTests.Run);
+Test("strategy benchmark freezes learning inputs across games while preserving results", AiStrategyTests.FrozenBenchmarkExperience);
+Test("rule-identical guides persist without age retries while failures cool down and coalesce", AiStrategyTests.GuideReuseAndCooldown);
+Test("current-rule learning excludes obsolete outcome statistics without deleting history", AiStrategyTests.CompatibleExperience);
+Test("AI-only builds preserve rule identity while changed rule/compiler inputs expire it",AiEngineIdentityTests.Separation);
+Test("guide cache binds exact prompt, verified routes and resource principles",AiEngineIdentityTests.GuideInputs);
+Test("committed own draws can be reconciled without accepting unbound hand changes",AiDrawEvidenceTests.Run);
+Test("AI rule identity covers configurations while ignoring editor/media metadata",AiDefinitionRulesTests.SemanticIdentity);
+Test("AI rule identity caches coherent provider revisions",AiDefinitionRulesTests.RevisionCache);
+Test("AI guide and experience reuse require current definition identity",AiDefinitionRulesTests.GuideAndExperience);
+Test("AI configuration facts preserve actual conditions, effects, targets and budget coverage",AiDefinitionRulesTests.ConfigurationFacts);
+Test("AI recursively resolves actual definition ID references without evaluating dynamic DSL",AiDefinitionRulesTests.DefinitionDependencies);
+if(Environment.GetEnvironmentVariable("AI_RULE_IDENTITY_SOURCE") is {Length:>0} identitySource
+    &&Environment.GetEnvironmentVariable("AI_RULE_IDENTITY_OUTPUT") is {Length:>0} identityOutput)
+ Test("native loaded catalog has a stable cached definition fingerprint",()=>AiDefinitionRulesTests.NativeCatalog(identitySource,identityOutput));
+Test("long AI traces preserve opening and late-game evidence with explicit omissions",AiExperienceTraceTests.LongGame);
+Test("AI comparisons require the exact committed action and preserve resource context",AiExperienceTraceTests.CommitMatching);
+Test("all-rejected model matches retain fallback facts without claiming successful advice",AiExperienceTraceTests.RejectedMatch);
+Test("paid provider probes cannot start accidentally from ordinary offline tests",()=>{
+ var previous=Environment.GetEnvironmentVariable("AI_ALLOW_PAID_PROBES");
+ try {
+  Environment.SetEnvironmentVariable("AI_ALLOW_PAID_PROBES",null);
+  foreach(var run in new Action<string>[] {AiPlayBindingProbe.Run,AiRuleReasoningProbe.Run}) {
+   var rejected=false;
+   try{run("unused-paid-probe.json");}catch(InvalidOperationException error){rejected=error.Message.Contains("AI_ALLOW_PAID_PROBES");}
+   Check(rejected,"real provider probe did not reject before key lookup or network calls");
+  }
+ } finally {Environment.SetEnvironmentVariable("AI_ALLOW_PAID_PROBES",previous);}
+});
 Test("AI binds exact hand instances and validated play forms, then expires stale advice", AiPlayBindingTests.Run);
 var activeAbilities = new List<IAbility>();
 var abilityManager=Proxy<IAbilityManager>.Make((method,args)=>method.Name switch {"GetAbilitiesForCard" or "GetEffectiveAbilitiesForCard" or "CreateAbilitiesForCard"=>activeAbilities,_=>null});
@@ -290,6 +571,86 @@ Test("AI reads actual automatic end-turn conditions without mutating runtime tar
  factory.CreateAndRegisterNewCard(match,5,own.PlayerId,CardZone.Hand);Check(Count(Forecast())==0,"nonempty hand incorrectly passed empty-hand condition");own.Hand.Clear();
  config.Targets["target1"].PlayerChoiceOptions=new(){IsRequired=true};Check(Count(Forecast())==0,"interactive end-turn effect treated as automatic");
 });
+Test("AI keeps independent end-turn leader damage without sampling optional targets or leaking hidden cards",()=>{
+ var own=new PlayerState(Guid.NewGuid());var enemy=new PlayerState(Guid.NewGuid());var runtime=new List<IAbility>();var lookedUp=new List<Guid>();
+ var manager=Proxy<IAbilityManager>.Make((m,a)=>{
+  if(m.Name!="GetEffectiveAbilitiesForCard")return null;
+  lookedUp.Add((Guid)a![0]!);return runtime.Where(ability=>ability.SourceCardId==(Guid)a[0]!).ToList();
+ });
+ var match=new GameState("partial-end-turn",own,enemy,own.PlayerId){AbilityManager=manager,BuffManager=buffs};
+ own.Leader=factory.CreateAndRegisterNewCard(match,1,own.PlayerId,CardZone.Staging);
+ enemy.Leader=factory.CreateAndRegisterNewCard(match,1,enemy.PlayerId,CardZone.Staging);
+ var source=factory.CreateAndRegisterNewCard(match,2,own.PlayerId,CardZone.Field);
+ var enemyUnit=factory.CreateAndRegisterNewCard(match,4,enemy.PlayerId,CardZone.Field);
+ var fox=factory.CreateAndRegisterNewCard(match,3,own.PlayerId,CardZone.Field);
+ var hidden=factory.CreateAndRegisterNewCard(match,5,enemy.PlayerId,CardZone.Hand);
+ var queries=new List<string>();
+ var query=Proxy<IQueryExecutor>.Make((m,a)=>{
+  var text=((QueryConfig)a![0]!).SourcePoolExpression;queries.Add(text);
+  if(text.Contains("random",StringComparison.OrdinalIgnoreCase))throw new Exception("forecast consumed a random selection");
+  return new QueryResult{Success=true,Results=text=="context.opponent.leader"?new object[]{enemy.Leader}:enemy.Field.Cast<object>().ToArray()};
+ });
+ var pending=Proxy<IPendingActionService>.Make((m,a)=>throw new Exception("forecast prompted a player"));
+ var selection=new TargetSelectionService(NullLogger<TargetSelectionService>.Instance,query,pending);
+ var evaluator=new DslConditionEvaluator(compiler,NullLogger<DslConditionEvaluator>.Instance);
+ var mapper=new MapperConfiguration(cfg=>{}).CreateMapper();
+ var conditionFactory=new ConditionFactory(NullLoggerFactory.Instance,mapper,evaluator);var targetFactory=new TargetFactory(selection,NullLogger<Target>.Instance);
+ var config=new AbilityConfig{Name="generic mixed end-turn damage",Trigger=new(){EventTypes=[EventType.TurnEnd],ValidZones=[CardZone.Field]},
+  Conditions=[new(){Expression="count(context.owner.hand) == 0"},new(){Expression="context.triggeringEvent.EndingPlayer.playerId == context.owner.playerId"}],
+  Targets=new(){["leader"]=new(){Query=new(){SourcePoolExpression="context.opponent.leader"}},
+   ["random"]=new(){Query=new(){SourcePoolExpression="context.opponent.field.query(self.type == \"Follower\").take(random 1)"}}},
+  Effects=[new(){Type=EffectType.Damage,Parameters=new(){["DamageAmount"]=new StaticValueConfig{Value=2},["DistributionMode"]=new StaticValueConfig{Value="perTarget"}}}]};
+ var ability=new Ability(config,conditionFactory,targetFactory,selection,source);runtime.Add(ability);
+ using var provider=new ServiceCollection().AddSingleton(query).AddSingleton<IConditionEvaluator>(evaluator).AddSingleton<IBuffService>(buffService).AddSingleton<IEventHistoryService>(Proxy<IEventHistoryService>.Make((m,a)=>null)).BuildServiceProvider();
+ using var ctx=new GameContext(provider,mapper,accessor,match,own.PlayerId,sourceCard:source);
+ var ownView=new ShadowverseBeyond.Server.Dtos.PlayerStateDto{PlayerId=own.PlayerId,CurrentEP=1,CanEvolve=true,CurrentSEP=1,CanSuperEvolve=true,
+  LeaderCard=new(){InstanceId=own.Leader.InstanceId,CardId=1,Type=CardType.Leader,CurrentHealth=20},
+  Field=[new(){InstanceId=source.InstanceId,CardId=2,OwnerPlayerId=own.PlayerId,Type=CardType.Follower,CurrentAttack=2,CurrentHealth=3,MaxHealth=3},
+   new(){InstanceId=fox.InstanceId,CardId=3,OwnerPlayerId=own.PlayerId,Type=CardType.Follower,CurrentAttack=3,CurrentHealth=2,MaxHealth=2,CanAttack=true,Keywords=[CardKeyword.Storm]}]};
+ var enemyView=new ShadowverseBeyond.Server.Dtos.PlayerStateDto{PlayerId=enemy.PlayerId,DisplayName="PRIVATE_ACCOUNT",LeaderCard=new(){InstanceId=enemy.Leader.InstanceId,CardId=1,Type=CardType.Leader,CurrentHealth=2},
+  Field=[new(){InstanceId=enemyUnit.InstanceId,CardId=4,Type=CardType.Follower,CurrentAttack=1,CurrentHealth=3,MaxHealth=3}],Hand=[new(){Name="PRIVATE_HIDDEN_HAND"}]};
+ var snapshot=new ShadowverseBeyond.Server.Dtos.GameStateDto{Players=[ownView,enemyView]};
+ var type=typeof(AiTurnExecutor).Assembly.GetType("ShadowverseBeyond.Server.Services.AiEndTurnForecast")!;
+ var read=type.GetMethod("ReadAsync",BindingFlags.NonPublic|BindingFlags.Static)!;
+ object Forecast(){var task=(Task)read.Invoke(null,[ctx,ownView])!;task.GetAwaiter().GetResult();return task.GetType().GetProperty("Result")!.GetValue(task)!;}
+ int Count(object value)=>((System.Collections.ICollection)value.GetType().GetProperty("Damage")!.GetValue(value)!).Count;
+ var otherEnemyUnit=factory.CreateAndRegisterNewCard(match,4,enemy.PlayerId,CardZone.Field);
+ enemyView.Field.Add(enemyView.Field[0] with {InstanceId=otherEnemyUnit.InstanceId});
+ var forecast=Forecast();Check(Count(forecast)==1,"mixed optional target hid deterministic leader damage");
+ var facts=JsonSerializer.SerializeToElement(type.GetMethod("ForModel",BindingFlags.NonPublic|BindingFlags.Static)!.Invoke(null,[forecast,snapshot,own.PlayerId]),new JsonSerializerOptions(JsonSerializerDefaults.Web));
+ Check(facts.GetProperty("damage")[0].GetProperty("baseDamagePerTarget").GetInt32()==2&&facts.GetProperty("damage")[0].GetProperty("targets").GetArrayLength()==1
+  &&facts.GetProperty("damage")[0].GetProperty("targets")[0].GetProperty("zone").GetString()=="leader"
+  &&facts.GetProperty("omitted")[0].GetProperty("reason").GetString()=="random-follower-damage-not-projected","model projection mixed known and unknown damage");
+ enemy.Field.Remove(otherEnemyUnit);enemyView.Field.RemoveAt(1);
+ Check(!facts.GetRawText().Contains("PRIVATE_")&&!facts.GetRawText().Contains(own.PlayerId.ToString())&&!lookedUp.Contains(hidden.InstanceId),"forecast inspected/leaked a hidden card or identity");
+ Check(ability.Targets.All(target=>target.NeedsResolution&&target.ResolutionCount==0)&&ability.Conditions.All(condition=>condition.EvaluationCount==0),"forecast mutated runtime bookkeeping");
+ Check(ability.Trigger.TotalTriggerCount==0&&ability.Trigger.CurrentTurnTriggerCount==0,"forecast recorded a real ability trigger");
+ config.AbilityKeywords.Add(new(){Keyword=AbilityKeyword.Enhance,Value=2});Check(Count(Forecast())==0,"keyword-gated ability was assumed unconditional");config.AbilityKeywords.Clear();
+ config.Trigger.LimitSameNameOncePerTransaction=true;Check(Count(Forecast())==0,"transaction-once ability was double-countable");config.Trigger.LimitSameNameOncePerTransaction=false;
+ var search=typeof(AiTurnExecutor).Assembly.GetType("ShadowverseBeyond.Server.Services.AiTacticalSearch")!;
+ var plan=search.GetMethod("FindWithEndTurn",BindingFlags.NonPublic|BindingFlags.Static)!.Invoke(null,[snapshot,own.PlayerId,CancellationToken.None,null,null,forecast])!;
+ Check((string)plan.GetType().GetProperty("First")!.GetValue(plan)!.GetType().GetProperty("Type")!.GetValue(plan.GetType().GetProperty("First")!.GetValue(plan)!)! =="EndTurn","certain end-turn lethal spent an attack/evolution instead");
+ enemy.Field.Clear();Check(Count(Forecast())==1,"optional empty random pool blocked leader damage");enemy.Field.Add(enemyUnit);
+ config.Targets["random"].TargetHandling=TargetHandlingStrategy.BlockPlayerOperation;Check(Count(Forecast())==0,"required random pool was assumed independent");config.Targets["random"].TargetHandling=null;
+ config.Effects[0].Parameters["DistributionMode"]=new StaticValueConfig{Value="split"};Check(Count(Forecast())==0,"split damage treated as per-target damage");
+ config.Effects[0].Parameters["DistributionMode"]=new FormulaValueConfig{Formula="\"perTarget\""};Check(Count(Forecast())==0,"dynamic distribution silently assumed per-target");
+ config.Effects[0].Parameters["DistributionMode"]=new StaticValueConfig{Value="perTarget"};
+ var reaction=new Ability(new(){Trigger=new(){EventTypes=[EventType.Damage],ValidZones=[CardZone.Field]},Effects=[new(){Type=EffectType.Heal}]},conditionFactory,targetFactory,selection,enemyUnit);
+ runtime.Add(reaction);Check(Count(Forecast())==0,"public damage reaction ignored in terminal forecast");runtime.Remove(reaction);
+ var hiddenReaction=new Ability(new(){Trigger=new(){EventTypes=[EventType.Damage],ValidZones=[CardZone.Hand]},Effects=[new(){Type=EffectType.Heal}]},conditionFactory,targetFactory,selection,hidden);
+ runtime.Add(hiddenReaction);Check(Count(Forecast())==1&&!lookedUp.Contains(hidden.InstanceId),"projection used hidden enemy ability knowledge");runtime.Remove(hiddenReaction);
+ var selfBuff=new Ability(new(){Trigger=new(){EventTypes=[EventType.TurnEnd],ValidZones=[CardZone.Field]},
+  Targets=new(){["self"]=new(){Query=new(){SourcePoolExpression="context.sourceCard"}}},
+  Effects=[new(){Type=EffectType.SetKeyword,Parameters=new(){["Keyword"]=new StaticValueConfig{Value="Shield"}}}]},conditionFactory,targetFactory,selection,fox);
+ runtime.Add(selfBuff);Check(Count(Forecast())==1,"harmless own self-keyword end-turn ability blocked projection");runtime.Remove(selfBuff);
+ var combatReaction=new Ability(new(){Trigger=new(){EventTypes=[EventType.Clash],ValidZones=[CardZone.Field]},Effects=[new(){Type=EffectType.Heal}]},conditionFactory,targetFactory,selection,enemyUnit);
+ runtime.Add(combatReaction);var combatForecast=Forecast();
+ Check(Count(combatForecast)==1&&((IReadOnlySet<Guid>)combatForecast.GetType().GetProperty("UnsafeAttackers")!.GetValue(combatForecast)!).Contains(fox.InstanceId),"enemy clash wrongly blocked immediate end turn or stayed trusted after an attack");
+ var memory=(AiStrategyPlanner.AutomaticEndDamageContext)type.GetMethod("ForMemory",BindingFlags.NonPublic|BindingFlags.Static)!.Invoke(null,[combatForecast,snapshot,own.PlayerId,fox.InstanceId])!;
+ Check(memory.EnemyLeaderBaseDamage==2&&memory.EnemyFieldTargetCount==1&&memory.UnmodeledParts==0&&memory.AttackInvalidates==true&&memory.SourceCardIds.SequenceEqual(new[]{2}),"decision estimate lost singleton damage or attack invalidation");
+ runtime.Remove(combatReaction);
+ factory.CreateAndRegisterNewCard(match,5,own.PlayerId,CardZone.Hand);Check(Count(Forecast())==0,"nonempty real hand passed empty-hand condition");
+});
 Test("AI derives automatic hand loss from live abilities, not labels, without mutating the game",()=>{
  var own=new PlayerState(Guid.NewGuid());var enemy=new PlayerState(Guid.NewGuid());var runtime=new List<IAbility>();
  var manager=Proxy<IAbilityManager>.Make((m,a)=>m.Name=="GetEffectiveAbilitiesForCard"?runtime.Where(ability=>ability.SourceCardId==(Guid)a![0]!).ToList():null);
@@ -304,6 +665,27 @@ Test("AI derives automatic hand loss from live abilities, not labels, without mu
  var cfg=new AbilityConfig {Id=777,Name="arbitrary label",Trigger=new(){EventTypes=[EventType.PlayCard],RelationType=TriggerRelationType.TargetOther,ValidZones=[CardZone.Hand]},
   Conditions=[new(){Expression="(context.triggeringEvent.PlayingPlayer.playerId) == (context.owner.playerId)"}],
   Targets=new(){["target1"]=new(){Query=new(){SourcePoolExpression="context.SourceCard"}}},Effects=[new(){Type=EffectType.Discard}]};
+ string? nativeRuleHash=null;
+ if(Environment.GetEnvironmentVariable("AI_HAND_LOSS_PROBE_SOURCE") is {Length:>0} catalogPath) {
+  using var connection=new SqliteConnection(new SqliteConnectionStringBuilder{DataSource=catalogPath,Mode=SqliteOpenMode.ReadOnly}.ToString());connection.Open();
+  using var command=connection.CreateCommand();command.CommandText="SELECT JsonConfig FROM CardAbilities WHERE CardId=1474113";
+  using var reader=command.ExecuteReader();JsonElement? native=null;
+  IEnumerable<JsonElement> Objects(JsonElement node) {
+   if(node.ValueKind==JsonValueKind.Object) {yield return node;foreach(var property in node.EnumerateObject())foreach(var child in Objects(property.Value))yield return child;}
+   else if(node.ValueKind==JsonValueKind.Array)foreach(var item in node.EnumerateArray())foreach(var child in Objects(item))yield return child;
+  }
+  while(reader.Read()&&native==null) {
+   using var parsed=JsonDocument.Parse(reader.GetString(0));
+   foreach(var node in Objects(parsed.RootElement))if(node.TryGetProperty("trigger",out var trigger)
+      &&trigger.TryGetProperty("validZones",out var zones)&&zones.EnumerateArray().Any(zone=>zone.GetString()=="Hand")
+      &&node.TryGetProperty("effects",out var effects)&&effects.GetArrayLength()==1
+      &&effects[0].GetProperty("type").GetString()=="Discard") {native=node.Clone();break;}
+  }
+  Check(native!=null,"current ArduNight catalog no longer contains the expected automatic self-discard grant");
+  var nativeOptions=new JsonSerializerOptions(JsonSerializerDefaults.Web);nativeOptions.Converters.Add(new JsonStringEnumConverter());
+  cfg=JsonSerializer.Deserialize<AbilityConfig>(native!.Value.GetRawText(),nativeOptions)!;
+  nativeRuleHash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(native.Value.GetRawText())));
+ }
  var ability=new Ability(cfg,new ConditionFactory(NullLoggerFactory.Instance,mapper,conditionEvaluator),new TargetFactory(selection,NullLogger<Target>.Instance),selection,fragile);runtime.Add(ability);
  using var provider=new ServiceCollection().AddSingleton<IConditionEvaluator>(conditionEvaluator).AddSingleton<IBuffService>(buffService).AddSingleton<IEventHistoryService>(Proxy<IEventHistoryService>.Make((m,a)=>null)).BuildServiceProvider();
  using var ctx=new GameContext(provider,mapper,accessor,match,own.PlayerId);
@@ -319,6 +701,8 @@ Test("AI derives automatic hand loss from live abilities, not labels, without mu
  cfg.Targets["target1"].PlayerChoiceOptions=new(){IsRequired=true};Check(Read().Length==0,"manual choice treated as automatic");cfg.Targets["target1"].PlayerChoiceOptions=null;
  cfg.Effects.Add(new(){Type=EffectType.None});Check(Read().Length==0,"unknown composite claimed as proven loss");cfg.Effects.RemoveAt(1);
  runtime.Clear();Check(Read().Length==0,"removed granted ability remained in forecast");
+ if(Environment.GetEnvironmentVariable("AI_HAND_LOSS_PROBE_OUTPUT") is {Length:>0} outputPath)
+  File.WriteAllText(outputPath,JsonSerializer.Serialize(new{sourceCardId=1474113,nativeRuleHash,passed=true,readOnly=true,scope="current catalog grant config through runtime Ability and DSL condition evaluator; no real match mutation"}));
 });
 Test("inverse of all candidates resolves to an explicit empty target list", () => {
  var query = Proxy<IQueryExecutor>.Make((m,a) => new QueryResult { Results = new object[] { p1.Leader } });
@@ -559,6 +943,39 @@ Test("evidence add set consume and insufficient consumption preserve counter sem
  var fromPlayer=evidenceModifier.Apply(new Effect(p1.PlayerId),context,new(){Amount=1,PlayerScope=PlayerScope.Self});Check(fromPlayer.Success&&card.Evidence==6,"player scope did not resolve evidence");
  var dto=ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create(card,context);Check(dto.Evidence==6&&dto.Counters[CardInstance.EvidenceCounterKey]==6,"network counter snapshot missing");
  Check(CardInstanceSnapshot.From(card).Evidence==6&&card.Counters.Evidence==6,"DSL snapshot evidence missing");
+});
+Test("evidence consumption follows the player scope with inherited card targets", () =>
+{
+    p1.Field.Clear();
+    p2.Field.Clear();
+    var ownEvidence = factory.CreateAndRegisterNewCard(game, 10, p1.PlayerId, CardZone.Field);
+    var opponentEvidence = factory.CreateAndRegisterNewCard(game, 10, p2.PlayerId, CardZone.Field);
+    ownEvidence.SetCounter(CardInstance.EvidenceCounterKey, 2);
+    opponentEvidence.SetCounter(CardInstance.EvidenceCounterKey, 2);
+    var shuffledCard = factory.CreateAndRegisterNewCard(game, 2, p1.PlayerId, CardZone.Deck);
+    var effect = new Effect(p1.PlayerId) { SelectedTargets = [TargetInfo.ForCard(shuffledCard)] };
+
+    var result = evidenceModifier.Apply(effect, context, new()
+    {
+        Operation = CounterOperation.Consume,
+        Amount = 1,
+        PlayerScope = PlayerScope.Self
+    });
+
+    Check(result.Success && ownEvidence.Evidence == 1 && opponentEvidence.Evidence == 2,
+        "an inherited shuffle target prevented consumption of the owner's evidence");
+    Check(result.GeneratedEvents.OfType<CounterChangedEvent>().Count() == 1,
+        "evidence consumption did not emit one counter update");
+
+    effect.SelectedTargets = [TargetInfo.ForCard(opponentEvidence)];
+    result = evidenceModifier.Apply(effect, context, new()
+    {
+        Operation = CounterOperation.Consume,
+        Amount = 1,
+        PlayerScope = PlayerScope.Self
+    });
+    Check(result.Success && ownEvidence.Evidence == 0 && opponentEvidence.Evidence == 2,
+        "an inherited evidence target overrode the selected player scope");
 });
 foreach(var operation in new[]{CounterOperation.Set,CounterOperation.Consume}) Test($"evidence reaching zero by {operation} is system-destroyed",()=>{
  p1.Field.Clear();var card=factory.CreateAndRegisterNewCard(game,10,p1.PlayerId,CardZone.Field);var result=evidenceModifier.Apply(new Effect(p1.PlayerId){SelectedTargets=new(){TargetInfo.ForCard(card)}},context,new(){Operation=operation,Amount=operation==CounterOperation.Set?0:1});

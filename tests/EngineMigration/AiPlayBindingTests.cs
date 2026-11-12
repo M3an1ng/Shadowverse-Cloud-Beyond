@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using ShadowverseBeyond.Server.Domain.Entities;
+using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Services;
@@ -70,6 +71,14 @@ internal static class AiPlayBindingTests
                     "resource continuations reused the same instance or exceeded remaining PP");
                 Check(legal.EnumerateArray().Where(x=>x.GetProperty("handIndex").GetInt32()==1)
                     .All(x=>x.GetProperty("atRiskHandIndexes").GetArrayLength()==0),"discard risk includes the card being played");
+                foreach(var first in legal.EnumerateArray()) {
+                    var budget=first.GetProperty("handCostExample");var line=budget.GetProperty("plays").EnumerateArray().ToArray();
+                    Check(line[0].GetProperty("handIndex").GetInt32()==first.GetProperty("handIndex").GetInt32()
+                        &&line.Sum(step=>step.GetProperty("cost").GetInt32())==budget.GetProperty("totalCost").GetInt32()
+                        &&line.Select(step=>step.GetProperty("handIndex").GetInt32()).Distinct().Count()==line.Length
+                        &&budget.GetProperty("remainingPP").GetInt32()==player.CurrentPP-budget.GetProperty("totalCost").GetInt32(),
+                        "arithmetic example mixed first steps, repeated a copy or miscounted PP");
+                }
                 Check(input.RootElement.GetProperty("ownHand")[1].GetProperty("card").GetProperty("effects")[0].GetString()=="DIFFERENT_COPY_RULE",
                     "candidate's granted effects were hidden");
             }
@@ -122,6 +131,68 @@ internal static class AiPlayBindingTests
                     "invalid "+scenario+" route was not corrected exactly once");
                 Check(provider.LastPlanInput.Contains("correction")&&!provider.LastPlanInput.Contains(own.PlayerId.ToString()),
                     "repair omitted structured reason or leaked player ID");
+                if(scenario=="hand-loss")Check(provider.LastPlanInput.Contains("constraintCheckedReorderings"),"repair omitted a feasible reordering of the proposed cards");
+                var committed=new PlayCardEvent(own,new CardInstance(testingPlayer.Hand[0].InstanceId,2,own.PlayerId),PlayMode.Base,2);
+                planner.ObserveCommittedEvents(fresh,[committed,new GameEndEvent(own.PlayerId,enemy.PlayerId,"fixture end")]);
+            }
+            var history=(AiStrategyPlanner.HistoryEntry[])typeof(AiStrategyPlanner).GetMethod("ReadHistory",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(planner,null)!;
+            Check(history.Length==3&&history.All(entry=>entry.Lesson.PlanValidations is {Length:1}
+                &&entry.Lesson.PlanValidations[0].Repaired&&entry.Lesson.PlanValidations[0].AvailablePP.HasValue
+                &&entry.Lesson.Played.Length==1&&entry.Lesson.HandActions?.Count(action=>action.Kind=="play")==1),
+                "rejected proposals were lost on finish or were counted as committed plays");
+            Check(provider.LastPlanInput.Contains("rejectedPlanConstraints"),"later plans did not reuse verified rejection experience");
+            provider.LineScenario="three";provider.RefuseRepair=false;defaultAvailable=true;
+            var threePlayer=player with {CurrentPP=6,MaxPP=6,Hand=[card with {MaxHealth=3},player.Hand[1] with {MaxHealth=3},card with {InstanceId=Guid.NewGuid(),MaxHealth=3}]};
+            var threeSnapshot=snapshot with {CurrentPlayerId=own.PlayerId,Phase=GamePhase.Main,Players=[threePlayer,opponent]};
+            var advance=typeof(AiStrategyPlanner).GetMethod("AdvanceCommittedPlan",BindingFlags.Instance|BindingFlags.NonPublic)!;
+            GameStateDto Played(GameStateDto before,ShadowverseBeyond.Server.Dtos.SignalR.Actions.PlayCardActionDto action) {
+                var ownView=before.Players[0];var used=ownView.Hand.Single(item=>item.InstanceId==action.CardUid);
+                return before with {Players=[ownView with {CurrentPP=ownView.CurrentPP-action.PaidCost!.Value,
+                    Hand=ownView.Hand.Where(item=>item.InstanceId!=used.InstanceId).ToList(),Field=ownView.Field.Append(used with {Zone=CardZone.Field}).ToList()},before.Players[1]]};
+            }
+            var threeGame=new GameState("three-follow",own,enemy,own.PlayerId);
+            var following=planner.PlanAsync(threeGame,threeSnapshot,own.PlayerId,default,Default,checkPlayMode:Mode).GetAwaiter().GetResult();
+            using(var payload=JsonDocument.Parse(provider.LastPlanInput)) {
+                var options=payload.RootElement.GetProperty("legalPlays").EnumerateArray().ToArray();
+                Check(options.Where(option=>option.GetProperty("mode").GetString()=="Base")
+                    .All(option=>option.GetProperty("handCostExample").GetProperty("plays").GetArrayLength()==3
+                        &&option.GetProperty("handCostExample").GetProperty("remainingPP").GetInt32()==0),
+                    "six PP example did not expose the full three-Base route");
+            }
+            var current=threeSnapshot;
+            for(var step=0;step<3;step++) {
+                var selected=ai.DecidePlayCardAsync(current,own.PlayerId,following).GetAwaiter().GetResult();
+                Check(selected?.PlayMode==PlayMode.Base&&selected.PaidCost==2,"line reverted to affordable Enhance instead of following the planned Base form");
+                current=Played(current,selected!);
+                planner.ObserveCommittedEvents(threeGame,[new PlayCardEvent(own,new CardInstance(selected!.CardUid,2,own.PlayerId),PlayMode.Base,2)]);
+                following=(AiStrategyPlanner.TurnPlan?)advance.Invoke(planner,[threeGame,current,own.PlayerId,"PlayCard",selected]);
+                Check(step==2?following?.Play==null:following?.Play?.HandIndex==0,"remaining line was not rebound after hand positions shifted");
+                if(step<2)Check(following?.Play?.Choices is {Length:1} hints && hints[0].OptionIndex==step+1,
+                    "later-step mode intent was dropped while rebasing hand positions");
+            }
+            Check(current.Players[0].Hand.Count==0&&current.Players[0].CurrentPP==0&&current.Players[0].Field.Count==3,"three-step route did not finish");
+            planner.ObserveCommittedEvents(threeGame,[new GameEndEvent(own.PlayerId,enemy.PlayerId,"fixture line end")]);
+            var fullHistory=(AiStrategyPlanner.HistoryEntry[])typeof(AiStrategyPlanner).GetMethod("ReadHistory",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(planner,null)!;
+            Check(fullHistory.Any(entry=>entry.Lesson.Played.Length==3&&entry.Lesson.PlanFollows is {Length:3} follows
+                &&follows[0].Status=="continued"&&follows[2].Status=="finished"),"committed line progress did not survive finish");
+            foreach(var deviation in new[]{"resource","draw","buff","enemy-board","new-body","new-body-effect","new-body-counter","other-action"}) {
+                var branch=new GameState("interrupt-"+deviation,own,enemy,own.PlayerId);
+                var branchPlan=planner.PlanAsync(branch,threeSnapshot,own.PlayerId,default,Default,checkPlayMode:Mode).GetAwaiter().GetResult();
+                var selected=ai.DecidePlayCardAsync(threeSnapshot,own.PlayerId,branchPlan).GetAwaiter().GetResult()!;
+                var after=Played(threeSnapshot,selected);var changed=after.Players[0];var their=after.Players[1];
+                switch(deviation) {
+                    case "resource":changed=changed with {CurrentPP=changed.CurrentPP+1};break;
+                    case "draw":changed=changed with {Hand=changed.Hand.Append(card with {InstanceId=Guid.NewGuid()}).ToList()};break;
+                    case "buff":changed=changed with {Hand=changed.Hand.Select((item,index)=>index==0?item with {EffectDescriptions=["UNEXPECTED_RULE"]}:item).ToList()};break;
+                    case "enemy-board":their=their with {Field=[card with {InstanceId=Guid.NewGuid()}]};break;
+                    case "new-body":changed=changed with {Field=changed.Field.Select(item=>item with {CurrentAttack=99}).ToList()};break;
+                    case "new-body-effect":changed=changed with {Field=changed.Field.Select(item=>item with {EffectDescriptions=["UNEXPECTED_RULE"]}).ToList()};break;
+                    case "new-body-counter":changed=changed with {Field=changed.Field.Select(item=>item with {Counters=new(){["unexpected"]=1}}).ToList()};break;
+
+                }
+                after=after with {Players=[changed,their]};
+                var stopped=(AiStrategyPlanner.TurnPlan?)advance.Invoke(planner,[branch,after,own.PlayerId,deviation=="other-action"?"PerformAttack":"PlayCard",selected]);
+                Check(stopped?.Play==null&&!stopped!.LineConstraintsChecked,"line survived unexpected "+deviation);
             }
             provider.LineScenario="hand-loss";provider.RefuseRepair=true;
             var refusedGame=new GameState("line-refused",own,enemy,own.PlayerId);var beforeRefusal=provider.PlanResponses;
@@ -138,7 +209,7 @@ internal static class AiPlayBindingTests
                     "control toggle changed base candidates or failed to disable only line validation");
             }
             using(var wire=JsonDocument.Parse(JsonSerializer.Serialize(plan,new JsonSerializerOptions(JsonSerializerDefaults.Web))))
-                Check(!wire.RootElement.TryGetProperty("playBinding",out _),"private runtime binding was serialized");
+                Check(!wire.RootElement.TryGetProperty("playBinding",out _)&&!wire.RootElement.TryGetProperty("playLine",out _),"private runtime binding was serialized");
         }
         finally {Directory.Delete(root,true);}
     }
@@ -163,8 +234,8 @@ internal static class AiPlayBindingTests
                 """{"focus":"value","plan":"test","prioritize":[],"hold":[],"play":{"handIndex":1,"cardId":2,"mode":"Base","cost":2,"intent":"use"}}""";
             if(plan!=null&&LineScenario!=null) {
                 var correction=plan.Contains("\"correction\"")&&!RefuseRepair;
-                AiStrategyPlanner.PlayAdvice Step(int index)=>new(index,2,"Base",2,"use");
-                var line=correction?(LineScenario=="budget"?new[]{Step(0)}:new[]{Step(0),Step(1)}):
+                AiStrategyPlanner.PlayAdvice Step(int index)=>new(index,2,"Base",2,"use",Choices:LineScenario=="three"&&index>0?[new(17,0,0,index)]:null);
+                var line=LineScenario=="three"?new[]{Step(0),Step(1),Step(2)}:correction?(LineScenario=="budget"?new[]{Step(0)}:new[]{Step(0),Step(1)}):
                     LineScenario=="hand-loss"?new[]{Step(1),Step(0)}:LineScenario=="reuse"?new[]{Step(0),Step(0)}:new[]{Step(0),Step(1)};
                 answer=JsonSerializer.Serialize(new {focus="pressure",plan="two plays",prioritize=Array.Empty<int>(),hold=Array.Empty<int>(),play=line[0],plays=line},new JsonSerializerOptions(JsonSerializerDefaults.Web));
             }

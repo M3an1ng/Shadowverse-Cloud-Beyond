@@ -1,4 +1,5 @@
-﻿using ShadowverseBeyond.Server.Domain.Effects;
+﻿using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Domain.Effects;
 using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Domain.Constants; // Add missing using for CardKeyword
@@ -33,12 +34,18 @@ namespace ShadowverseBeyond.Server.Services
     {
         private readonly ILogger<AiService> _logger;
         private readonly AiLearningModel _learned;
+        private readonly bool _generatedDefenseModes;
+        private readonly bool _isolateTargetEffects;
+        private readonly bool _protectPlannedMaterials;
         private readonly IServiceScopeFactory _serviceScopeFactory; // To resolve IGameService if needed, avoiding circular dependency
 
-        public AiService(ILogger<AiService> logger, IServiceScopeFactory serviceScopeFactory, AiLearningModel learned)
+        public AiService(ILogger<AiService> logger, IServiceScopeFactory serviceScopeFactory, AiLearningModel learned, Microsoft.Extensions.Configuration.IConfiguration? configuration=null)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _learned = learned;
+            _generatedDefenseModes=configuration?.GetValue("AiStrategy:GeneratedDefenseModes",true)??true;
+            _isolateTargetEffects=configuration?.GetValue("AiStrategy:IsolateTargetEffects",true)??true;
+            _protectPlannedMaterials=configuration?.GetValue("AiStrategy:ProtectPlannedMaterials",true)??true;
             _serviceScopeFactory = serviceScopeFactory ?? throw new ArgumentNullException(nameof(serviceScopeFactory));
         }
 
@@ -56,7 +63,15 @@ namespace ShadowverseBeyond.Server.Services
                 return Task.FromResult(cardsToReplace); // Return empty list on error
             }
 
-            // Simple V1 Logic: Replace any card with cost > 3
+            using var eternalContext = _serviceScopeFactory.CreateScope();
+            var eternalGame = eternalContext.ServiceProvider.GetService<IGameService>()?.GetGameState(gameId);
+            using var eternal = AiEternalEngine.Use(eternalGame,aiPlayerId);
+            if(AiEternalEngine.Mulligan(aiState) is {} engineReplacement)
+                return Task.FromResult(engineReplacement);
+            if(eternalGame?.LegacyAiPlayerId!=aiPlayerId&&AiWeaverPlan.Mulligan(aiState,eternalGame?.GetPlayerState(aiPlayerId)?.InitialDeckDefinitionIds) is {} weaverReplacement)
+                return Task.FromResult(weaverReplacement);
+
+            // Simple V1 fallback for decks without the verified resource engine.
             foreach (var card in aiState.Hand)
             {
                 if (card.Cost > 3)
@@ -83,8 +98,19 @@ namespace ShadowverseBeyond.Server.Services
                 return null;
             }
             var (aiState, opponentState) = states.Value;
+            using var eternalContext = _serviceScopeFactory.CreateScope();
+            var decisionGame=eternalContext.ServiceProvider.GetService<IGameService>()?.GetGameState(gameId);
+            using var recovery=AiRecoveryPolicy.Use(decisionGame,aiPlayerId);
+            using var eternal = AiEternalEngine.Use(decisionGame,aiPlayerId);
 
             var playableOptions = await GetPlayableOptionsAsync(gameId, aiPlayerId, aiState);
+            Dictionary<Guid,AiHandEconomy.Rule> handEconomy;
+            var economyGame=eternalContext.ServiceProvider.GetService<IGameService>()?.GetGameState(gameId);
+            var economyMapper=eternalContext.ServiceProvider.GetService<AutoMapper.IMapper>();
+            var economyAccessor=eternalContext.ServiceProvider.GetService<IGameContextAccessor>();
+            using(var economyContext=economyGame==null||economyMapper==null||economyAccessor==null?null:new GameContext(eternalContext.ServiceProvider,
+                economyMapper,economyAccessor,economyGame,aiPlayerId))
+                handEconomy=AiHandEconomy.Read(economyContext,aiState,opponentState);
             var playableCards = playableOptions.Select(option=>option.View).ToList();
             if (!playableCards.Any())
             {
@@ -92,16 +118,18 @@ namespace ShadowverseBeyond.Server.Services
                 return null;
             }
 
-            if (_learned.Current != null || strategy != null)
+            if (_learned.Current != null || strategy != null || AiEternalEngine.Active(aiState))
             {
                 var w = LearnedWeights(gameId, aiPlayerId);
                 var needsDefense = opponentState != null && aiState.LeaderCard != null
-                    && AiTacticalSearch.EstimateBoardDamage(opponentState.Field, aiState.Field) >= aiState.LeaderCard.CurrentHealth;
+                    && AiTacticalSearch.EstimateBoardDamage(opponentState.Field, aiState.Field,aiState.LeaderCard) >= aiState.LeaderCard.CurrentHealth;
                 var selected = AiPlayCandidates.Select(playableOptions, strategy,
                     AiStrategyPlanner.PositionKey(aiState,opponentState ?? new PlayerStateDto()), option => _learned.Score(gameState!, aiPlayerId, "play", option.View, weights:w)
                         + option.Cost*w.Tempo + (option.View.Type==CardType.Follower ? (option.View.CurrentAttack+option.View.CurrentHealth)*.35*w.Board : w.Utility)
                         + (strategy?.PlayBias(option.Original.CardId) ?? 0)
-                        + (needsDefense ? 0 : AiAbilityScoring.FragileHandPriority(aiState, option.Original)));
+                        + AiEternalEngine.RoleBias(aiState,opponentState,option.Original,playableOptions.Any(other=>other.Original.InstanceId!=option.Original.InstanceId))
+                        + AiHandEconomy.PlayBias(aiState,option.Original,option.Cost,handEconomy.GetValueOrDefault(option.Original.InstanceId))
+                        + (needsDefense ? 0 : AiAbilityScoring.FragileHandPriority(aiState, option.Original) + AiEternalEngine.PlayBias(aiState,option.Original,option.Cost)));
                 return selected?.Action();
             }
 
@@ -328,8 +356,8 @@ namespace ShadowverseBeyond.Server.Services
         private AiWeights LearnedWeights(string gameId,Guid playerId)
         {
             using var scope=_serviceScopeFactory.CreateScope();
-            var initial=scope.ServiceProvider.GetRequiredService<IGameService>().GetGameState(gameId)?.GetPlayerState(playerId)?.InitialDeckDefinitionIds;
-            return _learned.Weights(initial);
+            var game=scope.ServiceProvider.GetRequiredService<IGameService>().GetGameState(gameId);
+            return _learned.Weights(game,playerId);
         }
         internal static IEnumerable<CardInstanceDto> LegalAttackTargets(CardInstanceDto attacker,PlayerStateDto opponent)
         {
@@ -551,6 +579,9 @@ namespace ShadowverseBeyond.Server.Services
 
             using var scope = _serviceScopeFactory.CreateScope();
             var game = scope.ServiceProvider.GetRequiredService<IGameService>().GetGameState(gameId);
+            using var recovery=AiRecoveryPolicy.Use(game,aiPlayerId);
+            using var eternal = AiEternalEngine.Use(game,aiPlayerId);
+            using var combatComparison = AiCombatThreat.UseLegacy(game?.IsLocalAiTraining == true && game.LegacyCombatThreatPlayerId == aiPlayerId);
             var source = game?.AbilityManager?.GetAbilityByRuntimeId(request.SourceAbilityRuntimeId);
             var player = gameState.Players.FirstOrDefault(p => p.PlayerId == aiPlayerId);
             var hand = player?.Hand;
@@ -567,37 +598,65 @@ namespace ShadowverseBeyond.Server.Services
                 return PlayerChoiceResult.Cancelled;
             }
 
+            var isOptionRequest = request.TargetKey is "decision" or "discover";
             var optionSource = request.OptionSourceCard ?? source?.SourceCard;
             var strategyPlanner = scope.ServiceProvider.GetService<AiStrategyPlanner>();
             if (game != null) strategyPlanner?.RecordChoicePosition(game, gameState, request);
             if (game?.AiGeneratedStormSource is Guid plannedSource && optionSource?.InstanceId == plannedSource
+                && game.AiGeneratedStormTokenId is int plannedToken
                 && request.TargetKey == "decision" && request.MinSelectionCount == 1 && request.MaxSelectionCount == 1)
             {
-                var ghostMode = request.SelectableCardInstances.FirstOrDefault(card =>
-                    selectableTargetIds.Contains(card.InstanceId)
-                    && card.Name.Contains("增加1张『怨灵』", StringComparison.Ordinal));
-                if (ghostMode != null)
-                    return new PlayerChoiceResult { ChosenTargetIds = [ghostMode.InstanceId] };
+                var tokenOption = selectableTargetIds.FirstOrDefault(id => request.DecisionOptions.TryGetValue(id, out var config)
+                    && AiGeneratedTokenTactics.Token(config) == plannedToken);
+                if (tokenOption != Guid.Empty){
+                    AiDecisionFlowFacts.Remember(game,request,[tokenOption]);return new PlayerChoiceResult { ChosenTargetIds = [tokenOption] };
+                }
+            }
+
+            var modeEnemy=gameState.Players.FirstOrDefault(p=>p.PlayerId!=aiPlayerId);
+            if(game!=null && player!=null && modeEnemy!=null
+                && AiGeneratedTokenTactics.PreferSummonLethal(game,player,modeEnemy,request,optionSource) is Guid lethalMode)
+            { AiDecisionFlowFacts.Remember(game,request,[lethalMode]);return new PlayerChoiceResult {ChosenTargetIds=[lethalMode]}; }
+
+            var generatedDefense=_generatedDefenseModes&&game!=null
+                ?AiGeneratedDefenseModes.Read(GameServiceProvider.CurrentGameContext,game,gameState,request,optionSource):null;
+            if(generatedDefense?.PreferredIndex is int defensiveIndex){
+                var chosen=new List<Guid>{selectableTargetIds[defensiveIndex]};AiGeneratedDefenseModes.Remember(game,request,chosen);
+                return new PlayerChoiceResult{ChosenTargetIds=chosen};
+            }
+
+            var plannedModes = game == null ? null : strategyPlanner?.ChoosePlannedOptions(game, gameState, request);
+            PlayerChoiceResult SubmitOption(List<Guid> local, List<Guid>? suggested = null, string policy = "model-option")
+            {
+                var selected = suggested ?? local;
+                if (game != null && suggested != null)
+                    strategyPlanner?.RecordOptionComparison(game, request, local, selected, policy);
+                AiGeneratedDefenseModes.Remember(game, request, selected);
+                return new PlayerChoiceResult { ChosenTargetIds = selected };
             }
 
             // A verified lethal route above keeps priority over a persistent-board setup.
             if (game?.LegacyAiPlayerId != aiPlayerId && optionSource?.BaseDefinitionId == AiStrategyPlanner.StarCallId
                 && request.TargetKey == "decision" && request.MinSelectionCount == 1 && request.MaxSelectionCount == 1
                 && player != null && player.Field.Count <= 2 && player.Hand.Count <= 5
+                &&(!_generatedDefenseModes||modeEnemy==null||(!AiTacticalSearch.HasVisibleLethalThreat(player,modeEnemy)&&generatedDefense==null)||generatedDefense?.ExistingAnswer==true)
                 && (player.Field.Any(card => card.CardId == 1474120) || player.Emblem.Any(card => card.CardId == 1474276))
                 && GameDataProvider.Instance.GetCardDefinition(1250402)?.Cost == 0)
             {
-                var skeletonMode = request.SelectableCardInstances.FirstOrDefault(card =>
-                    selectableTargetIds.Contains(card.InstanceId)
-                    && card.Name.Contains("增加1张『骷髅士兵』", StringComparison.Ordinal));
-                if (skeletonMode != null)
-                    return new PlayerChoiceResult { ChosenTargetIds = [skeletonMode.InstanceId] };
+                var skeletonMode = selectableTargetIds.FirstOrDefault(id => request.DecisionOptions.TryGetValue(id, out var config)
+                    && AiGeneratedTokenTactics.Token(config) == 1250402);
+                if (skeletonMode != Guid.Empty)
+                    return SubmitOption([skeletonMode], plannedModes, "turn-plan-option");
             }
 
-            if (game != null && request.TargetKey is ("decision" or "discover")
-                && scope.ServiceProvider.GetService<AiStrategyPlanner>() is { } planner
-                && await planner.ChooseFromOptionsAsync(game, gameState, request, optionSource, token) is { } modes)
-                return new PlayerChoiceResult { ChosenTargetIds = modes };
+            var searchEnemy=gameState.Players.FirstOrDefault(p=>p.PlayerId!=aiPlayerId);
+            if(game!=null && player!=null && searchEnemy!=null
+                && AiEternalEngine.PreferSearch(player,searchEnemy,game,request,optionSource) is Guid searchOption)
+            {
+                if (plannedModes != null) return SubmitOption([searchOption], plannedModes, "turn-plan-option");
+                AiDecisionFlowFacts.Remember(game, request, [searchOption]);
+                return new PlayerChoiceResult { ChosenTargetIds = [searchOption] };
+            }
 
             var useLegacyPolicy = game?.LegacyAiPlayerId == aiPlayerId;
             var opponent = gameState.Players.FirstOrDefault(p => p.PlayerId != aiPlayerId);
@@ -605,8 +664,17 @@ namespace ShadowverseBeyond.Server.Services
                 && !AiTurnExecutor.HasVisibleLethalThreat(player, opponent)
                 ? strategyPlanner?.GetCurrentPlan(game, aiPlayerId) : null;
             var effects = !useLegacyPolicy && source is Ability ability
-                ? AiTargetScoring.FindEffects(ability.Config.Effects, request.TargetKey)
+                ? AiTargetScoring.FindEffectsForChoice(ability.Config.Effects, request.TargetKey,_isolateTargetEffects)
                 : Array.Empty<AiTargetScoring.Effect>();
+            Dictionary<Guid,AiHandEconomy.Rule> discardEconomy=new();
+            if(!useLegacyPolicy&&game!=null&&player!=null&&effects.Any(e=>e.Type==EffectType.Discard)
+                &&scope.ServiceProvider.GetService<AutoMapper.IMapper>() is {} discardMapper
+                &&scope.ServiceProvider.GetService<IGameContextAccessor>() is {} discardAccessor){
+                using var economyContext=new GameContext(scope.ServiceProvider,discardMapper,discardAccessor,game,aiPlayerId);
+                discardEconomy=AiHandEconomy.Read(economyContext,player,opponent);
+            }
+            var reservedMaterials = _protectPlannedMaterials && materialPlan!=null && game!=null
+                ? strategyPlanner?.ReservedDiscardMaterials(game,gameState,request,source as Ability) ?? [] : new HashSet<Guid>();
             var playerTargets = gameState.Players.Where(p => p.LeaderCard != null)
                 .ToDictionary(p => p.PlayerId, p => p.LeaderCard!);
 
@@ -615,7 +683,8 @@ namespace ShadowverseBeyond.Server.Services
                 var random = new Random();
                 var w=LearnedWeights(gameId,aiPlayerId);
                 chosenIds = selectableTargetIds
-                                   .OrderByDescending(id => {
+                                   .OrderBy(id => reservedMaterials.Contains(id) ? 1 : 0)
+                                   .ThenByDescending(id => {
                                        var card=request.SelectableCardInstances.FirstOrDefault(c=>c.InstanceId==id)??gameState.FindCardInstanceById(id.ToString());
                                        if (choosesFusionMaterials && card != null && !useLegacyPolicy && player != null)
                                            return -AiAbilityScoring.PlannedMaterialValue(player, card, materialPlan);
@@ -625,13 +694,13 @@ namespace ShadowverseBeyond.Server.Services
                                        if (card == null && !useLegacyPolicy) playerTargets.TryGetValue(id, out card);
                                        if (effects.Count > 0 && effects.All(effect => effect.Type == EffectType.Discard)
                                            && player != null && card?.OwnerPlayerId == aiPlayerId)
-                                           return -AiAbilityScoring.PlannedMaterialValue(player, card, materialPlan);
+                                           return -AiHandEconomy.DiscardValue(player, card, materialPlan,discardEconomy.GetValueOrDefault(card.InstanceId));
                                        if (effects.Count > 0 && card != null)
                                        {
                                            var learned = _learned.Current == null ? 0 : _learned.Score(gameState, aiPlayerId, "choose", null, card, w);
                                            return AiTargetScoring.Score(card, aiPlayerId, effects) + .04 * Math.Clamp(learned, -8, 8);
                                        }
-                                       if (_learned.Current == null) return random.NextDouble();
+                                       if (_learned.Current == null) return isOptionRequest && !useLegacyPolicy ? 0 : random.NextDouble();
                                        return _learned.Score(gameState,aiPlayerId,"choose",null,card,w)+(card==null?0:(card.CurrentAttack+card.CurrentHealth)*.1);
                                    })
                                    .Take(minSelectionCount)
@@ -645,12 +714,29 @@ namespace ShadowverseBeyond.Server.Services
                 _logger.LogInformation("[AiService:{GameId}] AI {PlayerId} is choosing no targets as MinSelectionCount is 0 or no targets are available.", gameId, aiPlayerId);
             }
 
+            if (plannedModes != null) return SubmitOption(chosenIds, plannedModes, "turn-plan-option");
+            if (game != null && isOptionRequest && strategyPlanner != null
+                && await strategyPlanner.ChooseFromOptionsAsync(game, gameState, request, optionSource, chosenIds, token) is { } modes)
+                return SubmitOption(chosenIds, modes);
+
+            var localChosen=chosenIds.ToArray();
+            var targetDecision=!useLegacyPolicy&&game!=null?strategyPlanner?.SelectPlannedTarget(game,gameState,request,source as Ability):null;
+            if(targetDecision?.Uid is Guid proposed) {
+                // Retain the established local immediate-lethal preference. This score is bounded,
+                // not a replay of every protection/response; no new damage or legality is invented.
+                var locallyLethal=opponent?.LeaderCard is {} leader&&localChosen.Any(id=>id==leader.InstanceId||id==opponent.PlayerId)
+                    &&effects.Count>0&&AiTargetScoring.Score(leader,aiPlayerId,effects)>=100;
+                if(locallyLethal&&!localChosen.Contains(proposed))targetDecision=targetDecision with{Uid=null,Status="blocked",Reason="local-lethal-target-priority"};
+                else chosenIds=[proposed];
+            }
+            if(game!=null)strategyPlanner?.RecordTargetSelection(game,gameState,request,source as Ability,localChosen,chosenIds,targetDecision);
             var result = new PlayerChoiceResult
             {
                 WasCancelled = false,
                 ChosenTargetIds = chosenIds
             };
 
+            AiDecisionFlowFacts.Remember(game,request,chosenIds);
             return result;
         }
     }

@@ -1,4 +1,4 @@
-﻿using ShadowverseBeyond.Server.Domain.Abilities;
+using ShadowverseBeyond.Server.Domain.Abilities;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
 using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Dtos;
@@ -23,19 +23,39 @@ public class AiTurnExecutor
     private readonly ILogger<AiTurnExecutor> _logger;
     private readonly IMapper _mapper;
     private readonly IServiceProvider _serviceProvider;
+    private readonly AiLearningModel? _model;
+    private readonly bool _valueSearchEnabled;
+    private readonly bool _projectCombatEffects;
+    private readonly bool _prepareWeaverEvolution;
+    private readonly bool _projectLeaderRecovery;
+    private readonly bool _projectEvolutionEffects;
+    private readonly bool _projectEndTurnRefill;
+    private readonly bool _benchmarkAvoidDeckExhaustion;
+    private readonly bool _scopeRecoveryReactions;
 
     public AiTurnExecutor(
         IGameService gameService,
         IAiService aiService,
         ILogger<AiTurnExecutor> logger,
         IMapper mapper,
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider,
+        AiLearningModel? model = null,
+        IConfiguration? configuration = null)
     {
         _gameService = gameService ?? throw new ArgumentNullException(nameof(gameService));
         _aiService = aiService ?? throw new ArgumentNullException(nameof(aiService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
         _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+        _model = model;
+        _valueSearchEnabled = configuration?.GetValue("AiModel:SearchValueEnabled", false) == true;
+        _projectCombatEffects=configuration?.GetValue("AiStrategy:ProjectCombatEffects",true)??true;
+        _prepareWeaverEvolution = configuration?.GetValue("AiStrategy:PrepareWeaverEvolution", true) ?? true;
+        _projectEvolutionEffects = configuration?.GetValue("AiStrategy:ProjectEvolutionEffects", true) ?? true;
+        _projectEndTurnRefill = configuration?.GetValue("AiStrategy:ProjectEndTurnRefill", true) ?? true;
+        _benchmarkAvoidDeckExhaustion = configuration?.GetValue("AiStrategy:BenchmarkAvoidDeckExhaustion",true) ?? true;
+        _projectLeaderRecovery = configuration?.GetValue("AiStrategy:ProjectLeaderRecovery", true) ?? true;
+        _scopeRecoveryReactions = configuration?.GetValue("AiStrategy:ScopeRecoveryReactions", true) ?? true;
     }
 
     public async Task ExecuteTurnAsync(string gameId, Guid aiPlayerId, CancellationToken cancellationToken = default)
@@ -47,7 +67,14 @@ public class AiTurnExecutor
             return;
         }
 
+        using var recovery=AiRecoveryPolicy.Use(game,aiPlayerId);
+        using var eternal = AiEternalEngine.Use(game,aiPlayerId);
+        using var combatComparison = AiCombatThreat.UseLegacy(game.IsLocalAiTraining && game.LegacyCombatThreatPlayerId == aiPlayerId);
         var useLegacyPolicy = game.LegacyAiPlayerId == aiPlayerId;
+        var evolutionBenchmark = AiEvolutionEvaluation.For(game);
+        var evolutionEvaluation = evolutionBenchmark?.Candidate == aiPlayerId ? evolutionBenchmark : null;
+        var projectEvolution = _projectEvolutionEffects && (evolutionBenchmark?.RefillOnly != false || evolutionEvaluation != null);
+        var projectRefill = _projectEndTurnRefill && (evolutionBenchmark?.RefillOnly != true || evolutionEvaluation != null);
         var turnNumber = game.GetPlayerState(aiPlayerId)!.TurnNumber;
         var trainingActions = 0;
         var allowStrategy = !useLegacyPolicy && (!game.IsLocalAiTraining || game.StrategyBenchmarkPlayerId == aiPlayerId);
@@ -63,19 +90,64 @@ public class AiTurnExecutor
             var services = scope.ServiceProvider;
             var accessor = services.GetRequiredService<IGameContextAccessor>();
             GameStateDto snapshot;
+            long decisionRevision;
             List<AbilityAction> abilityActions;
             var evolutionValues = new Dictionary<Guid, (double Evolve, double SuperEvolve)>();
             AiTacticalSearch.EndTurnForecast? endTurn = null;
+            AiCombatProjection.Frame? combatRules=null;
+            AiTacticalSearch.EndTurnForecast? observedEnding = null;
+            AiCombatProjection.Frame? observedCombat = null;
+            AiCombatEvaluation.Decision? projectionDecision=null;
             AiStrategyPlanner.HandLossRule[] handLossRules=[];
+            AiRuntimeAbilityFacts.Catalog? runtimeRules=null;
+            var generatedTokenLines = new List<(Guid Source, AiGeneratedTokenTactics.Recipe Recipe)>();
+            var generatedSummonLines = new List<(Guid Source, AiGeneratedTokenTactics.SummonAttack Summon)>();
             using (var context = new GameContext(services, _mapper, accessor, game, aiPlayerId, cancellationToken))
             {
                 snapshot = GameStateProjection.Create(game, context);
+                decisionRevision=game.StateRevision;
                 abilityActions = await GetAbilityActionsAsync(context, snapshot, aiPlayerId, unavailableAbilities, useLegacyPolicy);
                 if (!useLegacyPolicy && snapshot.Phase == GamePhase.Main)
                 {
                     var player = snapshot.Players.First(p => p.PlayerId == aiPlayerId);
-                    endTurn = await AiEndTurnForecast.ReadAsync(context, player);
-                    if(!strategyChecked && planner!=null)handLossRules=await AiPlaySequence.ReadHandLossAsync(context,player);
+                    endTurn = await AiEndTurnForecast.ReadForPolicyAsync(context, player, projectRefill);
+                    if(AiCombatEvaluation.Enabled(game,aiPlayerId,_projectCombatEffects))combatRules=AiCombatProjection.Read(context,snapshot,aiPlayerId);
+                    if (evolutionEvaluation != null)
+                    {
+                        observedEnding = endTurn;
+                        observedCombat = combatRules;
+                        evolutionEvaluation.Observe(turnNumber, player, observedCombat, observedEnding);
+                        if (evolutionEvaluation.RefillOnly && !_benchmarkAvoidDeckExhaustion && endTurn.DeckExhaustion is { } shortage)
+                        {
+                            // The control retains normal refill forecasts. Before deck-loss handling,
+                            // combined shortages also made damage ordering unavailable.
+                            var canReadDamage = shortage.LaterDraws.Length==0;
+                            endTurn=endTurn with {DeckExhaustion=null,LastHandPlayIntoExhaustion=null,
+                                Damage=canReadDamage?endTurn.Damage:[],EmptyHandDamage=canReadDamage?endTurn.EmptyHandDamage:[]};
+                        }
+                    }
+                    if (!projectEvolution)
+                    {
+                        if (endTurn.HandClearEvolutions.Count > 0)
+                            endTurn = endTurn with { HandClearEvolutions = [], EmptyHandDamage = [] };
+                        combatRules = combatRules?.WithoutEvolutionReplacements();
+                    }
+                    foreach (var spell in player.Hand.Where(card => card.Type == CardType.Spell))
+                    {
+                        var actual = game.FindCardInstance(spell.InstanceId);
+                        if (game.IsLocalAiTraining && game.LegacyGeneratedTokenPlayerId == aiPlayerId) continue;
+                        if (actual == null || actual.IsSilenced || AiGeneratedTokenTactics.HasInterference(context, actual)) continue;
+                        var effective = context.AbilityManager.GetEffectiveAbilitiesForCard(actual.InstanceId, context).OfType<Ability>().Select(ability => ability.Config);
+                        foreach (var recipe in AiGeneratedTokenTactics.Read(GameDataProvider.Instance, spell.CardId, effective))
+                            generatedTokenLines.Add((spell.InstanceId, recipe));
+                        var enemy=snapshot.Players.First(p=>p.PlayerId!=aiPlayerId);
+                        foreach(var summon in AiGeneratedTokenTactics.ReadSummonLethals(context,player,enemy,actual))
+                            generatedSummonLines.Add((spell.InstanceId,summon));
+                    }
+                    if(!strategyChecked && planner!=null) {
+                        handLossRules=await AiPlaySequence.ReadHandLossAsync(context,player);
+                        runtimeRules=AiRuntimeAbilityFacts.Read(context,snapshot,aiPlayerId);
+                    }
                     if (player.CanEvolve || player.CanSuperEvolve)
                         await EstimateEvolutionEffectsAsync(context, player, evolutionValues);
                 }
@@ -87,17 +159,77 @@ public class AiTurnExecutor
             var abilityCandidates = abilityActions.OrderByDescending(action => action.Score)
                 .Select(action => action.Candidate).ToArray();
 
+            var stormPlays = new List<AiTacticalSearch.Move>();
+            AiTacticalSearch.Plan? localTacticalPlan=null;
+            AiTacticalSearch.Plan? verifiedRecovery = null;
+            var recoveryBenchmark = AiLeaderRecoveryEvaluation.For(game);
+            var recoveryEvaluation = recoveryBenchmark?.Candidate == aiPlayerId ? recoveryBenchmark : null;
+            AiLocalTacticalFacts.Facts? localTacticalFacts=null;
+            AiTacticalCandidates.Frame? tacticalChoices=null;
+            Func<GameStateDto,double>? searchValue=null;
+            if(!useLegacyPolicy&&snapshot.Phase==GamePhase.Main)
+            {
+                var player=snapshot.Players.First(p=>p.PlayerId==aiPlayerId);
+                foreach(var card in player.Hand.Where(c=>c.Type==CardType.Follower&&c.Keywords.Contains(CardKeyword.Storm)))
+                {
+                    var playable=await _gameService.GetCardPlayabilityAsync(gameId,aiPlayerId,card.InstanceId,cancellationToken);
+                    var baseMode=playable.PlayModes.FirstOrDefault(mode=>mode.Mode==PlayMode.Base);
+                    if(playable.SelectedPlayMode!=PlayMode.Base||!playable.IsPlayable||baseMode is not {IsAvailable:true}||baseMode.EffectiveCost<0)continue;
+                    stormPlays.Add(new("PlayCard",new PlayCardActionDto{CardUid=card.InstanceId,PlayMode=PlayMode.Base,PaidCost=baseMode.EffectiveCost},
+                        card with{CurrentCost=baseMode.EffectiveCost}));
+                }
+                var useValueSearch=game.IsLocalAiTraining&&game.ValueSearchComparisonPlayerId.HasValue
+                    ?game.ValueSearchComparisonPlayerId==aiPlayerId:_valueSearchEnabled;
+                var capturedValue=useValueSearch?_model?.CaptureValueEvaluator(game,aiPlayerId):null;
+                if(capturedValue!=null)searchValue=projected=>{
+                    Interlocked.Increment(ref game.ValueSearchEvaluations);return capturedValue(projected);
+                };
+                localTacticalPlan=AiTacticalSearch.FindWithCombat(snapshot,aiPlayerId,cancellationToken,stormPlays,evolutionValues,endTurn,null,searchValue,combatRules);
+                if(AiCombatEvaluation.NeedsComparison(game,aiPlayerId)&&combatRules?.RuleCount>0) {
+                    AiCombatProjection.Frame? baselineRules=null;
+                    if(AiCombatEvaluation.ComparePrevious(game,aiPlayerId)) {
+                        using var baselineContext=new GameContext(services,_mapper,accessor,game,aiPlayerId,cancellationToken);
+                        baselineRules=AiCombatProjection.ReadPrevious(baselineContext,snapshot,aiPlayerId);
+                    }
+                    var baseline=AiTacticalSearch.FindWithCombat(snapshot,aiPlayerId,cancellationToken,stormPlays,evolutionValues,endTurn,null,capturedValue,baselineRules);
+                    projectionDecision=AiCombatEvaluation.Record(game,aiPlayerId,snapshot,decisionRevision,baseline,localTacticalPlan);
+                }
+                var recoveryEnabled = _projectLeaderRecovery && (recoveryBenchmark == null || recoveryEvaluation != null);
+                if ((recoveryEnabled || recoveryEvaluation != null) && (localTacticalPlan?.Priority ?? 0) == 0
+                    && HasVisibleLethalThreat(player, snapshot.Players.Single(p => p.PlayerId != aiPlayerId)))
+                {
+                    using var recoveryContext = new GameContext(services, _mapper, accessor, game, aiPlayerId, cancellationToken);
+                    verifiedRecovery = await AiLeaderRecovery.FindAsync(recoveryContext, snapshot, aiPlayerId, _gameService,
+                        cancellationToken, recoveryEvaluation, _scopeRecoveryReactions);
+                    if (recoveryEnabled && verifiedRecovery != null
+                        && !AiTacticalSearch.ClearsHandIntoDeckLoss(player,endTurn,verifiedRecovery.First.Data))
+                        localTacticalPlan = verifiedRecovery;
+                }
+                if(!strategyChecked&&planner?.IsConfigured==true)
+                {
+                    using var factsContext=new GameContext(services,_mapper,accessor,game,aiPlayerId,cancellationToken);
+                    localTacticalFacts=AiLocalTacticalFacts.ReadWithCombat(factsContext,snapshot,aiPlayerId,localTacticalPlan,decisionRevision,combatRules);
+                    tacticalChoices=AiTacticalCandidates.ReadWithCombat(factsContext,snapshot,aiPlayerId,localTacticalPlan,decisionRevision,combatRules);
+                }
+            }
+
+            if(game.StateRevision!=decisionRevision)continue;
             if (!strategyChecked && planner != null && snapshot.Phase == GamePhase.Main)
             {
                 strategy = await planner.PlanAsync(game, snapshot, aiPlayerId, cancellationToken,
                     (uid, token) => _gameService.GetCardPlayabilityAsync(gameId, aiPlayerId, uid, token),
                     abilityCandidates,
-                    (uid, mode, token) => _gameService.GetCardPlayabilityForModeAsync(gameId, aiPlayerId, uid, mode, token),handLossRules);
+                    (uid, mode, token) => _gameService.GetCardPlayabilityForModeAsync(gameId, aiPlayerId, uid, mode, token),handLossRules,
+                    AiEndTurnForecast.ForModel(endTurn,snapshot,aiPlayerId),runtimeRules,localTacticalFacts,tacticalChoices);
                 strategyChecked = true;
                 if (!IsCurrentTurn(game, aiPlayerId, turnNumber)) return;
+                if(game.StateRevision!=decisionRevision)continue;
             }
 
+            PlayCardActionDto? weaverPreparation = null;
             Guid? generatedStormSource = null;
+            int? generatedStormToken = null;
+            Guid? generatedSummonSource = null;
             var actionType = "EndTurn";
             object actionData = new { };
             var bestScore = 0d;
@@ -125,23 +257,11 @@ public class AiTurnExecutor
                 var player = snapshot.Players.First(p => p.PlayerId == aiPlayerId);
                 var opponent = snapshot.Players.First(p => p.PlayerId != aiPlayerId);
                 var defensiveEmergency = HasVisibleLethalThreat(player, opponent);
-                var playStrategy = defensiveEmergency ? null : strategy;
-                var stormPlays = new List<AiTacticalSearch.Move>();
-                foreach (var card in player.Hand.Where(c => c.Type == CardType.Follower && c.Keywords.Contains(CardKeyword.Storm)))
-                {
-                    var playable = await _gameService.GetCardPlayabilityAsync(gameId, aiPlayerId, card.InstanceId, cancellationToken);
-                    var baseMode = playable.PlayModes.FirstOrDefault(m => m.Mode == PlayMode.Base);
-                    if (playable.SelectedPlayMode != PlayMode.Base || !playable.IsPlayable || baseMode == null)
-                        continue;
-                    stormPlays.Add(new AiTacticalSearch.Move("PlayCard",
-                        new PlayCardActionDto { CardUid = card.InstanceId, PlayMode = PlayMode.Base, PaidCost=baseMode.EffectiveCost },
-                        card with { CurrentCost = baseMode.EffectiveCost }));
-                }
-
+                var playStrategy = AiPlayCandidates.ForEmergency(strategy,defensiveEmergency,localTacticalPlan?.PreventsVisibleLethal==true||localTacticalPlan?.ProjectsLethal==true);
                 var intent = playStrategy?.Focus;
-                var plan = AiTacticalSearch.FindWithIntent(snapshot, aiPlayerId, cancellationToken, stormPlays, evolutionValues, endTurn, intent);
-                var localPlan = intent == null ? plan
-                    : AiTacticalSearch.FindWithEndTurn(snapshot, aiPlayerId, cancellationToken, stormPlays, evolutionValues, endTurn);
+                var localPlan = localTacticalPlan;
+                var plan = intent==null?localPlan:AiTacticalSearch.FindWithCombat(snapshot,aiPlayerId,cancellationToken,
+                    stormPlays,evolutionValues,endTurn,intent,searchValue,combatRules);
                 static double CombatScore(AiTacticalSearch.Plan plan) =>
                     plan.ProjectsLethal ? 1000 : plan.PreventsVisibleLethal ? 850 : plan.Gain * .55;
                 if (plan != null)
@@ -155,10 +275,12 @@ public class AiTurnExecutor
                     var playable = action.PlayMode.HasValue
                         ? await _gameService.GetCardPlayabilityForModeAsync(gameId,aiPlayerId,card.InstanceId,action.PlayMode.Value,cancellationToken)
                         : await _gameService.GetCardPlayabilityAsync(gameId,aiPlayerId,card.InstanceId,cancellationToken);
-                    if (!playable.IsPlayable) return double.NegativeInfinity;
+                    if (!playable.IsPlayable || (playable.SelectedPlayMode==PlayMode.Base
+                        && AiTacticalSearch.LastPlayEntersDeckLoss(player,endTurn,card.InstanceId)))
+                        return double.NegativeInfinity;
                     var cost = playable.PlayModes.FirstOrDefault(mode=>mode.Mode==playable.SelectedPlayMode)?.EffectiveCost ?? card.CurrentCost;
                     return 2.5 + cost * .35 - BoostSpendPenalty(player, cost)
-                        + (defensiveEmergency ? 0 : AiAbilityScoring.FragileHandPriority(player, card));
+                        + (defensiveEmergency ? 0 : AiAbilityScoring.FragileHandPriority(player, card) + AiEternalEngine.PlayBias(player,card,cost));
                 }
                 var playCard = await _aiService.DecidePlayCardAsync(snapshot, aiPlayerId, playStrategy);
                 if (playCard != null)
@@ -181,21 +303,43 @@ public class AiTurnExecutor
                     Consider(available.IsFusion ? "RequestFusion" : "RequestAct", available.Data, score, localScore);
                 }
 
-                if (planner?.IsConfigured == true && bestScore < 990
-                    && player.Hand.FirstOrDefault(card => card.CardId == AiStrategyPlanner.StarCallId) is { } starCall
-                    && AiStrategyPlanner.GetStarCallStormToken() is { Attack: > 0 } ghost
-                    && AiTacticalSearch.CanProjectGeneratedStormLethal(player, opponent, starCall.CurrentCost,
-                        selfDamage: 3, count: 3, ghost.Cost, ghost.Attack.Value))
+                foreach (var (source, recipe) in generatedTokenLines)
                 {
-                    var playable = await _gameService.GetCardPlayabilityAsync(gameId, aiPlayerId, starCall.InstanceId, cancellationToken);
+                    if (bestScore >= 990 && localBestScore >= 990) break;
+                    var spell = player.Hand.FirstOrDefault(card => card.InstanceId == source);
+                    if (spell == null || !AiTacticalSearch.CanProjectGeneratedStormLethal(player, opponent, spell.CurrentCost,
+                        recipe.SelfDamage, recipe.Count, recipe.TokenCost, recipe.TokenAttack)) continue;
+                    // Explicit base mode: automatic Enhance selection must not hide an available base route.
+                    var playable = await _gameService.GetCardPlayabilityForModeAsync(gameId, aiPlayerId, source, PlayMode.Base, cancellationToken);
                     var baseMode = playable.PlayModes.FirstOrDefault(mode => mode.Mode == PlayMode.Base);
                     if (playable.IsPlayable && playable.SelectedPlayMode == PlayMode.Base && baseMode != null
                         && AiTacticalSearch.CanProjectGeneratedStormLethal(player, opponent, baseMode.EffectiveCost,
-                            selfDamage: 3, count: 3, ghost.Cost, ghost.Attack.Value))
+                            recipe.SelfDamage, recipe.Count, recipe.TokenCost, recipe.TokenAttack))
                     {
-                        Consider("PlayCard", new PlayCardActionDto { CardUid = starCall.InstanceId, PlayMode = PlayMode.Base, PaidCost=baseMode.EffectiveCost }, 990);
-                        generatedStormSource = starCall.InstanceId;
+                        var play = new PlayCardActionDto { CardUid = source, PlayMode = PlayMode.Base, PaidCost=baseMode.EffectiveCost };
+                        if (bestScore < 990)
+                        {
+                            Consider("PlayCard", play, 990);
+                            generatedStormSource = source; generatedStormToken = recipe.TokenId;
+                        }
+                        else ConsiderLocal("PlayCard", play, 990);
                     }
+                }
+                foreach(var (source,_) in generatedSummonLines)
+                {
+                    if (bestScore >= 990 && localBestScore >= 990) break;
+                    var playable=await _gameService.GetCardPlayabilityForModeAsync(gameId,aiPlayerId,source,PlayMode.Base,cancellationToken);
+                    var baseMode=playable.PlayModes.FirstOrDefault(mode=>mode.Mode==PlayMode.Base);
+                    if(!playable.IsPlayable||playable.SelectedPlayMode!=PlayMode.Base||baseMode is not {IsAvailable:true}
+                        ||baseMode.EffectiveCost<0||baseMode.EffectiveCost>player.CurrentPP)continue;
+                    // A legal current-turn finish overrides the long-term desire to retain the last engine.
+                    var play = new PlayCardActionDto { CardUid = source, PlayMode = PlayMode.Base, PaidCost=baseMode.EffectiveCost };
+                    if (bestScore < 990)
+                    {
+                        Consider("PlayCard", play, 990);
+                        generatedSummonSource = source;
+                    }
+                    else ConsiderLocal("PlayCard", play, 990);
                 }
                 if (CanArmBoost(player))
                 {
@@ -205,6 +349,59 @@ public class AiTurnExecutor
                         Consider("PerformPpBoost", new { }, bestScore <= 0 ? .1 : double.NegativeInfinity,
                             localBestScore <= 0 ? .1 : double.NegativeInfinity);
                 }
+                var prepareLocal = localType == "PerformEvolve" && localBestScore < 850;
+                var prepareSelected = actionType == "PerformEvolve" && bestScore < 850;
+                if ((prepareLocal || prepareSelected) && !defensiveEmergency
+                    && AiWeaverPlan.PreparationEnabled(game, aiPlayerId, _prepareWeaverEvolution)
+                    && localTacticalPlan?.ProjectsLethal != true && localTacticalPlan?.PreventsVisibleLethal != true)
+                {
+                    Guid? weaver;
+                    using (var context = new GameContext(services, _mapper, accessor, game, aiPlayerId, cancellationToken))
+                        weaver = AiWeaverPlan.PrepareBeforeEvolution(context, player);
+                    if (weaver is Guid uid)
+                    {
+                        var playable = await _gameService.GetCardPlayabilityForModeAsync(gameId, aiPlayerId, uid, PlayMode.Base, cancellationToken);
+                        var mode = playable.PlayModes.FirstOrDefault(item => item.Mode == PlayMode.Base);
+                        if (playable.IsPlayable && playable.SelectedPlayMode == PlayMode.Base
+                            && mode is { IsAvailable: true, EffectiveCost: >= 0 and <= 1 }
+                            && mode.EffectiveCost <= player.CurrentPP && game.StateRevision == decisionRevision)
+                        {
+                            var play = new PlayCardActionDto { CardUid = uid, PlayMode = PlayMode.Base, PaidCost = mode.EffectiveCost };
+                            if (prepareLocal) (localType, localData, localBestScore) = ("PlayCard", play, 2.5);
+                            if (prepareSelected)
+                            {
+                                (actionType, actionData, bestScore) = ("PlayCard", play, 2.5);
+                                weaverPreparation = play;
+                            }
+                        }
+                    }
+                }
+            }
+            var explicitModelSelection = false;
+            if(strategy?.TacticalBinding is { } proposed) {
+                using var currentContext=new GameContext(services,_mapper,accessor,game,aiPlayerId,cancellationToken);
+                var blocked=AiTacticalCandidates.CheckNow(proposed,currentContext,snapshot,aiPlayerId,decisionRevision);
+                var sameLocal=AiTacticalCandidates.Same(proposed.Action,localTacticalPlan?.First);
+                if(blocked==null && !(sameLocal && localTacticalPlan?.ProjectsLethal==true)
+                    && (AiTacticalSearch.ClearsHandIntoDeckLoss(snapshot.Players.Single(player=>player.PlayerId==aiPlayerId),
+                        endTurn,proposed.Action.Data)
+                        || (proposed.Action.Type=="EndTurn" && actionType!="EndTurn"
+                            && AiTacticalSearch.EndsInDeckLoss(snapshot,aiPlayerId,endTurn))))
+                    blocked="known-end-turn-deck-exhaustion";
+                if(blocked==null&&!sameLocal) {
+                    if(localTacticalPlan?.ProjectsLethal==true&&(localTacticalFacts?.CanSkipPlanning==true||localTacticalPlan.First.Type=="EndTurn")
+                        ||bestScore>=990&&(generatedStormSource.HasValue||generatedSummonSource.HasValue))blocked="known-current-finish-has-priority";
+                    else if(localTacticalPlan?.PreventsVisibleLethal==true)blocked="visible-lethal-defense-has-priority";
+                }
+                if(blocked==null) {
+                    actionType=proposed.Action.Type;actionData=proposed.Action.Data;
+                    explicitModelSelection = true;
+                    // Explicit choice has a separate proposal record; do not borrow another action's score.
+                    bestScore=0;
+                    generatedStormSource=null;generatedStormToken=null;generatedSummonSource=null;
+                }
+                planner?.RecordTacticalSelection(game,aiPlayerId,strategy,blocked);
+                strategy=strategy with {NextAction=null,TacticalBinding=null};
             }
             cancellationToken.ThrowIfCancellationRequested();
             if (!IsCurrentTurn(game, aiPlayerId, turnNumber))
@@ -227,9 +424,11 @@ public class AiTurnExecutor
                     PlayCardActionDto play => new(type, CardId(play.CardUid), null, null, score,
                         snapshot.Players.First(player=>player.PlayerId==aiPlayerId).Hand.FindIndex(card=>card.InstanceId==play.CardUid),
                         play.PlayMode?.ToString(), play.PaidCost),
-                    AttackActionDto attack => new(type, CardId(attack.AttackerUid), CardId(attack.TargetUid), null, score),
-                    EvolveActionDto evolve when Guid.TryParse(evolve.UnitUid, out var uid) => new(type, CardId(uid), null, null, score),
-                    SuperEvolveActionDto super when Guid.TryParse(super.UnitUid, out var uid) => new(type, CardId(uid), null, null, score),
+                    AttackActionDto attack => new(type, CardId(attack.AttackerUid), CardId(attack.TargetUid), null, score,
+                        FieldIndex:snapshot.Players.Single(player=>player.PlayerId==aiPlayerId).Field.FindIndex(card=>card.InstanceId==attack.AttackerUid),
+                        TargetFieldIndex:snapshot.Players.Single(player=>player.PlayerId!=aiPlayerId).Field.FindIndex(card=>card.InstanceId==attack.TargetUid)),
+                    EvolveActionDto evolve when Guid.TryParse(evolve.UnitUid, out var uid) => new(type, CardId(uid), null, null, score,FieldIndex:snapshot.Players.Single(player=>player.PlayerId==aiPlayerId).Field.FindIndex(card=>card.InstanceId==uid)),
+                    SuperEvolveActionDto super when Guid.TryParse(super.UnitUid, out var uid) => new(type, CardId(uid), null, null, score,FieldIndex:snapshot.Players.Single(player=>player.PlayerId==aiPlayerId).Field.FindIndex(card=>card.InstanceId==uid)),
                     ActActionDto act => new(type, CardId(act.CardUid), null,
                         abilityActions.FirstOrDefault(item => item.RuntimeId == act.AbilityRuntimeId)?.Candidate.Name, score),
                     FusionActionDto fusion => new(type, CardId(fusion.CardUid), null,
@@ -237,8 +436,19 @@ public class AiTurnExecutor
                     _ => new(type, null, null, null, score)
                 };
             }
+            var beforeOwn=snapshot.Players.First(player=>player.PlayerId==aiPlayerId);
+            var beforeEnemy=snapshot.Players.First(player=>player.PlayerId!=aiPlayerId);
             var comparison = strategy == null ? null : new AiStrategyPlanner.ActionComparisonFact(turnNumber,
-                Option(localType, localData, localBestScore), Option(actionType, actionData, bestScore));
+                Option(localType, localData, localBestScore), Option(actionType, actionData, bestScore),
+                new(beforeOwn.LeaderCard?.CurrentHealth,beforeEnemy.LeaderCard?.CurrentHealth,beforeOwn.CurrentPP,
+                    beforeOwn.MaxPP,beforeOwn.CurrentEP,beforeOwn.CurrentSEP,beforeOwn.CanEvolve,beforeOwn.CanSuperEvolve,
+                    beforeOwn.IsPpBoostArmed,beforeOwn.PpBoostUsesAvailable,beforeOwn.Hand.Count,beforeOwn.Field.Count,
+                    beforeEnemy.Field.Count,AiTacticalSearch.EstimateBoardDamage(beforeEnemy.Field,beforeOwn.Field,beforeOwn.LeaderCard),
+                    AiEndTurnForecast.ForMemory(endTurn,snapshot,aiPlayerId)))
+            {
+                SameSelection = AiCommittedAction.SameSelection(localType, localData, actionType, actionData),
+                SelectionPolicy = explicitModelSelection ? "model-first-action" : "plan-guided-ranking"
+            };
             AiStrategyPlanner.AttackFact? attackFact = null;
             if (actionData is AttackActionDto attackAction)
             {
@@ -251,12 +461,32 @@ public class AiTurnExecutor
                     attackFact = new(turnNumber, attacker.CardId, target.CardId, target.Type == CardType.Leader,
                         attacker.Keywords.Contains(CardKeyword.Storm), attacker.CurrentAttack, target.CurrentAttack,
                         target.CurrentHealth, own.LeaderCard?.CurrentHealth, enemy.LeaderCard?.CurrentHealth,
-                        AiTacticalSearch.EstimateBoardDamage(enemy.Field, own.Field),
-                        target.Keywords.Select(keyword => keyword.ToString()).ToArray());
+                        AiTacticalSearch.EstimateBoardDamage(enemy.Field, own.Field,own.LeaderCard),
+                        target.Keywords.Select(keyword => keyword.ToString()).ToArray(),
+                        AiEndTurnForecast.ForMemory(endTurn,snapshot,aiPlayerId,attacker.InstanceId));
             }
+            using var projectionSubmission=AiCombatEvaluation.BeginSubmit(game,aiPlayerId,projectionDecision,actionType,actionData);
             var completion = await SubmitAiActionAsync(game, action, generatedStormSource, cancellationToken,
-                actionType is "RequestFusion" or "RequestAct" ? abilityAction : null, planner, comparison, attackFact);
+                actionType is "RequestFusion" or "RequestAct" ? abilityAction : null, planner, comparison, attackFact, generatedStormToken, snapshot);
             if (completion == null) return;
+            if (completion.Status == PlayerActionCompletionStatus.Completed)
+                evolutionEvaluation?.Commit(game, turnNumber, snapshot, actionType, actionData, observedCombat, observedEnding);
+            if (recoveryEvaluation != null && ReferenceEquals(localTacticalPlan, verifiedRecovery)
+                && verifiedRecovery != null && completion.Status == PlayerActionCompletionStatus.Completed
+                && AiCommittedAction.SameSelection(verifiedRecovery.First.Type, verifiedRecovery.First.Data, actionType, actionData) == true
+                && beforeOwn.LeaderCard is { } priorLeader && game.GetPlayerState(aiPlayerId)?.Leader is { } currentLeader)
+                recoveryEvaluation.Commit(turnNumber, verifiedRecovery,
+                    AiTacticalSearch.EstimateBoardDamage(beforeEnemy.Field, beforeOwn.Field, priorLeader),
+                    priorLeader.CurrentHealth, currentLeader.CurrentHealth);
+            if (completion.Status == PlayerActionCompletionStatus.Completed && weaverPreparation != null
+                && ReferenceEquals(action.ActionData, weaverPreparation))
+                AiWeaverPlan.RecordPreparation(game, aiPlayerId);
+            if (completion.Status == PlayerActionCompletionStatus.Completed && (generatedStormSource.HasValue
+                ||generatedSummonSource.HasValue&&action.ActionData is PlayCardActionDto summonPlay&&summonPlay.CardUid==generatedSummonSource))
+                Interlocked.Increment(ref game.GeneratedTokenTacticUses);
+            if(completion.Status==PlayerActionCompletionStatus.Completed&&generatedSummonSource.HasValue
+                &&action.ActionData is PlayCardActionDto completedSummon&&completedSummon.CardUid==generatedSummonSource)
+                Interlocked.Increment(ref AiSummonSourceState.For(game).Uses);
             if (actionType is "RequestFusion" or "RequestAct" && abilityAction != null)
             {
                 var used = abilityAction.IsFusion ? abilityAction.Card.FusionsThisTurn : abilityAction.Card.ActsThisTurn;
@@ -280,6 +510,15 @@ public class AiTurnExecutor
                     gameId, aiPlayerId, actionType, completion.Status, completion.Reason);
                 return;
             }
+            if(planner!=null&&strategy?.PlayLine!=null)
+            {
+                using var afterContext=new GameContext(services,_mapper,accessor,game,aiPlayerId,cancellationToken);
+                var after=GameStateProjection.Create(game,afterContext);
+                strategy=await planner.AdvanceCommittedPlanAsync(game,after,aiPlayerId,actionType,actionData,
+                    (uid,token)=>_gameService.GetCardPlayabilityAsync(gameId,aiPlayerId,uid,token),
+                    (uid,mode,token)=>_gameService.GetCardPlayabilityForModeAsync(gameId,aiPlayerId,uid,mode,token),
+                    ()=>AiPlaySequence.ReadHandLossAsync(afterContext,after.Players.Single(player=>player.PlayerId==aiPlayerId)),cancellationToken);
+            }
             if (actionType == "EndTurn")
             {
                 return;
@@ -291,24 +530,45 @@ public class AiTurnExecutor
     }
 
     private async Task<PlayerActionCompletion?> SubmitAiActionAsync(GameState game, PlayerActionWrapper action,
-        Guid? generatedStormSource, CancellationToken token, AbilityAction? abilityAction, AiStrategyPlanner? planner, AiStrategyPlanner.ActionComparisonFact? comparison = null, AiStrategyPlanner.AttackFact? attackFact = null)
+        Guid? generatedStormSource, CancellationToken token, AbilityAction? abilityAction, AiStrategyPlanner? planner, AiStrategyPlanner.ActionComparisonFact? comparison = null, AiStrategyPlanner.AttackFact? attackFact = null, int? generatedStormTokenId = null, GameStateDto? observationBefore = null)
     {
-        if (generatedStormSource.HasValue) game.AiGeneratedStormSource = generatedStormSource;
+        if (generatedStormSource.HasValue)
+        {
+            game.AiGeneratedStormSource = generatedStormSource;
+            game.AiGeneratedStormTokenId = generatedStormTokenId;
+        }
         if (abilityAction != null) planner?.SetPendingAbility(game, abilityAction.RuntimeId, abilityAction.Candidate);
+        planner?.BeginPlanStep(game,action.PlayerId,action.ActionType,action.ActionData);
         planner?.SetPendingComparison(game, comparison);
+        planner?.BindPendingComparison(game,action.ActionData);
         if (action.ActionData is AttackActionDto attack)
             planner?.SetPendingAttack(game, attack.AttackerUid, attack.TargetUid, attackFact);
         try
         {
+            if(observationBefore!=null&&planner!=null) {
+                using var planScope=_serviceProvider.CreateScope();
+                using var planContext=new GameContext(planScope.ServiceProvider,_mapper,planScope.ServiceProvider.GetRequiredService<IGameContextAccessor>(),game,action.PlayerId);
+                planner.BeginActionOutcome(game,action,observationBefore,comparison);
+            }
             if (await _gameService.EnqueuePlayerActionAsync(game.GameId, action))
-                return await action.Completion.WaitAsync(token);
+            {
+                var completion = await action.Completion.WaitAsync(token);
+                if (completion.Status == PlayerActionCompletionStatus.Completed && game.IsLocalAiTraining)
+                    game.LocalAiTrainingObservation?.Invoke(action.PlayerId, action.ActionType);
+                return completion;
+            }
 
             _logger.LogWarning("[AI_EXECUTOR:{GameId}] Action was not admitted.", game.GameId);
             return null;
         }
         finally
         {
-            if (generatedStormSource.HasValue) game.AiGeneratedStormSource = null;
+            planner?.EndActionOutcome(game,action);
+            if (generatedStormSource.HasValue)
+            {
+                game.AiGeneratedStormSource = null;
+                game.AiGeneratedStormTokenId = null;
+            }
             if (abilityAction != null) planner?.SetPendingAbility(game, null, null);
             planner?.SetPendingComparison(game, null);
             if (attackFact != null) planner?.SetPendingAttack(game, Guid.Empty, Guid.Empty, null);
@@ -322,7 +582,7 @@ public class AiTurnExecutor
     {
         if (!CanArmBoost(player))
             return false;
-        var threatened = AiTacticalSearch.EstimateBoardDamage(opponent.Field, player.Field)
+        var threatened = AiTacticalSearch.EstimateBoardDamage(opponent.Field, player.Field,player.LeaderCard)
             >= (player.LeaderCard?.CurrentHealth ?? 20);
         return player.Hand.Any(card =>
         {
@@ -363,7 +623,7 @@ public class AiTurnExecutor
         var playerView = snapshot.Players.First(p => p.PlayerId == actor);
         var targetSelection = context.ServiceProvider.GetRequiredService<TargetSelectionService>();
         var model = context.ServiceProvider.GetService<AiLearningModel>();
-        var weights = model?.Weights(player.InitialDeckDefinitionIds);
+        var weights = model?.Weights(context.CurrentGameState,actor);
         var candidates = new List<AbilityAction>();
         foreach (var view in playerView.Hand.Concat(playerView.Field))
         {

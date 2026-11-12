@@ -294,16 +294,18 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
             var traceSettings = _serviceProvider.GetService<IConditionTraceSettings>();
             var traceEntries = traceSettings?.IsEffectEnabledFor(gameContext) == true ? new List<ConditionTraceEntryDto>() : null;
 
-            var discoverCopy = false;
+            var discoverUsesInstances = false;
             if (effectConfig.Type == EffectType.Discover)
             {
                 var mode = effectConfig.Parameters.FirstOrDefault(p => string.Equals(p.Key, "Mode", StringComparison.OrdinalIgnoreCase)).Value;
                 var resolvedMode = mode is ValueConfig config ? _valueSourceResolver.Resolve(config, gameContext) : mode;
-                discoverCopy = string.Equals(resolvedMode?.ToString(), "Copy", StringComparison.OrdinalIgnoreCase) || resolvedMode?.ToString() == "1";
+                discoverUsesInstances = string.Equals(resolvedMode?.ToString(), "Copy", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(resolvedMode?.ToString(), "Instance", StringComparison.OrdinalIgnoreCase)
+                    || resolvedMode?.ToString() is "1" or "2";
             }
             foreach (var paramKvp in effectConfig.Parameters)
             {
-                if (effectConfig.Type == EffectType.Discover && string.Equals(paramKvp.Key, discoverCopy ? "CardDefinitionIds" : "CopySourceTargets", StringComparison.OrdinalIgnoreCase)) continue;
+                if (effectConfig.Type == EffectType.Discover && string.Equals(paramKvp.Key, discoverUsesInstances ? "CardDefinitionIds" : "CopySourceTargets", StringComparison.OrdinalIgnoreCase)) continue;
                 if (effectConfig.Type == EffectType.Draw
                     && string.Equals(paramKvp.Key, "SearchTargets", StringComparison.OrdinalIgnoreCase))
                 {
@@ -506,6 +508,10 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Effects
                                     _logger.LogWarning(ex, "Failed to parse enum value '{StringValue}' for property {PropertyName} of type {EnumType}. Skipping.", stringValue, property.Name, property.PropertyType.Name);
                                     continue; // Skip this property if parsing fails
                                 }
+                            }
+                            else if (property.PropertyType.IsEnum && IsIntegerType(value.GetType()))
+                            {
+                                value = Enum.ToObject(property.PropertyType, value);
                             }
                             // Handle potential integer type mismatches (e.g., config uses int, property expects long or vice versa)
                             else if (IsIntegerType(property.PropertyType) && IsIntegerType(value.GetType()))

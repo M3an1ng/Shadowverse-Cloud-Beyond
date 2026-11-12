@@ -80,6 +80,6 @@ internal static class AiAbilityScoring
         if (card.CardId == 1474120 && card.CurrentCost <= player.CurrentPP
             && !player.Emblem.Any(emblem => emblem.CardId == 1474276) && !duplicates)
             value += 3;
-        return value;
+        return value + AiEternalEngine.Retention(player,card);
     }
 }

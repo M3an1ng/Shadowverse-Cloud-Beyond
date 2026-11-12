@@ -254,6 +254,9 @@ namespace ShadowverseBeyond.Server.Services
         }
 
         /// <inheritdoc />
+        public IReadOnlyDictionary<string,BuffDefinition>? GetAllBuffDefinitions() =>
+            IsInitialized ? Volatile.Read(ref _snapshot).BuffDefinitions : null;
+
         public BuffDefinition? GetBuffDefinition(string buffId)
         {
             if (!IsInitialized)

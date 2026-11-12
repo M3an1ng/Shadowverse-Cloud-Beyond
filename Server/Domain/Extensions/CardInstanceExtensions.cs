@@ -229,9 +229,7 @@ namespace ShadowverseBeyond.Server.Domain.Extensions
             if (!isCurrentPlayerTurn || attacker.OwnerPlayerId != currentPlayerId)
                 return false;
 
-            // 攻击力检查：攻击力必须大于0
-            if (attacker.CurrentAttack <= 0)
-                return false;
+            // Native attack declaration permits zero attack; attack/clash abilities may still resolve.
 
             // 区域检查：必须在场上
             if (attacker.Zone != CardZone.Field)

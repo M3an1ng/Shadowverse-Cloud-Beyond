@@ -117,6 +117,7 @@ coverage/
 !/tests/
 /tests/*
 !/tests/EngineMigration/
+!/tests/DiscoverInstances/
 
 # Small native Mini presentation assets, separate from the downloaded card library.
 !/assets/

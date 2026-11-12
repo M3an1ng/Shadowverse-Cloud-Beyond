@@ -1244,6 +1244,13 @@ namespace ShadowverseBeyond.Server.Services
                 var benchmarkRandom = benchmark?.BenchmarkShuffleSeed is { } seed ? new Random(seed) : null;
                 ShuffleDeck(player1State.Deck, benchmarkRandom);
                 ShuffleDeck(player2State.Deck, benchmarkRandom);
+                if (benchmarkRandom != null)
+                {
+                    // Distinct seat seeds make simultaneous mulligans independent of submission order.
+                    player1State.BenchmarkMulliganSeed = benchmarkRandom.Next();
+                    player2State.BenchmarkMulliganSeed = benchmarkRandom.Next();
+                    newGameState.BenchmarkRandom = new BenchmarkBattleRandom(benchmarkRandom.Next());
+                }
 
                 player1State.InitialDeck = new List<CardInstance>(player1State.Deck);
                 player2State.InitialDeck = new List<CardInstance>(player2State.Deck);

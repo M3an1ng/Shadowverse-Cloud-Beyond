@@ -205,6 +205,8 @@ namespace ShadowverseBeyond.Server.Services
         /// <inheritdoc />
         public async Task<PausableTransactionResult> ProcessTransactionAsync(GameContext gameContext, IEnumerable<IGameEvent> initialEvents)
         {
+            if (gameContext.CurrentGameState.IsLocalAiTraining && gameContext.CurrentGameState.BenchmarkRandom is { } random)
+                gameContext = gameContext with { BenchmarkRandom = random.BeginAction() };
             var initialEventList = initialEvents.ToList();
             _logger.LogInformation("--- Transaction Start: Processing {EventCount} initial events. ---", initialEventList.Count);
 
@@ -2310,7 +2312,7 @@ namespace ShadowverseBeyond.Server.Services
                 }
 
                 var weights = NormalizeWeights(resolvedRandom.Weights, optionIds.Count);
-                var selectedIndexes = SampleWeightedIndexes(weights, selectionCount, resolvedRandom.AllowRepeat);
+                var selectedIndexes = SampleWeightedIndexes(weights, selectionCount, resolvedRandom.AllowRepeat, gameContext.BenchmarkRandom ?? Random.Shared);
                 resolvedRandom.SetSelectedOptionIndexes(selectedIndexes);
 
                 if (phase == DecisionResolutionPhase.Preflight && usePreflightDecisionCache)
@@ -2342,12 +2344,14 @@ namespace ShadowverseBeyond.Server.Services
                     RequestingPlayerId = gameContext.RequestingPlayerId,
                     SelectableTargetIds = optionIds.ToList(),
                     SelectableCardInstances = Ability.BuildDecisionOptionCards(orderedOptions, gameContext.RequestingPlayerId),
+                    DecisionOptions = orderedOptions.ToDictionary(option => option.Id, option => option.Config),
                     MinSelectionCount = selectionCount,
                     MaxSelectionCount = selectionCount,
                     Message = BuildDecisionChoicePrompt(selectionCount),
                     IsCancellable = phase == DecisionResolutionPhase.Preflight
                 };
 
+                AiGeneratedDefenseModes.Bind(request,currentEffect,ability,phase==DecisionResolutionPhase.Preflight);
                 _logger.LogInformation("Awaiting player decision for ability {AbilityKeywords}.", ability.KeywordSummary);
                 var choiceResult = await _pendingActionService.WaitForPlayerChoiceAsync(gameContext.CurrentGameState.GameId, request, gameContext.CancellationToken);
 
@@ -2545,7 +2549,8 @@ namespace ShadowverseBeyond.Server.Services
         private static List<int> SampleWeightedIndexes(
             IReadOnlyList<double> weights,
             int selectionCount,
-            bool allowRepeat)
+            bool allowRepeat,
+            Random rng)
         {
             var results = new List<int>();
             if (selectionCount <= 0 || weights.Count == 0)
@@ -2553,7 +2558,6 @@ namespace ShadowverseBeyond.Server.Services
                 return results;
             }
 
-            var rng = Random.Shared;
             if (allowRepeat)
             {
                 for (var i = 0; i < selectionCount; i++)
@@ -3378,6 +3382,13 @@ namespace ShadowverseBeyond.Server.Services
             {
                 while (eventStagingArea.Count > 0 || _effectQueue.Count > 0 || queueDrainedDelayedEvents.Count > 0)
                 {
+                    // The winning GameEnd has already been committed and retained below.
+                    // Do not run queued turn transitions or effects after the match is terminal.
+                    if (gameContext.CurrentGameState.IsGameOver)
+                    {
+                        _effectQueue.Clear();
+                        break;
+                    }
                     if (eventStagingArea.Count == 0 && _effectQueue.Count == 0)
                     {
                         ReleaseAllDelayedEventsWhenIdle(eventStagingArea, delayedEventsByParent);
@@ -3724,10 +3735,11 @@ namespace ShadowverseBeyond.Server.Services
             Dictionary<Guid, AttackFlowContext> attackFlowsByEventId,
             int recursionDepth)
         {
-            if (gameContext.CurrentGameState.IsGameOver && gameEvent is GameEndEvent)
+            if (gameContext.CurrentGameState.IsGameOver)
             {
                 _logger.LogDebug(
-                    "Skipping GameEndEvent ({EventId}) because game {GameId} is already over.",
+                    "Skipping {EventType} ({EventId}) because game {GameId} is already over.",
+                    gameEvent.EventType,
                     gameEvent.EventId,
                     gameContext.CurrentGameState.GameId);
                 return PausableTransactionResult.Success(new List<IGameEvent>());
@@ -4475,7 +4487,8 @@ namespace ShadowverseBeyond.Server.Services
 
                             attackFlowsByEventId,
 
-                            recursionDepth + 1);
+                            recursionDepth + 1,
+                            chainedSourceCard: chainedAbility.SourceCard);
                         if (subEffectResult.ShouldStop)
                         {
                             return subEffectResult;
@@ -5280,8 +5293,12 @@ namespace ShadowverseBeyond.Server.Services
             Queue<IGameEvent> queueDrainedDelayedEvents,
             HashSet<Guid> readyQueueDrainedEvents,
             Dictionary<Guid, AttackFlowContext> attackFlowsByEventId,
-            int recursionDepth)
+            int recursionDepth,
+            CardInstance? chainedSourceCard = null)
         {
+            if (gameContext.CurrentGameState.IsGameOver)
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+
             _logger.LogDebug("Processing effect: {EffectType}", effect.Type);
             using var effectExecutionScope = BeginEffectExecutionScope(effect.Id);
 
@@ -5329,7 +5346,8 @@ namespace ShadowverseBeyond.Server.Services
 
             var effectContext = gameContext with
             {
-                SourceCard = sourceCard,
+                // An already-resolving chain can outlive its source instance after a transform.
+                SourceCard = sourceCard ?? chainedSourceCard,
                 TriggeringEvent = triggeringEvent,
                 CurrentEffect = effect,
                 AttackFlow = effectAttackFlow,

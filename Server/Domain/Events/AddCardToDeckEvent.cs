@@ -51,7 +51,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
                 return new DomainOperationResult { Success = false, ErrorMessage = "Target player is null in AddCardToDeckEvent." };
             }
 
-            return player.AddCardsToDeck(CardsToAdd, InsertMode);
+            return player.AddCardsToDeck(CardsToAdd, InsertMode, context.BenchmarkRandom);
         }
 
         public string GetAnnouncement(GameState gameState)

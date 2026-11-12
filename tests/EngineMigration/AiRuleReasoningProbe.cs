@@ -19,6 +19,8 @@ internal static class AiRuleReasoningProbe
 {
     internal static void Run(string output)
     {
+        if(Environment.GetEnvironmentVariable("AI_ALLOW_PAID_PROBES")!="true")
+            throw new InvalidOperationException("Paid AI probe disabled; explicit AI_ALLOW_PAID_PROBES=true opt-in is required.");
         var key = Environment.GetEnvironmentVariable("AI_RULE_PROBE_KEY");
         if (string.IsNullOrWhiteSpace(key)) throw new InvalidOperationException("Rule probe provider key is not configured");
         var original = GameDataProvider.Instance;
@@ -82,7 +84,7 @@ internal static class AiRuleReasoningProbe
                     MinSelectionCount=1, MaxSelectionCount=1, SelectableCardInstances=options,
                     SelectableTargetIds=options.Select(card=>card.InstanceId).ToList() };
                 var timer = Stopwatch.StartNew();
-                var chosen = ((Task<List<Guid>?>)select.Invoke(planner,[game,snapshot,request,source,CancellationToken.None])!).GetAwaiter().GetResult();
+                var chosen = ((Task<List<Guid>?>)select.Invoke(planner,[game,snapshot,request,source,null,CancellationToken.None])!).GetAwaiter().GetResult();
                 var index = chosen is {Count:1} ? options.FindIndex(card=>card.InstanceId==chosen[0]) : -1;
                 cases.Add(new { scenario, reverse, selected=index, expected, passed=index==expected, elapsedMs=timer.ElapsedMilliseconds });
                 own.TurnNumber++;
