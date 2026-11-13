@@ -21,6 +21,7 @@ export function saveOperationSettings(value, storage = null) {
 
 function applyCardButtonVisibility(settings) {
     document.documentElement.classList.toggle('hide-card-buttons', settings.hideCardButtons);
+    document.dispatchEvent(new CustomEvent('sv-card-buttons-visibility-change'));
 }
 
 export function showOperationSettings() {

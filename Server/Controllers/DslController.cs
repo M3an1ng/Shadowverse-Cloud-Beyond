@@ -306,6 +306,18 @@ namespace ShadowverseBeyond.Server.Controllers
                 };
                 var activeSectionTrigger = defaultTrigger;
                 string? pendingTriggerOnlyLine = null;
+                string? pendingActClause = null;
+                void FlushPendingAct()
+                {
+                    if (pendingActClause == null) return;
+                    var actDraft = CompileClauseToAbilityDraft(cardName, cardType, sourceCard?.IsMirageCard, style, "Act", pendingActClause, seq, unrecognizedClauses);
+                    if (actDraft.HasEffects)
+                    {
+                        drafts.Add(actDraft);
+                        seq++;
+                    }
+                    pendingActClause = null;
+                }
                 var ruleText = Regex.Replace(section.Text ?? string.Empty,
                     @"(指定\s*[1１一]\s*[张張](?:敌方|敵方|自己)的?[战戰][场場]上的?(?:其他)?(?:随从|從者|从者)(?:卡[片牌]?)?。)\s*\r?\n\s*(?=[给給]予其|[将將]其破[坏壞]|使其(?:消失|[+＋\-－]))",
                     "$1 ");
@@ -349,9 +361,11 @@ namespace ShadowverseBeyond.Server.Controllers
                     var (detectedTrigger, remainder, _) = DetectTriggerAndRemainder(clause);
                     if (detectedTrigger != null)
                     {
+                        FlushPendingAct();
                         if (pendingTriggerOnlyLine != null)
                         {
                             unrecognizedClauses.Add(pendingTriggerOnlyLine);
+                            pendingTriggerOnlyLine = null;
                         }
                         activeSectionTrigger = detectedTrigger;
                     }
@@ -364,6 +378,20 @@ namespace ShadowverseBeyond.Server.Controllers
                         clause = pendingTriggerOnlyLine + " " + clause;
                     pendingTriggerOnlyLine = null;
 
+                    if (activeSectionTrigger == "Act")
+                    {
+                        if (pendingActClause == null)
+                        {
+                            pendingActClause = clause;
+                        }
+                        else
+                        {
+                            var sep = Regex.IsMatch(pendingActClause, @"[。；;，,]\s*$") ? " " : "。";
+                            pendingActClause = pendingActClause + sep + clause;
+                        }
+                        continue;
+                    }
+
                     var draft = CompileClauseToAbilityDraft(cardName, cardType, sourceCard?.IsMirageCard, style, activeSectionTrigger, clause, seq, unrecognizedClauses);
                     if (draft.HasEffects)
                     {
@@ -371,6 +399,8 @@ namespace ShadowverseBeyond.Server.Controllers
                         seq++;
                     }
                 }
+
+                FlushPendingAct();
 
                 if (pendingTriggerOnlyLine != null)
                 {
@@ -779,7 +809,7 @@ namespace ShadowverseBeyond.Server.Controllers
                     return true;
                 }
 
-                var token = Regex.Match(slice, @"^(?:(?<summon>召唤)|增加)\s*(?<count>\d+)\s*[张个]\s*(?:『(?<name>[^』]+)』|“(?<name>[^”]+)”)(?:卡牌)?(?:到自己的(?<destination>战场上|手牌中))?");
+                var token = Regex.Match(slice, @"^(?:(?<summon>召唤)|增加)\s*(?<count>\d+)\s*[张个]\s*(?:『(?<name>[^』]+)』|「(?<name>[^」]+)」|“(?<name>[^”]+)”)(?:卡牌)?(?:到(?:自己的)?(?<destination>战场上|手牌中))?");
                 if (token.Success && int.TryParse(token.Groups["count"].Value, out var tokenCount) && tokenCount > 0)
                 {
                     bool summon = token.Groups["summon"].Success;

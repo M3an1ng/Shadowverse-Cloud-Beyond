@@ -669,13 +669,13 @@ export function createBattleMotionController({
     }
 
     // Keep overflow cards readable before the burst; the returned promise spaces consecutive burns.
-    function playBurnCard(snapItem) {
+    function playBurnCard(snapItem, { fastForward = false } = {}) {
         const layer = getTransientLayer?.();
         const stage = getStageElement?.();
         if (!layer || !stage || !snapItem?.cloneEl) return;
 
         const reduced = prefersReducedMotion();
-        const duration = 700;
+        const duration = fastForward ? 240 : 700;
         const w = snapItem.unscaledW || 102;
         const h = snapItem.unscaledH || 140;
         const bounds = stage.getBoundingClientRect();

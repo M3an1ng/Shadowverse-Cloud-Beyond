@@ -3880,12 +3880,14 @@ CardEditor.prototype.syncLinkedCrestAndFaithSections = async function(ownerCard,
         try {
             const expectedType = sec.style === '纹章' ? 'Crest' : 'Faith';
             const nextDesc = normalizeRuleSectionText(sec.text, { stripItalic: true })
-                .replace(/^【(?:纹章|紋章|信仰)】\s*\n?/, '')
+                .replace(/^[【〖](?:纹章|紋章|信仰)[】〗]\s*\n?/, '')
                 .trim();
             if (!nextDesc) continue;
 
-            const cdMatch = nextDesc.match(/【(?:倒数|倒數)_(\d+)】/);
-            const parsedCountdown = cdMatch ? Number(cdMatch[1]) : null;
+            const cdMatch = nextDesc.match(/[【〖](?:倒数|倒數|吟唱)[_\s]*([0-9０-９]+)[】〗]/);
+            const parsedCountdown = cdMatch
+                ? Number(cdMatch[1].replace(/[０-９]/g, ch => String(ch.charCodeAt(0) - 0xff10)))
+                : null;
             const customDataIcon = String(sec.icon ?? '').startsWith('data:image/') ? sec.icon : null;
 
             let matchedCard = null;

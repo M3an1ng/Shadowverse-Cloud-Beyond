@@ -74,6 +74,7 @@ export function createModeChoiceDialog({ root, request, min, max, renderDescript
     const cards = new Map((request.SelectableCardInstances || []).map(dto => [String(dto.InstanceId), dto]));
     const buttons = new Map();
     let busy = false;
+    let limitHint = false;
     const defaultHint = ids.length === 0 ? '当前没有可选模式，请确认继续'
         : min === max ? `从以下效果中选择 ${max} 项`
             : min === 0 ? `至多选择 ${max} 项效果，也可直接确认` : `从以下效果中选择 ${min}–${max} 项`;
@@ -136,11 +137,13 @@ export function createModeChoiceDialog({ root, request, min, max, renderDescript
     });
     return {
         showLimitHint() {
+            limitHint = true;
             hint.textContent = `已选满 ${max} 项，请先取消一项再选择`;
         },
         update({ selectedIds, pending = false }) {
             busy = pending;
-            hint.textContent = defaultHint;
+            if (pending || selectedIds.size < max) limitHint = false;
+            if (!limitHint) hint.textContent = defaultHint;
             dialog.setAttribute('aria-busy', String(pending));
             for (const [id, button] of buttons) {
                 button.setAttribute('aria-pressed', String(selectedIds.has(id)));

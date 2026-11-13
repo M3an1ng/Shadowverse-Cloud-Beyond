@@ -119,6 +119,20 @@ internal static class TraditionalCardTextCompilerTests
         Check(!partial.FullyCompiled && partial.Abilities.Count == 1 && !partial.Abilities[0].IsActive, "unknown conditional stays inactive");
         Check(!Compile("〖入場曲〗「由自己的牌堆中抽取1張卡片。").FullyCompiled, "unclosed quotation stays unrecognized");
 
+        var multilinePaidAct = Compile("消费1【启动】\n抽1张牌。\n抽2张牌。", cardType: "Amulet");
+        var multilineActConfig = Config(multilinePaidAct);
+        var multilineActKeywords = AbilityConfigJson.ReadKeywords(multilinePaidAct.Abilities.Single().JsonConfig);
+        Check(multilineActKeywords.Count == 1 && multilineActKeywords[0].Keyword == AbilityKeyword.Act && multilineActKeywords[0].Value == 1,
+            "multiline paid Act stays a single paid ability");
+        Check(Effect(multilineActConfig, 0) == "Draw" && Param(multilineActConfig, 0, "DrawAmount").GetInt32() == 1
+            && Effect(multilineActConfig, 1) == "Draw" && Param(multilineActConfig, 1, "DrawAmount").GetInt32() == 2,
+            "multiline paid Act preserves all continuation effects");
+
+        var cornerBracketTokens = Config(Compile("〖入場曲〗召喚1個「一张從者，示例」到戰場上。增加2張「一张從者，示例」到手牌中。", cardId: 7));
+        Check(Effect(cornerBracketTokens, 0) == "Summon" && Param(cornerBracketTokens, 0, "SummonCount").GetInt32() == 1
+            && Effect(cornerBracketTokens, 1) == "GetToken" && Param(cornerBracketTokens, 1, "Amount").GetInt32() == 2,
+            "corner-bracket token names and implicit self destination compile");
+
         DslController.DslGenerateFromCardResponse Compile(string description, int? cardId = null, string cardType = "Follower")
         {
             var result = controller.GenerateFromCard(new() { CardId = cardId, CardType = cardType, Name = "范例", Description = description });

@@ -1587,7 +1587,7 @@ function commitCardMoveVisual(moveContext, preMoveVisual, movedInstance) {
 
     if (moveReason === 'destroyed' || moveReason === 'burned' || moveReason === 'discarded') {
         if (moveReason === 'burned' && preMoveVisual?.snap?.cloneEl) {
-            return motion.playBurnCard(preMoveVisual.snap);
+            return motion.playBurnCard(preMoveVisual.snap, { fastForward: isPresentationFastForward() });
         }
         if (motion.markActiveLungeExit(cardUid, 'destroy')) {
             return undefined;
@@ -1613,7 +1613,7 @@ function commitCardMoveVisual(moveContext, preMoveVisual, movedInstance) {
                     unscaledH: 140,
                     isCard: true,
                     cloneEl: burnedClone
-                });
+                }, { fastForward: isPresentationFastForward() });
             }
         }
         return undefined;
@@ -5094,6 +5094,7 @@ function getCardActionState(cardInstance, context) {
 }
 
 const CARD_ACTION_BUTTON_SELECTOR = '.super-evolve-button, .evolve-button, .fusion-button, .act-button, .use-button';
+const HIDDEN_CARD_ACTION_BUTTON_SELECTOR = '.use-button, .evolve-button, .super-evolve-button, .fusion-button';
 const CARD_ACTION_BUTTON_TOP_START = 28;
 const CARD_ACTION_BUTTON_VERTICAL_GAP = 28;
 const CARD_ACTION_BUTTON_PRIORITY = Object.freeze({
@@ -5116,7 +5117,10 @@ function getActionButtonPriority(button) {
 
 function applyCardActionButtonStack(cardElement) {
     if (!cardElement) return;
+    const hideButtons = typeof document !== 'undefined'
+        && document.documentElement?.classList?.contains('hide-card-buttons');
     const orderedButtons = Array.from(cardElement.querySelectorAll(CARD_ACTION_BUTTON_SELECTOR))
+        .filter(button => !hideButtons || !button.matches(HIDDEN_CARD_ACTION_BUTTON_SELECTOR))
         .map((button, index) => ({ button, index, priority: getActionButtonPriority(button) }))
         .sort((a, b) => (a.priority - b.priority) || (a.index - b.index))
         .map(item => item.button);
@@ -8218,6 +8222,10 @@ function renderAbilityTriggerToast(root, payload) {
     root.appendChild(item);
     return item;
 }
+
+document.addEventListener('sv-card-buttons-visibility-change', () => {
+    gameContainerEl?.querySelectorAll('.card').forEach(applyCardActionButtonStack);
+});
 
 // Route switch lifecycle: remove combat toasts immediately when leaving game page.
 document.addEventListener('cleanupGame', () => {
