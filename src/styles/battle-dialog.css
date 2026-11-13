@@ -1,0 +1,271 @@
+/* Opt-in frame: other site dialogs keep their existing theme. */
+.battle-dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 2000000;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: #02060bbd;
+    backdrop-filter: blur(6px);
+}
+.battle-dialog {
+    --dialog-accent: #9adceb;
+    --dialog-width: 504px;
+    --dialog-cut: polygon(15px 0, 100% 0, 100% calc(100% - 15px), calc(100% - 15px) 100%, 0 100%, 0 15px);
+    position: relative;
+    display: flex;
+    width: min(100%, var(--dialog-width));
+    max-height: min(90vh, calc(var(--app-height, 100dvh) - 48px));
+    min-height: 0;
+    color-scheme: dark;
+    color: #e4edf5;
+    font-family: 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+    filter: drop-shadow(0 17px 26px #0005);
+}
+.battle-dialog, .battle-dialog *, .battle-dialog *::before, .battle-dialog *::after { box-sizing: border-box; }
+.battle-dialog--evolve { --dialog-accent: #dfc281; }
+.battle-dialog--super { --dialog-accent: #cda5ed; }
+.battle-dialog--surrender, .battle-dialog[data-tone="error"] { --dialog-accent: #e59c96; }
+.battle-dialog[data-tone="success"] { --dialog-accent: #99cbb7; }
+.battle-dialog-frame {
+    display: flex;
+    width: 100%;
+    min-height: 0;
+    padding: 1px;
+    clip-path: var(--dialog-cut);
+    background: linear-gradient(135deg, #94aab8, #536572 10%, #354551 30%, #293744 70%, #667e8e);
+}
+.battle-dialog-shell {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-height: 0;
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    padding: 0 28px 25px;
+    clip-path: var(--dialog-cut);
+    background: radial-gradient(ellipse at 50% 0, #25344190, transparent 62%), linear-gradient(140deg, #131e2b, #0a121d 62%, #101a26);
+}
+.battle-dialog-shell::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 230px;
+    height: 100px;
+    transform: translateX(-50%);
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 50% 0, var(--dialog-accent), transparent 70%);
+    opacity: .22;
+}
+.battle-dialog-shell::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: calc(50% - 35px);
+    width: 70px;
+    height: 2px;
+    pointer-events: none;
+    background: var(--dialog-accent);
+    box-shadow: 0 1px 12px color-mix(in srgb, var(--dialog-accent) 40%, transparent);
+}
+.battle-dialog .battle-dialog-heading {
+    position: relative;
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    padding: 29px 0 24px;
+}
+.battle-dialog-heading::before, .battle-dialog-heading::after {
+    content: '';
+    flex: 0 1 48px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #7a97ad70);
+}
+.battle-dialog-heading::after { transform: rotate(180deg); }
+.battle-dialog .battle-dialog-heading.has-close { padding-inline: 38px; }
+.battle-dialog .battle-dialog-heading h2 {
+    margin: 0;
+    padding: 0 0 0 .15em;
+    min-width: 0;
+    color: #ebf1f6;
+    font-size: 23px;
+    font-weight: 500;
+    line-height: 1.4;
+    letter-spacing: .15em;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+.battle-dialog .battle-dialog-close {
+    position: absolute;
+    top: 22px;
+    right: -8px;
+    width: 40px;
+    height: 40px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #91a7b9;
+    font: 300 27px/1 'Segoe UI', sans-serif;
+    cursor: pointer;
+    box-shadow: none;
+    transform: none;
+}
+.battle-dialog .battle-dialog-close:hover { color: #e2f5ff; background: #7695ac12; }
+.battle-dialog-body {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #496074 transparent;
+}
+.battle-dialog .battle-dialog-message {
+    margin: 0;
+    padding: 13px 6px 17px;
+    color: #e0e9f1;
+    font-size: 17px;
+    font-weight: 400;
+    line-height: 1.8;
+    text-align: center;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.battle-dialog-target {
+    position: relative;
+    display: grid;
+    grid-template-columns: 43px minmax(0, 1fr);
+    gap: 17px;
+    align-items: center;
+    padding: 15px 17px;
+    border: 1px solid #647e9630;
+    background: linear-gradient(105deg, #1d2b3980, #0c152090);
+}
+.battle-dialog-target::before {
+    content: '';
+    position: absolute;
+    left: -1px;
+    top: 15px;
+    bottom: 15px;
+    width: 2px;
+    background: var(--dialog-accent);
+    opacity: .85;
+}
+.battle-dialog-resource {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    place-items: center;
+    width: 43px;
+    height: 47px;
+    color: var(--dialog-accent);
+    font: 500 15px/1 'Segoe UI', sans-serif;
+}
+.battle-dialog-resource::before, .battle-dialog-resource::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+    background: color-mix(in srgb, var(--dialog-accent) 47%, #293c4c);
+}
+.battle-dialog-resource::after { inset: 1px; background: #192532; }
+.battle-dialog-target-name { color: #e6eef5; font-size: 17px; font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; }
+.battle-dialog-target-cost { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 3px; color: #94a9bb; font-size: 12px; line-height: 1.7; }
+.battle-dialog-target-cost strong { font: inherit; color: var(--dialog-accent); }
+.battle-dialog .battle-dialog-actions {
+    position: relative;
+    display: grid;
+    flex: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 23px;
+    padding-top: 20px;
+}
+.battle-dialog-actions::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(90deg, #738ca43a, #738ca41b 50%, #738ca43a);
+}
+.battle-dialog .battle-dialog-actions:has(> :only-child) { grid-template-columns: minmax(0, 1fr); }
+.battle-dialog .battle-dialog-button {
+    appearance: none;
+    position: relative;
+    isolation: isolate;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 44px;
+    padding: 10px 14px;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: #acbdcc;
+    font: 500 14px/1.5 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    letter-spacing: .07em;
+    cursor: pointer;
+    box-shadow: none;
+    transform: none;
+}
+.battle-dialog-button::before, .battle-dialog-button::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    pointer-events: none;
+    clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+    background: #415767;
+}
+.battle-dialog-button::after { inset: 1px; z-index: -1; background: linear-gradient(150deg, #1d2b38, #121e2b); transition: background .15s ease; }
+.battle-dialog-button:hover:not(:disabled)::after { background: #293d4e; }
+.battle-dialog .battle-dialog-button.is-primary { color: #f5f1e6; }
+.battle-dialog-button.is-primary::before { background: color-mix(in srgb, var(--dialog-accent) 78%, #293e4f); }
+.battle-dialog-button.is-primary::after { background: linear-gradient(125deg, color-mix(in srgb, var(--dialog-accent) 21%, #1b2832), color-mix(in srgb, var(--dialog-accent) 13%, #14202d)); }
+.battle-dialog-button.is-primary:hover:not(:disabled)::after { background: color-mix(in srgb, var(--dialog-accent) 29%, #1b2832); }
+.battle-dialog button:disabled { opacity: .4; cursor: default; }
+.battle-dialog :focus-visible { outline: 2px solid #b9e5f0; outline-offset: 2px; }
+.battle-dialog [hidden] { display: none !important; }
+.battle-dialog--settings { --dialog-width: 596px; }
+.battle-dialog--settings .battle-dialog-body { padding: 4px; }
+.battle-dialog .operation-settings-group { margin: 0; padding: 5px 0 10px; color: #85a4b8; font-size: 12px; font-weight: 500; letter-spacing: .1em; }
+.battle-dialog .operation-settings-group:not(:first-child) { padding-top: 22px; }
+.battle-dialog .operation-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 54px; padding: 12px 0; border-bottom: 1px solid #7992a522; cursor: pointer; color: #ccdae5; font-size: 14px; font-weight: 400; line-height: 1.6; }
+.battle-dialog .operation-settings-row input { appearance: none; position: relative; display: block; flex: 0 0 43px; width: 43px; height: 24px; margin: 0; padding: 0; border: 1px solid #496074; border-radius: 3px; background: #182633; cursor: pointer; }
+.battle-dialog .operation-settings-row input::before { content: ''; position: absolute; left: 3px; top: 3px; width: 16px; height: 16px; border-radius: 1px; background: #7b92a4; transition: transform .14s, background .14s; }
+.battle-dialog .operation-settings-row input:checked { background: #294553; border-color: #9adceb; }
+.battle-dialog .operation-settings-row input:checked::before { transform: translateX(19px); background: #b7e8ef; }
+.battle-dialog--settings .battle-dialog-actions { display: flex; justify-content: flex-end; }
+.battle-dialog--settings .battle-dialog-actions .battle-dialog-button { min-width: 120px; }
+@media (max-width: 480px) {
+    .battle-dialog-backdrop { padding: 12px; }
+    .battle-dialog { max-height: calc(var(--app-height, 100dvh) - 24px); }
+    .battle-dialog-shell { padding: 0 19px 21px; }
+    .battle-dialog .battle-dialog-heading { padding-block: 25px 21px; gap: 10px; }
+    .battle-dialog .battle-dialog-heading.has-close { padding-inline: 22px; }
+    .battle-dialog .battle-dialog-heading h2 { flex-shrink: 0; font-size: 20px; letter-spacing: .1em; white-space: nowrap; }
+    .battle-dialog-heading::before, .battle-dialog-heading::after { flex-basis: 18px; }
+    .battle-dialog .battle-dialog-close { top: 18px; right: -12px; }
+    .battle-dialog-target { padding: 13px 12px; gap: 13px; grid-template-columns: 37px minmax(0, 1fr); }
+    .battle-dialog-resource { width: 37px; height: 43px; font-size: 13px; }
+    .battle-dialog-target-name { font-size: 15px; }
+    .battle-dialog .battle-dialog-message { font-size: 15px; }
+    .battle-dialog .battle-dialog-actions { gap: 9px; margin-top: 20px; padding-top: 18px; }
+    .battle-dialog .battle-dialog-button { padding-inline: 9px; font-size: 13px; }
+    .battle-dialog--settings .battle-dialog-actions .battle-dialog-button { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .battle-dialog-button::after, .battle-dialog .operation-settings-row input::before { transition: none; }
+}

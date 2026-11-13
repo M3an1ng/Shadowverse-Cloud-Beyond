@@ -6,7 +6,7 @@ import { loadAboutChangelog } from "./aboutChangelog.js";
 import "./styles/mini-feature-theme.css";
 import { initializeTakeTwo, tryJoinTakeTwo, leaveTakeTwoRoom, getActiveTakeTwoRoom, configureTakeTwoRoomEntry } from './takeTwo.js';
 import { listSpectatableRooms, showTakeTwoSpectator, findTakeTwoSpectatorRoom } from './takeTwoSpectator.js';
-import { confirmDialog } from './siteDialog.js';
+import { confirmDialog, confirmBattleDialog } from './siteDialog.js';
 import { showAlert } from './siteDialog.js';
 // src/main.js - 主入口模块
 //
@@ -21,7 +21,7 @@ if (document.readyState === 'loading') document.addEventListener('DOMContentLoad
 else installOperationSettingsButton();
 import * as signalR from "@microsoft/signalr";
 import { router, initializeRouter } from './router.js';
-import { battleExitConfirmMessage, isSpectatorBattle, shouldConfirmBattleExit } from './battleExitConfirmPolicy.js';
+import { BATTLE_EXIT_CONFIRM_MESSAGE, battleExitConfirmMessage, isSpectatorBattle, shouldConfirmBattleExit } from './battleExitConfirmPolicy.js';
 import { getDeckOwnerPayload, getDeckOwnerQuery, getUserSession, USER_SESSION_CHANGED_EVENT } from './userSession.js';
 import {
     gameState, bindGameView, initializeGame, initializeSpectator, clearGameSession, setSignalRConnection, setGuestSignalRConnection, updateFullGameState, endTurnRequest,
@@ -958,7 +958,11 @@ function registerRoomExitDecisionRouteHooks() {
         }
 
         if (shouldConfirmBattleExit(oldRoute, newRoute, routeButton, gameState, getReconnectHandshake())) {
-            if (!await confirmDialog(battleExitConfirmMessage(gameState, getReconnectHandshake()))) return false;
+            const message = battleExitConfirmMessage(gameState, getReconnectHandshake());
+            const confirmed = message === BATTLE_EXIT_CONFIRM_MESSAGE
+                ? await confirmBattleDialog('surrender')
+                : await confirmDialog(message);
+            if (!confirmed) return false;
             if (!await handleConfirmedBattleExit()) return false;
         }
         pendingRouteTransition = {

@@ -2396,12 +2396,8 @@ button.pp-boost-button.leader-boost-pill.is-spent .pp-boost-chevron {
     border: none;
     background: transparent;
     box-shadow: none;
-    overflow: hidden;
+    overflow: visible;
     align-items: stretch;
-}
-
-.battle-chat-dock.is-expanded:has(.chat-emote-panel:not([hidden])) {
-    height: min(376px, calc(100vh - 160px));
 }
 
 .battle-chat-dock.is-expanded::before {
@@ -2419,9 +2415,30 @@ button.pp-boost-button.leader-boost-pill.is-spent .pp-boost-chevron {
     opacity: 1;
 }
 
+.battle-chat-dock.is-collapsed {
+    width: 368px;
+    max-width: calc(100vw - 36px);
+    align-items: stretch;
+    gap: 4px;
+}
+
 .battle-chat-dock.is-collapsed .battle-chat-min-btn,
-.battle-chat-dock.is-collapsed .battle-chat-content {
+.battle-chat-dock.is-collapsed .chat-message-list {
     display: none;
+}
+
+.battle-chat-dock.is-collapsed #game-chat-content {
+    flex: none;
+}
+
+.battle-chat-dock.is-collapsed .battle-chat-pill-btn {
+    width: 100%;
+    max-width: 100%;
+}
+
+.battle-chat-dock.is-collapsed .chat-input-form {
+    padding-left: 0;
+    opacity: 1;
 }
 
 .battle-chat-dock.is-expanded .battle-chat-pill-btn {
@@ -2443,8 +2460,8 @@ button.pp-boost-button.leader-boost-pill.is-spent .pp-boost-chevron {
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    opacity: 0;
-    pointer-events: none;
+    opacity: 0.7;
+    pointer-events: auto;
     z-index: 5;
     transition: opacity 0.18s ease, color 0.15s ease, background 0.15s ease;
 }
@@ -2520,24 +2537,40 @@ button.pp-boost-button.leader-boost-pill.is-spent .pp-boost-chevron {
 .chat-message-list {
     flex: 1;
     min-height: 0;
+    overflow-x: hidden;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 22px 6px 6px 10px;
     display: flex;
     flex-direction: column;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: 8px;
-    scrollbar-width: none;
-    mask-image: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.45) 18%, black 38%, black 100%);
-    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.45) 18%, black 38%, black 100%);
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+    scrollbar-color: rgba(180, 204, 224, 0.55) rgba(13, 23, 35, 0.35);
 }
 
-.battle-chat-dock.is-expanded:hover .chat-message-list {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+.chat-message-list > .chat-message-entry:first-child {
+    /* Keep short conversations at the bottom without moving older messages above the scroll origin. */
+    margin-top: auto;
+}
+
+.chat-message-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.chat-message-list::-webkit-scrollbar-track {
+    background: rgba(13, 23, 35, 0.35);
+}
+
+.chat-message-list::-webkit-scrollbar-thumb {
+    background: rgba(180, 204, 224, 0.55);
+    border-radius: 3px;
 }
 
 .chat-message-entry {
     position: relative;
+    flex-shrink: 0;
     margin: 0;
     padding: 0 0 0 36px;
     border: none;
@@ -2730,12 +2763,24 @@ button.pp-boost-button.leader-boost-pill.is-spent .pp-boost-chevron {
     overflow-wrap: anywhere;
 }
 
+.chat-composer {
+    position: relative;
+    flex-shrink: 0;
+    min-width: 0;
+}
+
 .chat-emote-panel {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 4px);
+    z-index: 6;
     height: 204px;
-    flex: 0 0 204px;
+    max-height: calc(var(--app-height, 100dvh) - 88px);
     border: 1px solid rgba(148, 163, 184, 0.24);
     border-radius: 8px;
-    background: rgba(15, 23, 42, 0.88);
+    background: rgba(15, 23, 42, 0.96);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -2862,6 +2907,7 @@ button.pp-boost-button.leader-boost-pill.is-spent .pp-boost-chevron {
 }
 
 .chat-input-form {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -2878,10 +2924,20 @@ button.pp-boost-button.leader-boost-pill.is-spent .pp-boost-chevron {
 }
 
 .chat-send-status {
-    min-height: 0;
-    padding-left: 10px;
-    font-size: 10px;
+    position: absolute;
+    right: 2px;
+    bottom: calc(100% + 4px);
+    z-index: 6;
+    max-width: calc(100% - 12px);
+    padding: 3px 7px;
+    border: 1px solid rgba(180, 204, 224, 0.18);
+    border-radius: 4px;
+    background: rgba(8, 16, 27, 0.94);
+    font-size: 11px;
+    line-height: 1.5;
     color: rgba(148, 163, 184, 0.9);
+    overflow-wrap: anywhere;
+    pointer-events: none;
 }
 
 .chat-send-status:empty {
@@ -3283,13 +3339,8 @@ button.pp-boost-button.leader-boost-pill.is-spent .pp-boost-chevron {
         bottom: 10px;
     }
 
-    .battle-chat-dock.is-expanded {
+    .battle-chat-dock:is(.is-expanded, .is-collapsed) {
         width: min(332px, calc(100vw - 20px));
-    }
-
-    .chat-emote-panel {
-        height: 204px;
-        flex-basis: 204px;
     }
 
     .chat-emote-btn {
@@ -4230,7 +4281,7 @@ button.pp-boost-button.leader-boost-pill.is-spent .pp-boost-chevron {
     color: #e9d5ff;
 }
 
-.hide-card-buttons .card > :is(.use-button, .evolve-button, .super-evolve-button) {
+.hide-card-buttons .card > :is(.use-button, .evolve-button, .super-evolve-button, .fusion-button) {
     display: none;
 }
 
@@ -6453,6 +6504,10 @@ img.badge-icon {
     .battle-chat-dock {
         right: calc(10px + var(--safe-right, 0px));
         bottom: calc(6px + var(--safe-bottom, 0px));
+    }
+
+    .battle-chat-dock.is-collapsed {
+        width: min(300px, 46vw);
     }
 
     .battle-chat-dock.is-expanded {

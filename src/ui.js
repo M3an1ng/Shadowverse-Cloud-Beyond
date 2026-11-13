@@ -107,7 +107,7 @@ import {
     recordHandDragPerfFrame,
     summarizeHandDragPerfSession
 } from './debugDiagnostics.js';
-import { confirmDialog } from './siteDialog.js';
+import { confirmBattleDialog } from './siteDialog.js';
 import { shouldAutoConfirmChoice } from './choiceSettingsPolicy.js';
 import { readOperationSettings } from './operationSettings.js';
 import { renderDescriptionHtml } from './descriptionParser.js';
@@ -7706,7 +7706,7 @@ async function handleGameClick(event) {
         const fusionUid = clickedFusionButton.dataset.fusionUid;
         const fusionAbilityId = clickedFusionButton.dataset.fusionAbilityId || null;
         if (!fusionUid) return;
-        if (readOperationSettings().fusionConfirmation && !await confirmDialog('确认发动融合吗？')) return;
+        if (readOperationSettings().fusionConfirmation && !await confirmBattleDialog('fusion')) return;
         requestFusion(fusionUid, fusionAbilityId);
         return;
     }
@@ -8000,22 +8000,18 @@ async function confirmEvolutionAction(cardUid, mode = 'evolve') {
     const normalizedMode = mode === 'super' ? 'super' : 'evolve';
     const card = findCardInstanceByUid(cardUid);
     const cardName = String(card?.name || card?.Name || '').trim() || '该卡牌';
-    const actionLabel = normalizedMode === 'super' ? '超进化' : '进化';
-    const message = `确认要对【${cardName}】执行${actionLabel}吗？`;
-
-    if (typeof window === 'undefined' || typeof confirmDialog !== 'function') {
+    if (typeof window === 'undefined' || typeof confirmBattleDialog !== 'function') {
         return true;
     }
-    return confirmDialog(message);
+    return confirmBattleDialog(normalizedMode, { cardName, freeEvolution: hasChoiceCardKeyword(card, 'FreeEvolve') });
 }
 
 async function confirmEndTurnAction() {
     if (!readOperationSettings().endTurnConfirmation) return true;
-    const message = '确认结束当前回合吗？';
-    if (typeof window === 'undefined' || typeof confirmDialog !== 'function') {
+    if (typeof window === 'undefined' || typeof confirmBattleDialog !== 'function') {
         return true;
     }
-    return confirmDialog(message);
+    return confirmBattleDialog('end');
 }
 
 /**
