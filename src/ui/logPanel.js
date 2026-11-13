@@ -696,6 +696,9 @@ function ensureChatPanelStructure(chatContent) {
     if (!messageList) {
         messageList = document.createElement('div');
         messageList.className = 'chat-message-list';
+        messageList.tabIndex = 0;
+        messageList.setAttribute('role', 'region');
+        messageList.setAttribute('aria-label', '聊天记录');
         chatContent.appendChild(messageList);
     }
 
@@ -749,13 +752,8 @@ function ensureChatPanelStructure(chatContent) {
         emoteButton.title = '表情';
         emoteButton.setAttribute('aria-label', '表情');
         emoteButton.addEventListener('click', () => {
-            const currentMessageList = chatContent.querySelector('.chat-message-list');
-            const wasNearBottomBeforeToggle = isLogNearBottom(currentMessageList);
             isEmotePanelOpen = !isEmotePanelOpen;
             if (isEmotePanelOpen) {
-                if (wasNearBottomBeforeToggle) {
-                    shouldScrollChatToLatestOnRender = true;
-                }
                 ensureEmoteCatalogLoaded();
             }
             renderInMatchChatDock();
@@ -817,8 +815,18 @@ function ensureChatPanelStructure(chatContent) {
         form.appendChild(emoteButton);
         form.appendChild(input);
         form.appendChild(sendButton);
+        form.appendChild(status);
         chatContent.appendChild(form);
     }
+
+    let composer = chatContent.querySelector('.chat-composer');
+    if (!composer) {
+        composer = document.createElement('div');
+        composer.className = 'chat-composer';
+        chatContent.appendChild(composer);
+    }
+    if (form.parentElement !== composer) composer.appendChild(form);
+    if (emotePanel.parentElement !== composer) composer.appendChild(emotePanel);
 
     return { messageList, status, emotePanel, input, emoteButton, sendButton };
 }
@@ -838,12 +846,14 @@ function ensureInMatchChatDock() {
         minBtn.className = 'battle-chat-min-btn';
         minBtn.title = '收起对话流';
         minBtn.setAttribute('aria-label', '收起对话流');
-        minBtn.textContent = '—';
+        minBtn.setAttribute('aria-controls', 'game-chat-content');
+        minBtn.textContent = '−';
         minBtn.addEventListener('click', () => {
             saveCurrentChatDraft();
             closeEmotePanel();
             isChatDockOpen = false;
             renderInMatchChatDock();
+            chatDock.querySelector('#game-chat-pill-btn')?.focus({ preventScroll: true });
         });
 
         const pillBtn = document.createElement('button');
@@ -851,6 +861,8 @@ function ensureInMatchChatDock() {
         pillBtn.id = 'game-chat-pill-btn';
         pillBtn.className = 'battle-chat-pill-btn';
         pillBtn.title = '展开对话窗口';
+        pillBtn.setAttribute('aria-label', '展开对话窗口');
+        pillBtn.setAttribute('aria-controls', 'game-chat-content');
         pillBtn.innerHTML = `
             <span class="battle-chat-pill-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
@@ -861,6 +873,7 @@ function ensureInMatchChatDock() {
             isChatDockOpen = true;
             shouldScrollChatToLatestOnRender = true;
             renderInMatchChatDock();
+            minBtn.focus({ preventScroll: true });
         });
 
         const chatContent = document.createElement('div');
@@ -889,6 +902,9 @@ function renderInMatchChatDock() {
 
     chatDock.classList.toggle('is-expanded', isChatDockOpen);
     chatDock.classList.toggle('is-collapsed', !isChatDockOpen);
+    chatDock.querySelectorAll('[aria-controls="game-chat-content"]').forEach(button => {
+        button.setAttribute('aria-expanded', String(isChatDockOpen));
+    });
 
     const pillPreview = chatDock.querySelector('.battle-chat-pill-preview');
     if (pillPreview) {
@@ -906,10 +922,6 @@ function renderInMatchChatDock() {
 
     const chatContent = chatDock.querySelector('#game-chat-content');
     if (!chatContent) return;
-
-    if (!isChatDockOpen) {
-        return;
-    }
 
     renderActiveChatPanel(chatContent);
 }
@@ -932,6 +944,9 @@ function renderActiveChatPanel(chatContent) {
         structure.emoteButton.disabled = isChatSending;
     }
     renderEmotePanel(structure.emotePanel);
+
+    // Keep the composer usable while collapsed; only rebuild history when expanded.
+    if (!isChatDockOpen) return;
 
     const previousScrollTop = structure.messageList.scrollTop;
     const wasNearBottom = isLogNearBottom(structure.messageList);

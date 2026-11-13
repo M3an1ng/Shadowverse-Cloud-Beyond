@@ -668,6 +668,64 @@ export function createBattleMotionController({
         ));
     }
 
+    // Keep overflow cards readable before the burst; the returned promise spaces consecutive burns.
+    function playBurnCard(snapItem, { fastForward = false } = {}) {
+        const layer = getTransientLayer?.();
+        const stage = getStageElement?.();
+        if (!layer || !stage || !snapItem?.cloneEl) return;
+
+        const reduced = prefersReducedMotion();
+        const duration = fastForward ? 240 : 700;
+        const w = snapItem.unscaledW || 102;
+        const h = snapItem.unscaledH || 140;
+        const bounds = stage.getBoundingClientRect();
+        const scale = Math.max(0.5, Math.min(1.1, (bounds.width - 32) / w, (bounds.height - 32) / h));
+        const marginX = w / 2 * scale + 16;
+        const marginTop = h / 2 * scale + 16;
+        const marginBottom = h / 2 * scale + 16;
+        const cx = Math.max(marginX, Math.min(bounds.width - marginX, snapItem.rect.cx));
+        const cy = Math.max(marginTop, Math.min(bounds.height - marginBottom, snapItem.rect.cy));
+        const shell = document.createElement('div');
+        shell.className = 'bui-exit-clip-shell is-burned';
+        Object.assign(shell.style, {
+            width: `${w}px`, height: `${h}px`,
+            left: `${cx - w / 2}px`, top: `${cy - h / 2}px`, scale: `${scale}`
+        });
+        const clone = snapItem.cloneEl.cloneNode(true);
+        shell.appendChild(clone);
+        layer.appendChild(shell);
+
+        if (!reduced) {
+            const ring = document.createElement('div');
+            ring.className = 'bui-burn-ring';
+            shell.appendChild(ring);
+            trackAnimation(safeAnimate(ring, [
+                { opacity: 0, scale: '0.95' },
+                { opacity: 0, scale: '0.95', offset: 0.7 },
+                { opacity: 1, scale: '1.08', offset: 0.8 },
+                { opacity: 0, scale: '1.6' }
+            ], { duration, easing: 'linear', fill: 'forwards' }));
+            trackAnimation(safeAnimate(clone, [
+                { filter: 'brightness(1)' },
+                { filter: 'brightness(1)', offset: 0.7 },
+                { filter: 'brightness(1.65) saturate(1.3)', offset: 0.8 },
+                { filter: 'brightness(0.5) sepia(1)' }
+            ], { duration, easing: 'linear', fill: 'forwards' }));
+        }
+        const frames = reduced ? [
+            { opacity: 1 }, { opacity: 1, offset: 0.85 }, { opacity: 0 }
+        ] : [
+            { opacity: 0, scale: `${scale * 0.85}`, translate: '0px 8px' },
+            { opacity: 1, scale: `${scale}`, translate: '0px 0px', offset: 0.12 },
+            { opacity: 1, scale: `${scale}`, translate: '0px 0px', offset: 0.7 },
+            { opacity: 1, scale: `${scale * 1.04}`, translate: '-3px 0px', offset: 0.79 },
+            { opacity: 0.85, scale: `${scale}`, translate: '3px 3px', offset: 0.86 },
+            { opacity: 0, scale: `${scale * 0.8}`, translate: '0px 22px' }
+        ];
+        const anim = trackAnimation(safeAnimate(shell, frames, { duration, easing: 'linear', fill: 'forwards' }));
+        return anim.finished.then(() => shell.remove(), () => shell.remove());
+    }
+
     // 2. 语义化退场克隆：破坏 (destroy) vs 消失 (vanish) vs 回手/回牌库 (return / deck)
     function spawnSemanticExitClone(snapItem, reason = 'destroy', overrideStagePos = null, destinationRect = null) {
         const layer = getTransientLayer?.();
@@ -1426,6 +1484,7 @@ export function createBattleMotionController({
         runCrossZoneCarrierFlight,
         playHandRightSlideIn,
         animateStatPop,
+        playBurnCard,
         spawnSemanticExitClone,
         triggerWaveHits,
         playEvolveBurst,

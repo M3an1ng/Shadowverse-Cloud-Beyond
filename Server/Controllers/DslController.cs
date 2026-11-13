@@ -3,11 +3,15 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
+using ShadowverseBeyond.Server.Domain.Abilities.Conditions;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.AST;
 using ShadowverseBeyond.Server.Domain.Abilities.DSL.Parser;
+using ShadowverseBeyond.Server.Domain.Constants;
 using ShadowverseBeyond.Server.Dtos.Dsl;
+using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Controllers
 {
@@ -16,10 +20,12 @@ namespace ShadowverseBeyond.Server.Controllers
     public class DslController : ControllerBase
     {
         private readonly ILogger<DslController> _logger;
+        private readonly IGameDataProvider _gameData;
 
-        public DslController(ILogger<DslController> logger)
+        public DslController(ILogger<DslController> logger, IGameDataProvider gameData)
         {
             _logger = logger;
+            _gameData = gameData;
         }
 
         [HttpPost("parse")]
@@ -234,6 +240,23 @@ namespace ShadowverseBeyond.Server.Controllers
             }
         }
 
+        private static readonly Dictionary<string, CardKeyword> InnateKeywords = new()
+        {
+            ["守护"] = CardKeyword.Ward, ["守護"] = CardKeyword.Ward,
+            ["疾驰"] = CardKeyword.Storm, ["疾馳"] = CardKeyword.Storm,
+            ["突进"] = CardKeyword.Rush, ["突進"] = CardKeyword.Rush,
+            ["必杀"] = CardKeyword.Bane, ["必殺"] = CardKeyword.Bane,
+            ["毁灭"] = CardKeyword.Bane, ["毀滅"] = CardKeyword.Bane,
+            ["吸血"] = CardKeyword.Drain, ["虹吸"] = CardKeyword.Drain,
+            ["潜行"] = CardKeyword.Ambush, ["潛行"] = CardKeyword.Ambush,
+            ["潜伏"] = CardKeyword.Ambush, ["潛伏"] = CardKeyword.Ambush,
+            ["威慑"] = CardKeyword.Pressure, ["威懾"] = CardKeyword.Pressure,
+            ["屏障"] = CardKeyword.Shield, ["障壁"] = CardKeyword.Shield,
+            ["灵气"] = CardKeyword.Aura, ["靈氣"] = CardKeyword.Aura,
+            ["光纹"] = CardKeyword.Aura, ["光紋"] = CardKeyword.Aura,
+            ["土之印"] = CardKeyword.EarthSigil, ["证据"] = CardKeyword.Evidence, ["證據"] = CardKeyword.Evidence
+        };
+
         [HttpPost("generate-from-card")]
         public ActionResult<DslGenerateFromCardResponse> GenerateFromCard([FromBody] DslGenerateFromCardRequest request)
         {
@@ -259,7 +282,9 @@ namespace ShadowverseBeyond.Server.Controllers
 
             var drafts = new List<GeneratedAbilityDraftDto>();
             var detectedKeywords = new List<string>();
+            int? initialCountdown = null;
             var unrecognizedClauses = new List<string>();
+            var sourceCard = request.CardId is int cardId ? _gameData.GetCardDefinition(cardId) : null;
             int seq = 1;
 
             foreach (var section in sections)
@@ -281,45 +306,66 @@ namespace ShadowverseBeyond.Server.Controllers
                 };
                 var activeSectionTrigger = defaultTrigger;
                 string? pendingTriggerOnlyLine = null;
-                var rawLines = (section.Text ?? string.Empty)
-                    .Replace("\r\n", "\n")
+                string? pendingActClause = null;
+                void FlushPendingAct()
+                {
+                    if (pendingActClause == null) return;
+                    var actDraft = CompileClauseToAbilityDraft(cardName, cardType, sourceCard?.IsMirageCard, style, "Act", pendingActClause, seq, unrecognizedClauses);
+                    if (actDraft.HasEffects)
+                    {
+                        drafts.Add(actDraft);
+                        seq++;
+                    }
+                    pendingActClause = null;
+                }
+                var ruleText = Regex.Replace(section.Text ?? string.Empty,
+                    @"(指定\s*[1１一]\s*[张張](?:敌方|敵方|自己)的?[战戰][场場]上的?(?:其他)?(?:随从|從者|从者)(?:卡[片牌]?)?。)\s*\r?\n\s*(?=[给給]予其|[将將]其破[坏壞]|使其(?:消失|[+＋\-－]))",
+                    "$1 ");
+                // A mode option or an unknown continuation cannot be installed as a separate unconditional effect.
+                ruleText = Regex.Replace(ruleText, @"\r?\n[ \t]*(?=[（(][0-9０-９]+[）)])", " ");
+                ruleText = Regex.Replace(ruleText, @"([。；;])[ \t]*\r?\n[ \t]*(?=[【〖](?:连击|連擊))", "$1 ");
+                var rawLines = ruleText.Replace("\r\n", "\n")
                     .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
                 foreach (var rawLine in rawLines)
                 {
                     if (string.IsNullOrWhiteSpace(rawLine)) continue;
                     // Only leading labels describe the card itself; granted keywords belong to the effect.
-                    var clause = Regex.Replace(rawLine, @"^(?:【(?:守护|守護|疾驰|疾馳|突进|突進|必杀|必殺|吸血|潜行|潛行|威慑|威懾|屏障|光纹|光紋)】\s*)+", match =>
+                    var clause = rawLine;
+                    while (Regex.Match(clause, @"^[【〖](?<label>[^】〗]+)[】〗]\s*") is { Success: true } labelMatch)
                     {
-                        foreach (Match label in Regex.Matches(match.Value, @"【([^】]+)】"))
+                        var label = labelMatch.Groups["label"].Value.Trim();
+                        string keyword;
+                        if (InnateKeywords.TryGetValue(label, out var innate))
                         {
-                            var keyword = label.Groups[1].Value switch
-                            {
-                                "守护" or "守護" => "Ward",
-                                "疾驰" or "疾馳" => "Storm",
-                                "突进" or "突進" => "Rush",
-                                "必杀" or "必殺" => "Bane",
-                                "吸血" => "Drain",
-                                "潜行" or "潛行" => "Ambush",
-                                "威慑" or "威懾" => "Intimidate",
-                                "屏障" => "Barrier",
-                                "光纹" or "光紋" => "Aura",
-                                _ => throw new InvalidOperationException("未知卡面关键字")
-                            };
-                            if (!detectedKeywords.Contains(keyword)) detectedKeywords.Add(keyword);
+                            keyword = innate.ToString();
                         }
-                        return string.Empty;
-                    }).Trim();
+                        else
+                        {
+                            var countdownMatch = Regex.Match(NormalizeChineseNumbers(label), @"^(?:倒[数數]|吟唱)[_\s]*(\d+)$");
+                            if (!int.TryParse(countdownMatch.Groups[1].Value, out var countdown)) break;
+                            if (initialCountdown.HasValue && initialCountdown.Value != countdown)
+                                unrecognizedClauses.Add(labelMatch.Value.Trim());
+                            else
+                                initialCountdown = countdown;
+                            keyword = nameof(CardKeyword.Countdown);
+                        }
+                        if (!detectedKeywords.Contains(keyword)) detectedKeywords.Add(keyword);
+                        clause = clause[labelMatch.Length..];
+                    }
                     if (string.IsNullOrWhiteSpace(clause)
+                        || Regex.IsMatch(clause, @"^[。；;]+$")
                         || Regex.IsMatch(clause, @"^(?:[-—─]{2,}|==)$")
                         || Regex.IsMatch(clause, @"^\{[^{}]+\}$")) continue;
 
-                    var (detectedTrigger, remainder) = DetectTriggerAndRemainder(clause);
+                    var (detectedTrigger, remainder, _) = DetectTriggerAndRemainder(clause);
                     if (detectedTrigger != null)
                     {
+                        FlushPendingAct();
                         if (pendingTriggerOnlyLine != null)
                         {
                             unrecognizedClauses.Add(pendingTriggerOnlyLine);
+                            pendingTriggerOnlyLine = null;
                         }
                         activeSectionTrigger = detectedTrigger;
                     }
@@ -328,15 +374,33 @@ namespace ShadowverseBeyond.Server.Controllers
                         pendingTriggerOnlyLine = clause;
                         continue;
                     }
+                    if (pendingTriggerOnlyLine != null && detectedTrigger == null)
+                        clause = pendingTriggerOnlyLine + " " + clause;
                     pendingTriggerOnlyLine = null;
 
-                    var draft = CompileClauseToAbilityDraft(cardName, cardType, style, activeSectionTrigger, clause, seq, unrecognizedClauses);
+                    if (activeSectionTrigger == "Act")
+                    {
+                        if (pendingActClause == null)
+                        {
+                            pendingActClause = clause;
+                        }
+                        else
+                        {
+                            var sep = Regex.IsMatch(pendingActClause, @"[。；;，,]\s*$") ? " " : "。";
+                            pendingActClause = pendingActClause + sep + clause;
+                        }
+                        continue;
+                    }
+
+                    var draft = CompileClauseToAbilityDraft(cardName, cardType, sourceCard?.IsMirageCard, style, activeSectionTrigger, clause, seq, unrecognizedClauses);
                     if (draft.HasEffects)
                     {
                         drafts.Add(draft);
                         seq++;
                     }
                 }
+
+                FlushPendingAct();
 
                 if (pendingTriggerOnlyLine != null)
                 {
@@ -353,16 +417,34 @@ namespace ShadowverseBeyond.Server.Controllers
                 CardName = cardName,
                 Abilities = drafts,
                 DetectedKeywords = detectedKeywords,
+                InitialCountdown = initialCountdown,
                 UnrecognizedClauses = unrecognizedClauses,
                 FullyCompiled = fullyCompiled
             });
         }
 
-        private static (string? Trigger, string Remainder) DetectTriggerAndRemainder(string text)
+        private const string ActLabels = "启动|啟動|起动|起動|策动|策動";
+        private const string ComboLabel = @"(?:【连击[_\s]*\d+】|【连击】\s*\d+)";
+
+        private static (string? Trigger, string Remainder, int? ActCost) DetectTriggerAndRemainder(string text)
         {
-            const string triggerPattern = "超进化时|超進化時|进化时|進化時|入场曲|入場曲|谢幕曲|謝幕曲|攻击时|攻擊時|交战时|交戰時|(?:自己的)?回合(?:开始时|開始時|结束时|結束時)|启动|起动|起動";
-            var match = Regex.Match(text, $@"^\s*(?:【(?<trigger>{triggerPattern})】|(?<trigger>{triggerPattern}))\s*[：:]?\s*");
-            if (!match.Success) return (null, text);
+            const string triggerPattern = "超进化时|超進化時|进化时|進化時|入场曲|入場曲|谢幕曲|謝幕曲|攻击时|攻擊時|交战时|交戰時|(?:自己的|敌方的|敵方的)?回合(?:开始时|開始時|结束时|結束時)|" + ActLabels;
+            const string labelEnd = @"\s*[：:，,]?\s*";
+            var paidAct = Regex.Match(text, $@"^\s*(?:消[费費]|[费費]用)\s*(?<cost>[0-9０-９]+)\s*[【〖](?:{ActLabels})[】〗]{labelEnd}");
+            if (paidAct.Success)
+            {
+                return int.TryParse(NormalizeChineseNumbers(paidAct.Groups["cost"].Value), out var cost)
+                    ? ("Act", text[paidAct.Length..], cost)
+                    : (null, text, null);
+            }
+            var match = Regex.Match(text, $@"^\s*(?:[【〖](?<trigger>{triggerPattern})(?:[\s_]+(?<actCost>[0-9０-９]+))?[】〗]|(?<trigger>{triggerPattern})){labelEnd}");
+            if (!match.Success)
+            {
+                match = Regex.Match(text, @"^[当當][这這][张張]卡(?:片|牌)(?:超)?[进進]化[时時][，,]?\s*");
+                if (match.Success)
+                    return (match.Value.Contains('超') ? "CardSuperEvolved" : "CardEvolved", text[match.Length..], null);
+            }
+            if (!match.Success) return (null, text, null);
 
             var trigger = match.Groups["trigger"].Value switch
             {
@@ -374,66 +456,93 @@ namespace ShadowverseBeyond.Server.Controllers
                 "交战时" or "交戰時" => "Attack",
                 "回合开始时" or "回合開始時" or "自己的回合开始时" or "自己的回合開始時" => "TurnStart",
                 "回合结束时" or "回合結束時" or "自己的回合结束时" or "自己的回合結束時" => "TurnEnd",
-                "启动" or "起动" or "起動" => "Act",
+                "敌方的回合开始时" or "敵方的回合開始時" => "OpponentTurnStart",
+                "敌方的回合结束时" or "敵方的回合結束時" => "OpponentTurnEnd",
+                "启动" or "啟動" or "起动" or "起動" or "策动" or "策動" => "Act",
                 _ => throw new InvalidOperationException("未知触发器")
             };
-            return (trigger, text[match.Length..]);
+            if (!match.Groups["actCost"].Success) return (trigger, text[match.Length..], null);
+            return trigger == "Act" && int.TryParse(NormalizeChineseNumbers(match.Groups["actCost"].Value), out var actCost)
+                ? (trigger, text[match.Length..], actCost)
+                : (null, text, null);
         }
 
-        private static GeneratedAbilityDraftDto CompileClauseToAbilityDraft(
+        private GeneratedAbilityDraftDto CompileClauseToAbilityDraft(
             string cardName,
             string cardType,
+            bool? isMirageCard,
             string sectionStyle,
             string trigger,
             string clauseText,
             int sequence,
             List<string> unrecognizedClauses)
         {
-            var (_, remainder) = DetectTriggerAndRemainder(clauseText.Trim());
-            var text = NormalizeChineseNumbers(remainder)
-                .Replace("從者", "随从").Replace("从者", "随从").Replace("隨從", "随从")
+            var (_, remainder, actCost) = DetectTriggerAndRemainder(clauseText.Trim());
+            // Quoted card names are catalog keys; normalize the surrounding grammar only.
+            var text = Regex.Replace(remainder, @"『[^』]*』|「[^」]*」|“[^”]*”|[^『「“]+|.", part =>
+                part.Value[0] is '『' or '「' or '“' ? part.Value : NormalizeRules(part.Value));
+            static string NormalizeRules(string value) => NormalizeChineseNumbers(value)
+                .Replace('〖', '【').Replace('〗', '】')
+                .Replace("從者", "随从").Replace("从者", "随从").Replace("隨從", "随从").Replace('從', '从')
+                .Replace("戰場", "战场").Replace("這", "这").Replace("將", "将")
                 .Replace("主戰者", "主战者").Replace("傷害", "伤害")
-                .Replace("恢復", "回复").Replace("恢复", "回复").Replace("回復", "回复")
+                .Replace("恢復", "回复").Replace("恢复", "回复").Replace("回復", "回复").Replace("回覆", "回复")
                 .Replace("卡片", "卡牌").Replace("破壞", "破坏").Replace("召喚", "召唤")
                 .Replace("對", "对").Replace("給予", "给予").Replace("敵方", "敌方")
                 .Replace("選擇", "选择").Replace("隨機", "随机").Replace("全體", "全体")
                 .Replace("獲得", "获得").Replace("爆能強化", "爆能强化")
                 .Replace("連擊", "连击").Replace("協作", "协作").Replace("覺醒", "觉醒")
-                .Replace("死靈術", "死灵术");
+                .Replace("已使用卡牌數", "已使用卡牌数").Replace("已使用牌數", "已使用牌数")
+                .Replace("大於等於", "大于等于").Replace("倒數", "倒数").Replace("回合數", "回合数")
+                .Replace("計時", "计时").Replace("計數", "计数")
+                .Replace("紋章", "纹章")
+                .Replace("死靈術", "死灵术").Replace("喚靈", "唤灵").Replace("發動", "发动").Replace("並", "并");
             var eventTypes = new List<string>();
             var validZones = new List<string>();
             var relationType = "Self";
             var abilityKeywords = new List<object>();
-            var conditions = new List<object>();
+            var conditions = new List<ConditionConfig>();
             var targets = new List<object>();
             var effects = new List<object>();
+            var chainedAbilitiesByEffect = new Dictionary<int, List<JsonNode?>>();
             var notes = new List<string>();
             int? activateCost = null;
 
+            var qualifiers = Regex.Match(text, @"^(?:\s*(?:【(?:爆能强化|连击|协作)[_\s]*\d+】|【?(?:爆能强化|连击|协作)】?\s*\d+|【?觉醒】?|本回合已使用(?:卡牌|牌)数(?:大于等于|>=|≥|至少为)\s*\d+)\s*[：:，,]?\s*)+");
+            var qualifierText = qualifiers.Value;
+            text = text[qualifiers.Length..];
             bool isSpell = string.Equals(cardType, "Spell", StringComparison.OrdinalIgnoreCase);
             bool isCrest = string.Equals(cardType, "Crest", StringComparison.OrdinalIgnoreCase)
                            || string.Equals(cardType, "Faith", StringComparison.OrdinalIgnoreCase)
                            || sectionStyle is "crest" or "faith";
 
             // 1. Trigger & AbilityKeyword resolution
-            var enhanceMatch = Regex.Match(text, @"【?爆能强化】?\s*(\d+)");
-            if (enhanceMatch.Success && int.TryParse(enhanceMatch.Groups[1].Value, out var enhanceVal))
+            var enhanceMatch = Regex.Match(qualifierText, @"爆能强化[】_\s]*([0-9]+)");
+            if (trigger != "EffectCompleted" && int.TryParse(enhanceMatch.Groups[1].Value, out var enhanceVal))
             {
                 activateCost = enhanceVal;
                 abilityKeywords.Add(new { keyword = "Enhance", value = enhanceVal });
                 eventTypes.Add("PlayCard");
             }
 
-            if (trigger == "SuperEvolve")
+            if (trigger == "EffectCompleted")
+            {
+                eventTypes.Add("EffectCompleted");
+                relationType = "Any";
+            }
+            else if (trigger is "SuperEvolve" or "CardSuperEvolved")
             {
                 eventTypes.Add("SuperEvolve");
+                if (trigger == "CardSuperEvolved") relationType = "TargetSelf";
                 validZones.Add("Field");
             }
-            else if (trigger == "Evolve")
+            else if (trigger is "Evolve" or "CardEvolved")
             {
-                if (!eventTypes.Contains("Evolve")) eventTypes.Add("Evolve");
+                eventTypes.Add("Evolve");
+                if (trigger == "CardEvolved") relationType = "TargetSelf";
                 validZones.Add("Field");
-                abilityKeywords.Add(new { keyword = "EvolveEffect", value = (int?)null });
+                if (trigger == "Evolve")
+                    abilityKeywords.Add(new { keyword = "EvolveEffect", value = (int?)null });
             }
             else if (trigger == "Destroy")
             {
@@ -452,23 +561,21 @@ namespace ShadowverseBeyond.Server.Controllers
                 validZones.Add("Field");
                 abilityKeywords.Add(new { keyword = "FightEffect", value = (int?)null });
             }
-            else if (trigger == "TurnEnd")
+            else if (trigger is "TurnEnd" or "OpponentTurnEnd" or "TurnStart" or "OpponentTurnStart")
             {
-                eventTypes.Add("TurnEnd");
-                relationType = "Friendly";
-                validZones.Add(isCrest ? "Emblem" : "Field");
-            }
-            else if (trigger == "TurnStart")
-            {
-                eventTypes.Add("TurnStart");
-                relationType = "Friendly";
+                bool isStart = trigger.EndsWith("Start", StringComparison.Ordinal);
+                var eventPlayer = isStart ? "StartingPlayer" : "EndingPlayer";
+                var turnOwner = trigger.StartsWith("Opponent", StringComparison.Ordinal) ? "opponent" : "owner";
+                eventTypes.Add(isStart ? "TurnStart" : "TurnEnd");
+                relationType = "Any";
+                conditions.Add(new() { Expression = $"context.triggeringEvent.{eventPlayer}.playerId == context.{turnOwner}.playerId", IsEnabled = true });
                 validZones.Add(isCrest ? "Emblem" : "Field");
             }
             else if (trigger == "Act")
             {
                 eventTypes.Add("Act");
                 validZones.Add("Field");
-                abilityKeywords.Add(new { keyword = "Act", value = (int?)null });
+                abilityKeywords.Add(new { keyword = "Act", value = actCost });
             }
             else if (trigger is "PlayCard" or "Fanfare")
             {
@@ -480,61 +587,100 @@ namespace ShadowverseBeyond.Server.Controllers
             }
 
             // 2. Conditions resolution
-            var comboMatch = Regex.Match(text, @"(?:【?连击】?\s*(\d+)|本回合已使用(?:卡牌|牌)数(?:大于等于|>=|至少为)\s*(\d+))");
-            if (comboMatch.Success)
+            var comboMatch = Regex.Match(qualifierText, @"(?<keyword>连击)[】_\s]*(?<count>\d+)|本回合已使用(?:卡牌|牌)数(?:大于等于|>=|≥|至少为)\s*(?<count>\d+)");
+            if (int.TryParse(comboMatch.Groups["count"].Value, out var comboValue))
             {
-                var val = comboMatch.Groups[1].Success ? comboMatch.Groups[1].Value : comboMatch.Groups[2].Value;
-                conditions.Add(new { expression = $"context.owner.combo >= {val}", isEnabled = true });
+                // The PlayCard trigger checks conditions before commit increments Combo.
+                var threshold = comboMatch.Groups["keyword"].Success && trigger is ("PlayCard" or "Fanfare")
+                    ? Math.Max(0, comboValue - 1)
+                    : comboValue;
+                conditions.Add(new() { Expression = $"context.owner.combo >= {threshold}", IsEnabled = true });
             }
 
-            var rallyMatch = Regex.Match(text, @"【?协作】?\s*(\d+)");
-            if (rallyMatch.Success)
+            var rallyMatch = Regex.Match(qualifierText, @"协作[】_\s]*(\d+)");
+            if (int.TryParse(rallyMatch.Groups[1].Value, out var rallyValue))
             {
-                var val = rallyMatch.Groups[1].Value;
-                abilityKeywords.Add(new { keyword = "Rally", value = int.Parse(val) });
-                conditions.Add(new { expression = $"context.owner.rally >= {val}", isEnabled = true });
+                abilityKeywords.Add(new { keyword = "Rally", value = rallyValue });
+                conditions.Add(new() { Expression = $"context.owner.rally >= {rallyValue}", IsEnabled = true });
             }
 
-            if (Regex.IsMatch(text, @"【?觉醒】?"))
+            if (qualifierText.Contains("觉醒"))
             {
                 abilityKeywords.Add(new { keyword = "Awake", value = (int?)null });
-                conditions.Add(new { expression = "context.owner.maxPlayPoints >= 7", isEnabled = true });
+                conditions.Add(new() { Expression = "context.owner.maxPlayPoints >= 7", IsEnabled = true });
             }
 
             // 3. Effects & Targets resolution (左起顺序词法扫描，支持句内逗号串联、同类效果多次出现与未知片段精确拦截)
             int order = 0;
             int realActionCount = 0;
             var clauseUnrecognized = new List<string>();
-            var sentences = text
-                .Split(new[] { '。', '；', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-            foreach (var rawSentence in sentences)
+            if (comboMatch.Success && !int.TryParse(comboMatch.Groups["count"].Value, out _))
             {
-                var s = rawSentence.Trim();
+                clauseUnrecognized.Add(comboMatch.Value);
+                unrecognizedClauses.Add(comboMatch.Value);
+            }
+            if (Regex.IsMatch(text, @"(?:指定|选择)\s*\d+\s*个\s*【模式】|[（(][0-9０-９]+[）)]"))
+            {
+                clauseUnrecognized.Add(clauseText.Trim());
+                unrecognizedClauses.Add(clauseText.Trim());
+                text = string.Empty;
+            }
+            // In official card text, the next sentence often applies an effect to the specified card.
+            const string fieldSide = @"(?<side>敌方|自己)(?:的)?战场上";
+            const string follower = @"(?<other>其他)?随从(?:卡牌?)?";
+            const string selection = @"指定\s*1\s*张\s*" + fieldSide + "的?" + follower;
+            var normalizedSentencesText = Regex.Replace(text,
+                $@"『[^』]*』|「[^」]*」|“[^”]*”|(?<selection>{selection})\s*。\s*(?=给予其|将其破坏|使其(?:消失|[+-]))|(?<chain>[，,])(?=\s*{ComboLabel})",
+                match => match.Groups["selection"].Success ? match.Groups["selection"].Value + "，"
+                    : match.Groups["chain"].Success ? "。" : match.Value);
+            var sentences = Regex.Matches(normalizedSentencesText,
+                @"(?:『[^』]*(?:』|$)|「[^」]*(?:」|$)|“[^”]*(?:”|$)|[^。；;『「“])+");
+
+            for (var sentenceIndex = 0; sentenceIndex < sentences.Count; sentenceIndex++)
+            {
+                var s = sentences[sentenceIndex].Value.Trim();
                 if (string.IsNullOrWhiteSpace(s)
                     || Regex.IsMatch(s, @"^(?:[-—─]{2,}|==)$")
                     || Regex.IsMatch(s, @"^\{[^{}]+\}$")) continue;
 
-                // 剥离句首条件/费用标签（已在第 1、2 步提取）
-                var afterCond = Regex.Replace(
-                    s,
-                    @"^(?:\s*(?:【?(?:爆能强化|连击|协作)】?\s*\d+|【?觉醒】?|消费\s*\d+)\s*[：:，,]?\s*)+",
-                    string.Empty
-                ).Trim();
-
-                if (string.IsNullOrWhiteSpace(afterCond))
+                if (trigger != "EffectCompleted" && effects.Count > 0 && Regex.IsMatch(s, "^" + ComboLabel))
                 {
+                    var start = sentences[sentenceIndex].Index;
+                    while (sentenceIndex + 1 < sentences.Count &&
+                           !Regex.IsMatch(sentences[sentenceIndex + 1].Value.TrimStart(), "^" + ComboLabel))
+                    {
+                        sentenceIndex++;
+                    }
+                    var end = sentences[sentenceIndex].Index + sentences[sentenceIndex].Length;
+                    var branchText = normalizedSentencesText[start..end];
+                    var branchUnrecognized = new List<string>();
+                    var chainedDraft = CompileClauseToAbilityDraft(
+                        cardName, cardType, isMirageCard, sectionStyle, "EffectCompleted", branchText, sequence, branchUnrecognized);
+                    if (!chainedDraft.IsActive)
+                    {
+                        unrecognizedClauses.Add(branchText);
+                        clauseUnrecognized.Add(branchText);
+                        continue;
+                    }
+
+                    var parentIndex = effects.Count - 1;
+                    if (!chainedAbilitiesByEffect.TryGetValue(parentIndex, out var chainedAbilities))
+                    {
+                        chainedAbilities = new List<JsonNode?>();
+                        chainedAbilitiesByEffect.Add(parentIndex, chainedAbilities);
+                    }
+                    chainedAbilities.Add(JsonNode.Parse(chainedDraft.JsonConfig));
                     continue;
                 }
 
                 // 提取可选的句首【死灵术】N 前缀（仅当后续解析出有效实际动作时才落入消耗效果）
                 int? pendingNecroCost = null;
-                var actionBody = afterCond;
-                var necroMatch = Regex.Match(afterCond, @"^【?死灵术】?\s*(\d+)\s*[：:，,]?\s*");
-                if (necroMatch.Success && int.TryParse(necroMatch.Groups[1].Value, out var necroCost))
+                var actionBody = s;
+                var necroMatch = Regex.Match(s, @"^(?:【(?:死灵术|唤灵)[_\s]*(\d+)】|【?(?:死灵术|唤灵)】?\s*(\d+))\s*[：:，,]?\s*");
+                if (necroMatch.Success && int.TryParse(necroMatch.Groups[1].Success ? necroMatch.Groups[1].Value : necroMatch.Groups[2].Value, out var necroCost))
                 {
                     pendingNecroCost = necroCost;
-                    actionBody = afterCond[necroMatch.Length..].Trim();
+                    actionBody = s[necroMatch.Length..].Trim();
                 }
 
                 if (string.IsNullOrWhiteSpace(actionBody))
@@ -553,7 +699,7 @@ namespace ShadowverseBeyond.Server.Controllers
                     pos += sepMatch.Length;
                     if (pos >= actionBody.Length) break;
 
-                    var conjMatch = Regex.Match(actionBody[pos..], @"^(?:并(?:且)?|随后|然后|同时|再)(?=[，,、：:\s]|随机|对|给予|选择|自己|抽|回复|使|令|让|破坏|获得|最大|增加|进行|魔力|\d)[，,、：:\s]*");
+                    var conjMatch = Regex.Match(actionBody[pos..], @"^(?:并(?:且)?|随后|然后|同时|再)(?=[，,、：:\s]|随机|对|给予|选择|指定|自己|由|从|抽|回复|使|令|让|破坏|获得|最大|增加|进行|魔力|\d)[，,、：:\s]*");
                     if (conjMatch.Success)
                     {
                         pos += conjMatch.Length;
@@ -568,7 +714,8 @@ namespace ShadowverseBeyond.Server.Controllers
                     }
                     else
                     {
-                        int nextDelim = slice.IndexOfAny(new[] { '，', ',', '、' });
+                        var delimiter = Regex.Match(slice, @"^(?:『[^』]*』|「[^」]*」|“[^”]*”|[^，,、『「“])*(?<separator>[，,、])");
+                        int nextDelim = delimiter.Success ? delimiter.Groups["separator"].Index : -1;
                         var unknownSeg = (nextDelim >= 0 ? slice[..nextDelim] : slice).Trim();
                         if (!string.IsNullOrWhiteSpace(unknownSeg))
                         {
@@ -622,9 +769,28 @@ namespace ShadowverseBeyond.Server.Controllers
                 consumedLength = 0;
                 appendEffect = static () => { };
 
+                var countdownMatch = Regex.Match(slice, @"^使(?:这张卡牌|本卡牌|这个纹章|本纹章)(?:的)?(?:倒数(?:回合数)?|倒计时|倒计数)\s*(?<change>[+\-]\s*\d+)");
+                if (countdownMatch.Success && int.TryParse(Regex.Replace(countdownMatch.Groups["change"].Value, @"\s+", ""), out var change))
+                {
+                    consumedLength = countdownMatch.Length;
+                    appendEffect = () =>
+                    {
+                        var targetKey = AddTarget(targets, BuildTarget("context.sourceCard", requireChoice: false));
+                        effects.Add(new
+                        {
+                            type = "SetCountdown",
+                            executionOrder = order++,
+                            isEnabled = true,
+                            parameters = new Dictionary<string, object> { ["ChangeAmount"] = StaticVal(change) },
+                            targetSelector = new[] { targetKey }
+                        });
+                    };
+                    return true;
+                }
+
                 // 3a. Draw cards
-                var drawMatch = Regex.Match(slice, @"^(?:自己)?抽取?\s*(\d+)\s*(?:张(?:卡牌|牌)?|卡牌|牌)");
-                if (drawMatch.Success && int.TryParse(drawMatch.Groups[1].Value, out var drawCount))
+                var drawMatch = Regex.Match(slice, @"^(?:(?:由|从)(?:自己的)?牌堆(?:中)?|(?:使|让)敌方(?:由|从)(?:其|自己的)牌堆(?:中)?|自己)?抽取?\s*(?<count>\d+)\s*(?:张(?:卡牌|牌)?|卡牌|牌)");
+                if (drawMatch.Success && int.TryParse(drawMatch.Groups["count"].Value, out var drawCount))
                 {
                     consumedLength = drawMatch.Length;
                     appendEffect = () => effects.Add(new
@@ -634,9 +800,40 @@ namespace ShadowverseBeyond.Server.Controllers
                         isEnabled = true,
                         parameters = new Dictionary<string, object>
                         {
-                            ["PlayerScope"] = StaticVal("Self"),
+                            ["PlayerScope"] = StaticVal(drawMatch.Value.Contains("敌方") ? "Opponent" : "Self"),
                             ["UseSearchMode"] = StaticVal(false),
                             ["DrawAmount"] = StaticVal(drawCount)
+                        },
+                        targetSelector = Array.Empty<string>()
+                    });
+                    return true;
+                }
+
+                var token = Regex.Match(slice, @"^(?:(?<summon>召唤)|增加)\s*(?<count>\d+)\s*[张个]\s*(?:『(?<name>[^』]+)』|「(?<name>[^」]+)」|“(?<name>[^”]+)”)(?:卡牌)?(?:到(?:自己的)?(?<destination>战场上|手牌中))?");
+                if (token.Success && int.TryParse(token.Groups["count"].Value, out var tokenCount) && tokenCount > 0)
+                {
+                    bool summon = token.Groups["summon"].Success;
+                    var destination = token.Groups["destination"].Value;
+                    if ((summon && destination == "手牌中") || (!summon && destination != "手牌中"))
+                        return false;
+                    var ids = _gameData.Cards
+                        .Where(card => card.Name == token.Groups["name"].Value &&
+                            (isMirageCard == null || card.IsMirageCard == isMirageCard))
+                        .Select(card => card.Id).Distinct().Take(2).ToArray();
+                    if (ids.Length != 1) return false;
+
+                    consumedLength = token.Length;
+                    appendEffect = () => effects.Add(new
+                    {
+                        type = summon ? "Summon" : "GetToken",
+                        executionOrder = order++,
+                        isEnabled = true,
+                        parameters = new Dictionary<string, object>
+                        {
+                            ["PlayerScope"] = StaticVal("Self"),
+                            ["CardSourceMode"] = StaticVal("Definition"),
+                            ["CardDefinitionId"] = StaticVal(ids),
+                            [summon ? "SummonCount" : "Amount"] = StaticVal(tokenCount)
                         },
                         targetSelector = Array.Empty<string>()
                     });
@@ -671,13 +868,19 @@ namespace ShadowverseBeyond.Server.Controllers
                 }
 
                 // 3c. Damage to enemy leader
-                var dmgLeaderMatch = Regex.Match(slice, @"^(?:对|给予)(?:敌方|对手的?)主战者(?:造成)?\s*(\d+)\s*点伤害");
+                var dmgLeaderMatch = Regex.Match(slice, @"^(?:对|给予)(?<target>敌方的?主战者|对手的?主战者|自己的主战者|这张卡牌)(?:造成)?\s*(\d+)\s*点伤害");
                 if (dmgLeaderMatch.Success && int.TryParse(dmgLeaderMatch.Groups[1].Value, out var dmgLeaderAmt))
                 {
                     consumedLength = dmgLeaderMatch.Length;
                     appendEffect = () =>
                     {
-                        var targetKey = AddTarget(targets, BuildTarget("context.opponent.leader", requireChoice: false));
+                        var pool = dmgLeaderMatch.Groups["target"].Value switch
+                        {
+                            "自己的主战者" => "context.owner.leader",
+                            "这张卡牌" => "context.sourceCard",
+                            _ => "context.opponent.leader"
+                        };
+                        var targetKey = AddTarget(targets, BuildTarget(pool, requireChoice: false));
                         effects.Add(new
                         {
                             type = "Damage",
@@ -688,6 +891,90 @@ namespace ShadowverseBeyond.Server.Controllers
                                 ["DamageAmount"] = StaticVal(dmgLeaderAmt),
                                 ["DistributionMode"] = StaticVal("PerTarget")
                             },
+                            targetSelector = new[] { targetKey }
+                        });
+                    };
+                    return true;
+                }
+
+                var specified = Regex.Match(slice, $@"^{selection}\s*[，,]\s*(?:给予其\s*(?<damage>\d+)\s*点伤害|将其破坏|使其消失|使其\s*(?<attack>[+-]\d+)\s*/\s*(?<health>[+-]\d+))");
+                var fieldGroup = Regex.Match(slice, $@"^(?:(?<random>随机)(?<verb>给予|使|破坏)\s*(?<count>\d+)\s*张\s*|(?<verb>给予|使|破坏)){fieldSide}的?(?<all>全部的?)?{follower}");
+                if (specified.Success || fieldGroup.Success)
+                {
+                    var match = specified.Success ? specified : fieldGroup;
+                    bool random = match.Groups["random"].Success;
+                    bool all = match.Groups["all"].Success;
+                    var action = slice[match.Length..];
+                    var hit = specified.Success ? specified : Regex.Match(action, @"^\s*(?<damage>\d+)\s*点伤害");
+                    var stats = specified.Success ? specified : Regex.Match(action, @"^\s*(?<attack>[+-]\d+)\s*/\s*(?<health>[+-]\d+)");
+                    var effectParameters = new Dictionary<string, object>();
+                    var verb = match.Groups["verb"].Value;
+                    string? effectType = null;
+                    var extraLength = 0;
+                    int? randomCount = null;
+                    if (random)
+                    {
+                        if (all || !int.TryParse(match.Groups["count"].Value, out var count) || count <= 0)
+                            return false;
+                        randomCount = count;
+                    }
+
+                    if ((specified.Success || ((random || all) && verb == "给予"))
+                        && int.TryParse(hit.Groups["damage"].Value, out var damage))
+                    {
+                        effectType = "Damage";
+                        effectParameters["DamageAmount"] = StaticVal(damage);
+                        effectParameters["DistributionMode"] = StaticVal("PerTarget");
+                        extraLength = specified.Success ? 0 : hit.Length;
+                    }
+                    else if ((specified.Success || ((random || all) && verb == "使"))
+                             && int.TryParse(stats.Groups["attack"].Value, out var attack)
+                             && int.TryParse(stats.Groups["health"].Value, out var health))
+                    {
+                        effectType = "ModifyStatus";
+                        effectParameters["AttackModifier"] = StaticVal(attack);
+                        effectParameters["HealthModifier"] = StaticVal(health);
+                        effectParameters["DurationType"] = StaticVal("Permanent");
+                        effectParameters["DurationParameter"] = StaticVal(0);
+                        effectParameters["ModifierLayer"] = StaticVal("Additive");
+                        extraLength = specified.Success ? 0 : stats.Length;
+                    }
+                    else if ((specified.Success && match.Value.EndsWith("将其破坏")) || ((random || all) && verb == "破坏"))
+                    {
+                        effectType = "Destroy";
+                    }
+                    else if (specified.Success && match.Value.EndsWith("使其消失"))
+                    {
+                        effectType = "Vanish";
+                    }
+
+                    if (effectType != null)
+                    {
+                        var owner = match.Groups["side"].Value == "敌方" ? "opponent" : "owner";
+                        var excludeSource = match.Groups["other"].Success ? " && self.instanceId != context.sourceCard.instanceId" : string.Empty;
+                        var pool = $"context.{owner}.field.query(self.type == \"Follower\"{excludeSource})";
+                        consumedLength = match.Length + extraLength;
+                        appendEffect = () =>
+                        {
+                            var targetKey = AddTarget(targets, BuildTarget(pool, specified.Success, randomCount));
+                            effects.Add(new { type = effectType, executionOrder = order++, isEnabled = true, parameters = effectParameters, targetSelector = new[] { targetKey } });
+                        };
+                        return true;
+                    }
+                }
+
+                var selfRemoval = Regex.Match(slice, @"^(?<destroy>破坏)这张卡牌|^使这张卡牌消失");
+                if (selfRemoval.Success)
+                {
+                    consumedLength = selfRemoval.Length;
+                    appendEffect = () =>
+                    {
+                        var targetKey = AddTarget(targets, BuildTarget("context.sourceCard", requireChoice: false));
+                        effects.Add(new
+                        {
+                            type = selfRemoval.Groups["destroy"].Success ? "Destroy" : "Vanish",
+                            executionOrder = order++, isEnabled = true,
+                            parameters = new Dictionary<string, object>(),
                             targetSelector = new[] { targetKey }
                         });
                     };
@@ -849,10 +1136,10 @@ namespace ShadowverseBeyond.Server.Controllers
                     return true;
                 }
 
-                var buffSelfMatch = Regex.Match(slice, @"^(?:(?:使|令|让)?(?:这个随从|该随从|本随从|自身))?获得\s*([+-]?\d+)\s*/\s*([+-]?\d+)(?:效果)?");
+                var buffSelfMatch = Regex.Match(slice, @"^(?:(?:使|令|让)?(?:这个随从|该随从|本随从|自身))?获得\s*([+-]?\d+)\s*/\s*([+-]?\d+)(?:效果)?|^(?:使)?这张卡牌\s*([+-]\d+)\s*/\s*([+-]\d+)");
                 if (buffSelfMatch.Success
-                    && int.TryParse(buffSelfMatch.Groups[1].Value, out var selfAtk)
-                    && int.TryParse(buffSelfMatch.Groups[2].Value, out var selfHp))
+                    && int.TryParse(buffSelfMatch.Groups[1].Success ? buffSelfMatch.Groups[1].Value : buffSelfMatch.Groups[3].Value, out var selfAtk)
+                    && int.TryParse(buffSelfMatch.Groups[2].Success ? buffSelfMatch.Groups[2].Value : buffSelfMatch.Groups[4].Value, out var selfHp))
                 {
                     consumedLength = buffSelfMatch.Length;
                     appendEffect = () =>
@@ -903,7 +1190,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 }
 
                 // 3i. Spellboost hand
-                var sbMatch = Regex.Match(slice, @"^(?:(?:使自己的手牌)?(?:进行\s*)?魔力增幅\s*(\d+)\s*次|(?:对自己的手牌进行\s*)?(\d+)\s*次魔力增幅)");
+                var sbMatch = Regex.Match(slice, @"^(?:(?:使自己的手牌)?(?:进行\s*)?魔力增幅\s*(\d+)\s*次|(?:对自己的手牌进行\s*|使(?:自己手牌中的全部卡牌|自己的所有手牌)发动\s*)?(\d+)\s*次魔力增幅)");
                 if (sbMatch.Success)
                 {
                     var sbStr = sbMatch.Groups[1].Success ? sbMatch.Groups[1].Value : sbMatch.Groups[2].Value;
@@ -953,12 +1240,14 @@ namespace ShadowverseBeyond.Server.Controllers
 
             // Validate all generated DSL expressions via Lexer + Parser
             bool dslValid = true;
-            foreach (var expr in targets.Select(ExtractSourcePoolExpression).Where(s => !string.IsNullOrWhiteSpace(s)))
+            foreach (var expr in targets.Select(ExtractSourcePoolExpression)
+                .Concat(conditions.Select(condition => condition.Expression))
+                .Where(s => !string.IsNullOrWhiteSpace(s)))
             {
                 if (!ValidateSingleDslExpression(expr!))
                 {
                     dslValid = false;
-                    notes.Add($"目标表达式校验告警: {expr}");
+                    notes.Add($"DSL 表达式校验告警: {expr}");
                 }
             }
 
@@ -975,7 +1264,8 @@ namespace ShadowverseBeyond.Server.Controllers
                     "TurnStart" => "回合开始",
                     "AttackDeclared" => "攻击时",
                     "Attack" => "交战时",
-                    "Act" => "起动",
+                    "Act" => "启动",
+                    "EffectCompleted" => "连锁能力",
                     _ => isSpell ? "法术效果" : "入场曲"
                 }
             };
@@ -999,15 +1289,21 @@ namespace ShadowverseBeyond.Server.Controllers
                     revalidateZoneBeforeExecution = false,
                     isEnabled = true
                 },
-                conditions,
+                conditions = conditions.Select(condition => new { expression = condition.Expression, isEnabled = condition.IsEnabled }),
                 targets,
-                effects,
+                effects = effects.Select((effect, index) =>
+                {
+                    if (!chainedAbilitiesByEffect.TryGetValue(index, out var chainedAbilities)) return effect;
+                    var effectJson = (JsonObject)JsonSerializer.SerializeToNode(effect)!;
+                    effectJson["chainedAbilities"] = new JsonArray(chainedAbilities.ToArray());
+                    return effectJson;
+                }),
                 auras = Array.Empty<object>(),
                 counterRegistrations = Array.Empty<object>(),
                 playerCounterRegistrations = Array.Empty<object>(),
                 broadcastOnTrigger = true,
                 buffDisplay = true,
-                isActive = clauseComplete,
+                isActive = clauseComplete && dslValid,
                 version = "1.0"
             };
 
@@ -1017,7 +1313,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 Description = clauseText.Trim(),
                 AbilityType = 1,
                 Priority = 0,
-                IsActive = clauseComplete,
+                IsActive = clauseComplete && dslValid,
                 HasEffects = hasEffects,
                 DslValid = dslValid,
                 Notes = string.Join(" ", notes),
@@ -1027,7 +1323,7 @@ namespace ShadowverseBeyond.Server.Controllers
 
         private static string NormalizeChineseNumbers(string input)
         {
-            return input
+            return Regex.Replace(input, "[０-９＋－／]", match => ((char)(match.Value[0] - 0xFEE0)).ToString())
                 .Replace("張", "张").Replace("個", "个").Replace("點", "点").Replace("兩", "两")
                 .Replace("一张", "1张")
                 .Replace("两张", "2张")
@@ -1129,6 +1425,7 @@ namespace ShadowverseBeyond.Server.Controllers
             public string CardName { get; set; } = string.Empty;
             public List<GeneratedAbilityDraftDto> Abilities { get; set; } = new();
             public List<string> DetectedKeywords { get; set; } = new();
+            public int? InitialCountdown { get; set; }
             public List<string> UnrecognizedClauses { get; set; } = new();
             public bool FullyCompiled { get; set; }
         }

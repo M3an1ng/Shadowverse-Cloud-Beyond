@@ -4,6 +4,8 @@ import { createRevealAnimator } from './revealAnimation.js';
 import { playModeVisual } from './playModeVisual.js';
 import { summarizeAttachedNumericEffects, numericEffectTitle, renderAttachedNumericEffects, effectSourceHtml } from './liveEffectSummary.js';
 import { showAlert } from './siteDialog.js';
+import { createModeChoiceDialog, toggleModeSelection } from './ui/modeChoiceDialog.js';
+import './styles/mode-choice.css';
 // src/ui.js - UI渲染与交互处理
 //
 // 相关文档:
@@ -105,7 +107,7 @@ import {
     recordHandDragPerfFrame,
     summarizeHandDragPerfSession
 } from './debugDiagnostics.js';
-import { confirmDialog } from './siteDialog.js';
+import { confirmBattleDialog } from './siteDialog.js';
 import { shouldAutoConfirmChoice } from './choiceSettingsPolicy.js';
 import { readOperationSettings } from './operationSettings.js';
 import { renderDescriptionHtml } from './descriptionParser.js';
@@ -128,6 +130,7 @@ import {
 } from './ui/logPanel.js';
 import { createCardAnimationSystem, reconcileCardElementInPlace } from './ui/cardAnimationSystem.js';
 import { createBattleMotionController, createCleanCardClone, toStageRect } from './ui/battleCardMotion.js';
+import { createEvolutionDrag } from './ui/evolutionDrag.js';
 import { isPresentationFastForward } from './revealPresentationGate.js';
 import { buildCounterSummaryEntries, PLAYER_SYSTEM_COUNTER_KEYS } from './counterSummary.js';
 import { getUserSession } from './userSession.js';
@@ -197,6 +200,12 @@ const TRANSIENT_VISUAL_CLEANUP_SELECTOR = '.card-fade-enter-overlay, .card-fade-
 const transientVisualTimeoutIds = new Set();
 const hpGhostSettleTimers = new Map();
 let suppressGameClickUntil = 0;
+let evolutionActionPending = false;
+const evolutionDrag = createEvolutionDrag({
+    getAvailability: getEvolutionDragAvailability,
+    onDrop: (cardUid, mode) => void requestEvolutionAction(cardUid, mode),
+    suppressClick: () => { suppressGameClickUntil = Date.now() + ATTACK_DRAG_CLICK_SUPPRESS_MS; }
+});
 const attackDragState = {
     pointerId: null,
     isPending: false,
@@ -1577,6 +1586,9 @@ function commitCardMoveVisual(moveContext, preMoveVisual, movedInstance) {
     }
 
     if (moveReason === 'destroyed' || moveReason === 'burned' || moveReason === 'discarded') {
+        if (moveReason === 'burned' && preMoveVisual?.snap?.cloneEl) {
+            return motion.playBurnCard(preMoveVisual.snap, { fastForward: isPresentationFastForward() });
+        }
         if (motion.markActiveLungeExit(cardUid, 'destroy')) {
             return undefined;
         }
@@ -1594,14 +1606,14 @@ function commitCardMoveVisual(moveContext, preMoveVisual, movedInstance) {
                 const burnY = isOwnerLocal
                     ? Math.max(120, deckAnchor.cy - 86)
                     : Math.min(anchors.stageRect.height - 120, deckAnchor.cy + 86);
-                motion.spawnSemanticExitClone({
+                return motion.playBurnCard({
                     uid: cardUid,
                     rect: { left: burnX - 51, top: burnY - 70, width: 102, height: 140, cx: burnX, cy: burnY },
                     unscaledW: 102,
                     unscaledH: 140,
                     isCard: true,
                     cloneEl: burnedClone
-                }, 'destroy');
+                }, { fastForward: isPresentationFastForward() });
             }
         }
         return undefined;
@@ -1985,6 +1997,7 @@ function updateEpDisplay(playerId, currentEp, maxEp) {
             epDotsContainer.appendChild(dot);
         }
     }
+    if (isLocalPlayer) evolutionDrag.refresh();
 }
 
 /**
@@ -2016,6 +2029,7 @@ function updateSepDisplay(playerId, currentSep, maxSep) {
             sepDotsContainer.appendChild(dot);
         }
     }
+    if (isLocalPlayer) evolutionDrag.refresh();
 }
 
 // --- End Specific UI Update Functions ---
@@ -2749,6 +2763,8 @@ function highlightTargets(attackerInstance) {
 let isAwaitingPlayerChoice = false;
 let currentChoiceRequest = null;
 let currentChoiceSelectedTargetIds = new Set();
+let currentChoiceSubmission = null;
+let modeChoiceDialog = null;
 
 function isCurrentChoiceRequest(pendingChoiceId, sourceAbilityRuntimeId) {
     if (!isAwaitingPlayerChoice || !currentChoiceRequest) {
@@ -2760,8 +2776,11 @@ function isCurrentChoiceRequest(pendingChoiceId, sourceAbilityRuntimeId) {
 }
 
 function startPlayerChoice(requestData) {
+    evolutionDrag.cancel();
     isAwaitingPlayerChoice = true;
+    evolutionDrag.refresh();
     currentChoiceRequest = requestData;
+    currentChoiceSubmission = null;
     currentChoiceSelectedTargetIds = new Set();
     gameContainerEl?.classList.add('player-choice-active');
 
@@ -2778,10 +2797,12 @@ function endPlayerChoice(notifyBackendOfCancellation = true) {
     const choiceToCancel = currentChoiceRequest; // Capture before clearing
     isAwaitingPlayerChoice = false;
     currentChoiceRequest = null;
+    currentChoiceSubmission = null;
     currentChoiceSelectedTargetIds = new Set();
 
     clearSelectionHighlights();
     gameContainerEl?.classList.remove('player-choice-active');
+    evolutionDrag.refresh();
 
     removeChoiceOverlayUI();
 
@@ -2811,6 +2832,7 @@ function endPlayerChoice(notifyBackendOfCancellation = true) {
 let restoreDiscoverPreview = null;
 let cleanupDiscoverBoardView = null;
 function removeChoiceOverlayUI() {
+    modeChoiceDialog?.destroy(); modeChoiceDialog = null;
     cleanupDiscoverBoardView?.(); cleanupDiscoverBoardView = null;
     restoreDiscoverPreview?.(); restoreDiscoverPreview = null;
     document.getElementById('choice-overlay-root')?.remove();
@@ -2916,6 +2938,11 @@ function formatChoiceCountLabel(selectedCount, min, max) {
 function updateChoiceOverlayUI() {
     if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
 
+    if (modeChoiceDialog) {
+        modeChoiceDialog.update({ selectedIds: currentChoiceSelectedTargetIds, pending: currentChoiceSubmission === currentChoiceRequest });
+        return;
+    }
+
     const { min, max } = getChoiceMinMax(currentChoiceRequest);
     const selectedCount = currentChoiceSelectedTargetIds.size;
     const isValid = isChoiceSelectionValid(currentChoiceRequest, selectedCount);
@@ -2959,19 +2986,29 @@ function updateChoiceOverlayUI() {
 
 async function confirmPlayerChoice() {
     if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
+    if (currentChoiceSubmission === currentChoiceRequest) return;
+    const request = currentChoiceRequest;
     const { PendingChoiceId, SourceAbilityRuntimeId } = currentChoiceRequest;
 
     const chosenIds = Array.from(currentChoiceSelectedTargetIds);
     if (!isChoiceSelectionValid(currentChoiceRequest, chosenIds.length)) return;
 
-    const ok = await submitPlayerChoice(PendingChoiceId, chosenIds, SourceAbilityRuntimeId, false);
-    if (ok && isCurrentChoiceRequest(PendingChoiceId, SourceAbilityRuntimeId)) {
-        endPlayerChoice(false);
+    currentChoiceSubmission = request;
+    updateChoiceOverlayUI();
+    try {
+        const ok = await submitPlayerChoice(PendingChoiceId, chosenIds, SourceAbilityRuntimeId, false);
+        if (ok && isCurrentChoiceRequest(PendingChoiceId, SourceAbilityRuntimeId)) {
+            endPlayerChoice(false);
+        }
+    } finally {
+        if (currentChoiceSubmission === request) currentChoiceSubmission = null;
+        if (currentChoiceRequest === request) updateChoiceOverlayUI();
     }
 }
 
 function requestCancelPlayerChoiceUI() {
     if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
+    if (currentChoiceSubmission === currentChoiceRequest) return;
     if (currentChoiceRequest.IsCancellable !== true) {
         console.warn("UI: Player choice is not cancellable. Ignoring cancel request.");
         return;
@@ -2981,6 +3018,7 @@ function requestCancelPlayerChoiceUI() {
 
 async function handleChoiceTargetClick(targetUid) {
     if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
+    if (currentChoiceSubmission === currentChoiceRequest) return;
 
     const validTargetUids = new Set((currentChoiceRequest.SelectableTargetIds || []).map(x => String(x)));
     const key = String(targetUid);
@@ -2989,7 +3027,13 @@ async function handleChoiceTargetClick(targetUid) {
 
     const { max } = getChoiceMinMax(currentChoiceRequest);
     const fixedChoiceCount = isFixedChoiceCount(currentChoiceRequest);
-    if (currentChoiceSelectedTargetIds.has(key)) {
+    if (currentChoiceRequest.TargetKey === 'decision') {
+        if (max > 1 && currentChoiceSelectedTargetIds.size >= max && !currentChoiceSelectedTargetIds.has(key)) {
+            modeChoiceDialog?.showLimitHint();
+            return;
+        }
+        currentChoiceSelectedTargetIds = toggleModeSelection(currentChoiceSelectedTargetIds, key, max);
+    } else if (currentChoiceSelectedTargetIds.has(key)) {
         currentChoiceSelectedTargetIds.delete(key);
     } else {
         if (currentChoiceSelectedTargetIds.size >= max) return;
@@ -3004,12 +3048,7 @@ async function handleChoiceTargetClick(targetUid) {
         return;
     }
 
-    const { PendingChoiceId, SourceAbilityRuntimeId } = currentChoiceRequest;
-    const chosenIds = Array.from(currentChoiceSelectedTargetIds);
-    const ok = await submitPlayerChoice(PendingChoiceId, chosenIds, SourceAbilityRuntimeId, false);
-    if (ok && isCurrentChoiceRequest(PendingChoiceId, SourceAbilityRuntimeId)) {
-        endPlayerChoice(false);
-    }
+    await confirmPlayerChoice();
 }
 
 // --- Module-level variable to store the latest known current player ID ---
@@ -3162,8 +3201,10 @@ function renderGame(currentGameState) { // Remove second parameter
     let localPlayer = null;
     let opponentPlayerState = null;
 
-    // 方法1: 优先使用观战视角或localPlayerId进行查找（主要方法，支持观战补位AI时不反置阵营）
-    const primarySeatId = currentGameState.viewingPlayerId || gameState.localPlayerId;
+    // 双控的下方席位跟随当前操控方；观战仍使用服务端指定的视角。
+    const primarySeatId = currentGameState.dualControl && !currentGameState.isSpectator
+        ? currentGameState.localPlayerId
+        : currentGameState.viewingPlayerId || currentGameState.localPlayerId;
     if (primarySeatId) {
         const normalizedSeatId = String(primarySeatId).trim().toLowerCase();
         localPlayer = currentGameState.players.find(p => String(p?.id ?? '').trim().toLowerCase() === normalizedSeatId);
@@ -5053,6 +5094,7 @@ function getCardActionState(cardInstance, context) {
 }
 
 const CARD_ACTION_BUTTON_SELECTOR = '.super-evolve-button, .evolve-button, .fusion-button, .act-button, .use-button';
+const HIDDEN_CARD_ACTION_BUTTON_SELECTOR = '.use-button, .evolve-button, .super-evolve-button, .fusion-button';
 const CARD_ACTION_BUTTON_TOP_START = 28;
 const CARD_ACTION_BUTTON_VERTICAL_GAP = 28;
 const CARD_ACTION_BUTTON_PRIORITY = Object.freeze({
@@ -5075,7 +5117,10 @@ function getActionButtonPriority(button) {
 
 function applyCardActionButtonStack(cardElement) {
     if (!cardElement) return;
+    const hideButtons = typeof document !== 'undefined'
+        && document.documentElement?.classList?.contains('hide-card-buttons');
     const orderedButtons = Array.from(cardElement.querySelectorAll(CARD_ACTION_BUTTON_SELECTOR))
+        .filter(button => !hideButtons || !button.matches(HIDDEN_CARD_ACTION_BUTTON_SELECTOR))
         .map((button, index) => ({ button, index, priority: getActionButtonPriority(button) }))
         .sort((a, b) => (a.priority - b.priority) || (a.index - b.index))
         .map(item => item.button);
@@ -6286,6 +6331,7 @@ let pendingHighlightRenderState = null;
 function renderHighlightsNow(currentGameState) {
     clearSelectionHighlights();
     syncHandUseButtons();
+    evolutionDrag.refresh();
 
     if (isAwaitingPlayerChoice) {
         renderAbilityTargetHighlights(currentGameState);
@@ -6572,6 +6618,7 @@ function updateFieldDisplay(playerId, fieldCards = []) {
 
 export function updateCardActionButtons(cardInstance) {
     if (!cardInstance) return;
+    evolutionDrag.refresh();
     const cardUid = cardInstance.uid ?? cardInstance.InstanceId ?? cardInstance.instanceId;
     if (!cardUid) return;
 
@@ -6840,8 +6887,10 @@ function setConnectionStatus(status, message) {
     isConnectionLocked = !isConnected;
 
     if (!isConnected) {
+        evolutionDrag.cancel();
         updateTurnTimerDisplay(0, 0, false);
     }
+    evolutionDrag.refresh();
 
     updateReconnectButton();
 
@@ -6924,6 +6973,7 @@ function initializeUI() {
 
 function handleHandDragPointerDown(event) {
     if (!gameContainerEl) return;
+    if (evolutionDrag.active) return;
     if (isConnectionLocked || isAwaitingPlayerChoice) return;
     if ((event.button ?? 0) !== 0) return;
     if (event.target?.closest?.('button, .preview-actions, #choice-overlay-root, #card-detail-modal, #card-detail-image-modal')) return;
@@ -7071,6 +7121,7 @@ function handleHandDragPointerCancel(event) {
 
 function handleAttackDragPointerDown(event) {
     if (!gameContainerEl) return;
+    if (evolutionDrag.active) return;
     if (isConnectionLocked || isAwaitingPlayerChoice) return;
     if ((event.button ?? 0) !== 0) return;
     if (event.target?.closest?.('button, .preview-actions, #choice-overlay-root, #card-detail-modal, #card-detail-image-modal')) return;
@@ -7202,6 +7253,8 @@ function setupGlobalEventListeners() {
         // console.error("UI Error: Cannot setup global listeners - gameContainerEl not found.");
         return;
     }
+    evolutionDrag.attach(gameContainerEl);
+    evolutionDrag.refresh();
     // 先移除旧监听器，防止重复添加 (如果 initializeUI 可能被多次调用)
     gameContainerEl.removeEventListener('click', handleGameClick);
     gameContainerEl.removeEventListener('dragstart', preventNativeGameDrag, true);
@@ -7642,46 +7695,12 @@ async function handleGameClick(event) {
         return;
     }
 
-    // Existing logic follows... (This comment isn't inserted, just for clarity here)
-    // --- Check for Super Evolve Button Click FIRST ---
-    const clickedSuperEvolveButton = event.target.closest('.super-evolve-button');
-    if (clickedSuperEvolveButton) {
-        if (isAwaitingPlayerChoice) return;
-        const superEvolveUid = clickedSuperEvolveButton.dataset.superEvolveUid;
-        if (superEvolveUid) {
-            if (!await confirmEvolutionAction(superEvolveUid, 'super')) {
-                return;
-            }
-            if (typeof superEvolveCard === 'function') {
-                superEvolveCard(superEvolveUid);
-            } else {
-                showAlert("错误：超进化功能未加载！");
-            }
-        }
+    const clickedEvolutionButton = event.target.closest('.super-evolve-button, .evolve-button');
+    if (clickedEvolutionButton) {
+        const { superEvolveUid, evolveUid } = clickedEvolutionButton.dataset;
+        await requestEvolutionAction(superEvolveUid ?? evolveUid, superEvolveUid ? 'super' : 'evolve');
         return;
     }
-
-    // --- Check for Evolve Button Click FIRST ---
-    const clickedEvolveButton = event.target.closest('.evolve-button');
-    if (clickedEvolveButton) {
-        if (isAwaitingPlayerChoice) return;
-        const evolveUid = clickedEvolveButton.dataset.evolveUid; // Get UID from button's data attribute
-        if (evolveUid) {
-            if (!await confirmEvolutionAction(evolveUid, 'evolve')) {
-                return;
-            }
-            if (typeof evolveCard === 'function') { // Check if function is imported
-                evolveCard(evolveUid); // Call the imported function from gameManager
-            } else {
-                // console.error("UI Error: evolveCard function is not available/imported!");
-                showAlert("错误：进化功能未加载。");
-            }
-        } else {
-            // console.warn("UI: Evolve button clicked but missing data-evolve-uid attribute.");
-        }
-        return; // <<< IMPORTANT: Stop processing click here if evolve button was hit
-    }
-    // --- END Check for Evolve Button ---
 
     // --- Check for Fusion Button Click ---
     const clickedFusionButton = event.target.closest('.fusion-button');
@@ -7691,7 +7710,7 @@ async function handleGameClick(event) {
         const fusionUid = clickedFusionButton.dataset.fusionUid;
         const fusionAbilityId = clickedFusionButton.dataset.fusionAbilityId || null;
         if (!fusionUid) return;
-        if (readOperationSettings().fusionConfirmation && !await confirmDialog('确认发动融合吗？')) return;
+        if (readOperationSettings().fusionConfirmation && !await confirmBattleDialog('fusion')) return;
         requestFusion(fusionUid, fusionAbilityId);
         return;
     }
@@ -7929,27 +7948,74 @@ function tryUseHandCard(cardInstance, source = 'button') {
     return true;
 }
 
+function getEvolutionTurnKey() {
+    return JSON.stringify([gameState.gameId, gameState.viewEpoch, gameState.turnNumber, gameState.localPlayerId]);
+}
+
+function getEvolutionPlayer() {
+    if (isConnectionLocked || isAwaitingPlayerChoice || gameState.isSpectator || gameState.gameOver
+        || gameState.isEndingTurn || gameState.phase !== 'Main' || isMirageMode(gameState)
+        || gameState.currentPlayerId !== gameState.localPlayerId) return null;
+
+    return getPlayerState(gameState.localPlayerId);
+}
+
+function canEvolveTarget(card, mode) {
+    const state = getCardActionState(card);
+    return mode === 'super' ? state.showSuperEvolve : state.showEvolve;
+}
+
+function getEvolutionDragAvailability(mode) {
+    if (evolutionActionPending || handDragState.pointerId !== null || attackDragState.pointerId !== null) return null;
+    const player = getEvolutionPlayer();
+    if (!Array.isArray(player?.field)) return null;
+    const targets = new Set();
+    for (const card of player.field) {
+        const uid = getCardUid(card);
+        if (uid && canEvolveTarget(card, mode)) targets.add(String(uid));
+    }
+    return { turnKey: getEvolutionTurnKey(), targets };
+}
+
+async function requestEvolutionAction(cardUid, mode) {
+    if (!cardUid || evolutionActionPending) return;
+    const turnKey = getEvolutionTurnKey();
+    const canSubmit = () => {
+        const player = getEvolutionPlayer();
+        const target = player?.field?.find(card => String(getCardUid(card)) === String(cardUid));
+        return target && canEvolveTarget(target, mode);
+    };
+    if (!canSubmit()) return;
+
+    evolutionActionPending = true;
+    evolutionDrag.refresh();
+    try {
+        if (await confirmEvolutionAction(cardUid, mode) && getEvolutionTurnKey() === turnKey && canSubmit()) {
+            await (mode === 'super' ? superEvolveCard : evolveCard)(cardUid);
+        }
+    } finally {
+        evolutionActionPending = false;
+        evolutionDrag.refresh();
+    }
+}
+
 async function confirmEvolutionAction(cardUid, mode = 'evolve') {
     if (!readOperationSettings().evolutionConfirmation) return true;
     const normalizedMode = mode === 'super' ? 'super' : 'evolve';
     const card = findCardInstanceByUid(cardUid);
     const cardName = String(card?.name || card?.Name || '').trim() || '该卡牌';
-    const actionLabel = normalizedMode === 'super' ? '超进化' : '进化';
-    const message = `确认要对【${cardName}】执行${actionLabel}吗？`;
-
-    if (typeof window === 'undefined' || typeof confirmDialog !== 'function') {
+    if (typeof window === 'undefined' || typeof confirmBattleDialog !== 'function') {
         return true;
     }
-    return confirmDialog(message);
+    return confirmBattleDialog(normalizedMode, { cardName, freeEvolution: hasChoiceCardKeyword(card, 'FreeEvolve') });
 }
 
 async function confirmEndTurnAction() {
     if (!readOperationSettings().endTurnConfirmation) return true;
-    const message = '确认结束当前回合吗？';
-    if (typeof window === 'undefined' || typeof confirmDialog !== 'function') {
+    if (typeof window === 'undefined' || typeof confirmBattleDialog !== 'function') {
         return true;
     }
-    return confirmDialog(message);
+    return confirmBattleDialog('end');
 }
 
 /**
@@ -8157,8 +8223,13 @@ function renderAbilityTriggerToast(root, payload) {
     return item;
 }
 
+document.addEventListener('sv-card-buttons-visibility-change', () => {
+    gameContainerEl?.querySelectorAll('.card').forEach(applyCardActionButtonStack);
+});
+
 // Route switch lifecycle: remove combat toasts immediately when leaving game page.
 document.addEventListener('cleanupGame', () => {
+    evolutionDrag.cancel();
     cancelAllBattleMotions();
     cardAnimationSystem?.dispose();
     cardAnimationSystem = null;
@@ -8382,6 +8453,18 @@ function renderChoiceOverlayUI() {
         && currentChoiceRequest.SelectableTargetIds.length > 0;
     const isCancellable = currentChoiceRequest.IsCancellable === true;
     const isDecisionKind = currentChoiceRequest.TargetKey === 'decision';
+
+    if (isDecisionKind) {
+        modeChoiceDialog = createModeChoiceDialog({
+            root: overlayRoot, request: currentChoiceRequest, min, max,
+            renderDescription: renderDescriptionHtml,
+            onSelect: uid => { void handleChoiceTargetClick(uid); },
+            onConfirm: () => { void confirmPlayerChoice(); },
+            onCancel: requestCancelPlayerChoiceUI
+        });
+        updateChoiceOverlayUI();
+        return;
+    }
 
     const controls = document.createElement('div');
     controls.className = `choice-controls-overlay choice-overlay${hasSelectableTargets ? '' : ' is-empty-targets'}`;

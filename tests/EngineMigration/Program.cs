@@ -221,7 +221,14 @@ if (args.Length == 1 && args[0] == "--combat-enumeration") {
     return 0;
 }
 var results = new List<object>();
+if (args is ["--traditional-card-text"])
+{
+    TraditionalCardTextCompilerTests.Run();
+    Console.WriteLine("PASS traditional and simplified card-text compilation");
+    return 0;
+}
 void Test(string name, Action action) { try { action(); results.Add(new { name, passed = true }); } catch(Exception e) { results.Add(new {name,passed=false,error=e.ToString()}); } }
+Test("official Traditional Chinese card syntax and simplified transcription compile identically", TraditionalCardTextCompilerTests.Run);
 void Check(bool yes, string reason) { if(!yes) throw new Exception(reason); }
 Test("room exit preserves settlement delivery and releases pending choices", () => RoomExitTests.RunAsync().GetAwaiter().GetResult());
 Test("AI searches combat, evolution and Storm routes", AiPolicyTests.Search);

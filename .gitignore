@@ -127,6 +127,7 @@ coverage/
 /tests/*
 !/tests/EngineMigration/
 !/tests/DiscoverInstances/
+!/tests/modeChoiceDialog.test.mjs
 
 # Small native Mini presentation assets, separate from the downloaded card library.
 !/assets/

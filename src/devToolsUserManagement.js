@@ -1,5 +1,6 @@
 import { promptDialog } from './siteDialog.js';
 import { getUserSession, setUserSession, USER_SESSION_CHANGED_EVENT } from "./userSession.js";
+import { formatBeijingTime } from "./beijingTime.js";
 
 const USERS_ENDPOINT = "/api/users";
 const MIN_PASSWORD_LENGTH = 6;
@@ -356,8 +357,8 @@ class DevToolsUserManagement {
                 <td>L${permissionLevel}</td>
                 <td>${coins}</td>
                 <td>${isActive ? "启用" : "禁用"}</td>
-                <td>${createdAt ? new Date(createdAt).toLocaleString() : "-"}</td>
-                <td>${lastLoginAt ? new Date(lastLoginAt).toLocaleString() : "-"}</td>
+                <td>${formatBeijingTime(createdAt)}</td>
+                <td>${formatBeijingTime(lastLoginAt)}</td>
                 <td>
                     <div class="admin-user-role-actions">
                         <select class="form-input admin-user-role-select" data-user-id="${userId}">

@@ -127,6 +127,22 @@
     will-change: clip-path, translate, scale, opacity;
 }
 
+#game-container .bui-exit-clip-shell.is-burned {
+    z-index: 9690;
+    overflow: visible;
+    border-radius: 8px;
+    box-shadow: 0 0 0 2px #ffb45c, 0 0 24px #f97316b3, 0 12px 30px #000c;
+}
+
+.bui-burn-ring {
+    position: absolute;
+    inset: -6px;
+    border: 3px solid #ffd18a;
+    border-radius: 10px;
+    box-shadow: 0 0 18px #f97316, inset 0 0 12px #ef4444;
+    pointer-events: none;
+}
+
 #game-container .bui-vanish-laser {
     position: absolute;
     left: -8px;

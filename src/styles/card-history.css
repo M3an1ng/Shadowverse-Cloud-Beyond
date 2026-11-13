@@ -5,126 +5,79 @@
   display: grid;
   place-items: center;
   background: #02060bc9;
+  backdrop-filter: blur(6px);
   padding: 24px;
 }
-.history-dialog {
-  width: min(1200px, 95vw);
-  max-height: 92vh;
-  background: #0e1722;
-  border: 1px solid #54708a;
-  border-radius: 12px;
-  display: flex;
-  flex-direction: column;
-  color: #cdd6e0;
-}
-.history-dialog header,
-.history-dialog footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 18px 24px;
-  border-bottom: 1px solid #ffffff20;
-  gap: 16px;
-}
-.history-dialog h2 {
-  font-size: 23px;
-  color: #6eb1ff;
-  margin: 0;
-}
-.history-dialog button {
-  padding: 10px 18px;
-  background: #152131;
-  color: #d3dfed;
-  border: 1px solid #54708a;
-  border-radius: 5px;
-  cursor: pointer;
-  font: inherit;
-}
-.history-dialog button:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.history-dialog main {
+.battle-dialog--history { --dialog-width: 880px; }
+.battle-dialog--history .history-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
   gap: 24px;
-  padding: 20px 24px;
-  overflow: auto;
-  min-height: 340px;
+  min-width: 0;
+  padding: 2px;
 }
-.history-dialog nav {
+.battle-dialog--history nav {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   align-content: start;
   max-height: 56vh;
   overflow: auto;
+  padding: 2px;
+  scrollbar-width: thin;
 }
-.history-dialog nav button {
+.battle-dialog--history nav button {
   display: grid;
-  text-align: left;
-  gap: 7px;
-}
-.history-dialog nav button[aria-pressed="true"] {
-  background: #1d3445;
-  border-color: #8ab8d2;
-}
-.history-dialog nav time,
-.history-dialog small {
-  color: #8fa7bb;
-}
-.history-detail {
+  gap: 6px;
   min-width: 0;
+  padding: 13px;
+  border: 1px solid #374e60;
+  border-radius: 0;
+  background: #11212d;
+  color: #cadce8;
+  font: 400 13px/1.6 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  box-shadow: none;
+  transform: none;
 }
-.history-detail h3 {
-  font-size: 24px;
-  color: #83b6e7;
-}
-.history-description {
-  white-space: pre-wrap;
-  line-height: 1.7;
-}
-.history-detail label {
-  display: grid;
-  gap: 8px;
-  margin: 20px 0;
-}
-.history-detail textarea {
+.battle-dialog--history nav button:hover:not(:disabled) { background: #1a303e; border-color: #688ca1; }
+.battle-dialog--history nav button[aria-pressed="true"] { background: #203b49; border-color: #9adceb; }
+.battle-dialog--history nav strong { font-weight: 500; }
+.battle-dialog--history nav :is(time, small, span) { color: #9bb8ca; font-size: 12px; }
+.battle-dialog--history .history-detail { min-width: 0; color: #b1c7d7; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.battle-dialog--history .history-detail h3 { margin: 0; color: #d9e7f1; font-size: 18px; font-weight: 500; line-height: 1.6; }
+.battle-dialog--history .history-meta { margin: 7px 0 14px; color: #91aabc; font-size: 12px; }
+.battle-dialog--history .history-description { padding: 14px 0; border-block: 1px solid #738ca42d; white-space: pre-wrap; line-height: 1.8; }
+.battle-dialog--history .history-ability-count { margin: 12px 0; color: #91aabc; font-size: 12px; }
+.battle-dialog--history .history-detail label { display: grid; gap: 8px; margin: 20px 0 12px; color: #a6bdce; font-size: 13px; }
+.battle-dialog--history textarea {
   width: 100%;
+  min-width: 0;
   min-height: 100px;
-  padding: 12px;
-  background: #080f17;
-  color: inherit;
-  border: 1px solid #4a6378;
+  padding: 10px 12px;
+  border: 1px solid #40576a;
+  border-radius: 2px;
+  background: #09131e;
+  color: #e1ecf5;
   resize: vertical;
-  font: inherit;
+  font: 400 14px/1.6 'Segoe UI', 'Microsoft YaHei', sans-serif;
 }
-.history-actions {
-  display: flex;
-  gap: 14px;
+.battle-dialog--history .history-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.battle-dialog--history .history-delete { color: #e59c96; }
+.battle-dialog--history .history-delete::before { background: #755151; }
+.battle-dialog--history .history-status { margin: 0; padding: 0 2px 16px; color: #dfc281; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.battle-dialog--history .history-status:empty { display: none; }
+.battle-dialog--history .battle-dialog-actions { display: flex; justify-content: flex-end; }
+.battle-dialog--history .battle-dialog-actions .battle-dialog-button { min-width: 120px; }
+.workshop-history-actions { display: grid; gap: 10px; padding: 16px 0; }
+.workshop-history-actions[hidden], .workshop-history-actions button[hidden] { display: none; }
+@media (max-width: 600px) {
+  .battle-dialog--history .history-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .battle-dialog--history nav { max-height: 180px; }
 }
-.history-status {
-  margin: 0;
-  padding: 8px 24px;
-  color: #e7c36e;
-}
-.history-dialog footer {
-  border-top: 1px solid #ffffff20;
-  border-bottom: 0;
-}
-.workshop-history-actions {
-  display: grid;
-  gap: 10px;
-  padding: 16px 0;
-}
-.workshop-history-actions[hidden],
-.workshop-history-actions button[hidden] {
-  display: none;
-}
-@media (max-width: 700px) {
-  .history-dialog main {
-    grid-template-columns: 1fr;
-  }
-  .history-dialog nav {
-    max-height: 180px;
-  }
+@media (max-width: 480px) {
+  .history-overlay { padding: 12px; }
+  .battle-dialog--history .battle-dialog-actions { display: grid; }
+  .battle-dialog--history .battle-dialog-actions .battle-dialog-button { min-width: 0; }
 }
