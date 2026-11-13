@@ -4230,6 +4230,10 @@ button.pp-boost-button.leader-boost-pill.is-spent .pp-boost-chevron {
     color: #e9d5ff;
 }
 
+.hide-card-buttons .card > :is(.use-button, .evolve-button, .super-evolve-button) {
+    display: none;
+}
+
 .card .fusion-button:disabled,
 .card .act-button:disabled,
 .card .use-button:disabled {
@@ -5948,6 +5952,81 @@ button.pp-boost-button.leader-boost-pill.is-spent .pp-boost-chevron {
 
 body.attack-dragging {
     user-select: none;
+}
+
+#player1-info :is(.ep-box, .sep-box) {
+    touch-action: none;
+    user-select: none;
+}
+
+#player1-info .evolution-drag-available {
+    cursor: grab;
+}
+
+[data-evolution-drag="evolve"],
+.evolution-drag-arrow[data-mode="evolve"] {
+    --evolution-light: #ffe16b;
+    --evolution-core: #fff7c0;
+    --evolution-glow: #fba928;
+}
+
+[data-evolution-drag="super"],
+.evolution-drag-arrow[data-mode="super"] {
+    --evolution-light: #cd8bff;
+    --evolution-core: #f7e4ff;
+    --evolution-glow: #9e40ff;
+}
+
+.evolution-drag-arrow {
+    position: fixed;
+    inset: 0 auto auto 0;
+    z-index: 9800;
+    height: 27px;
+    transform-origin: 0 0;
+    pointer-events: none;
+    filter: drop-shadow(0 0 6px var(--evolution-glow));
+}
+
+.evolution-drag-arrow::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    clip-path: polygon(0 44%, calc(100% - 18px) 35%, calc(100% - 22px) 0, 100% 50%, calc(100% - 22px) 100%, calc(100% - 18px) 65%, 0 56%);
+    background: linear-gradient(90deg, var(--evolution-light), var(--evolution-core), var(--evolution-light));
+    background-size: 200% 100%;
+    animation: evolution-drag-shine 750ms linear infinite;
+}
+
+.evolution-drag-arrow.is-locked {
+    filter: drop-shadow(0 0 5px var(--evolution-core)) drop-shadow(0 0 11px var(--evolution-glow));
+}
+
+[data-evolution-drag] #player1-info .evolution-drag-origin {
+    cursor: grabbing;
+    box-shadow: 0 0 12px var(--evolution-glow), inset 0 0 8px var(--evolution-light);
+}
+
+[data-evolution-drag] #player1-field .evolution-drag-target {
+    outline: 2px solid var(--evolution-core);
+    outline-offset: 2px;
+    animation: evolution-drag-target-glow 700ms ease-in-out infinite alternate;
+}
+
+@keyframes evolution-drag-shine {
+    from { background-position: 200% 0; }
+    to { background-position: 0 0; }
+}
+
+@keyframes evolution-drag-target-glow {
+    from { box-shadow: 0 0 9px var(--evolution-light); }
+    to { box-shadow: 0 0 21px var(--evolution-glow), inset 0 0 8px var(--evolution-light); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .evolution-drag-arrow::before,
+    [data-evolution-drag] #player1-field .evolution-drag-target {
+        animation: none;
+    }
 }
 
 /* Fine Tactical Dashed Aiming Line + Crisp Sharp Swallowtail Arrowhead */

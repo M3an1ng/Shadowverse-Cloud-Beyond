@@ -1998,19 +1998,21 @@ CardEditor.prototype.invalidateAbilityLibraryCache = function() {
     this.abilitiesLibraryCache = null;
 };
 
-CardEditor.prototype.upsertCardInCache = function(card) {
-    const key = this.getCardIdKey(card?.id ?? card?.CardId);
+CardEditor.prototype.upsertCardInCache = function(apiCard) {
+    const key = this.getCardIdKey(this.getResolvedCardId(apiCard));
     if (!key) return;
-    const list = Array.isArray(this.cardListCache) ? [...this.cardListCache] : [];
-    const index = list.findIndex(item => this.getCardIdKey(item?.id ?? item?.CardId) === key);
+    // Both caches are read as API card definitions, including when the card is reopened.
+    this.cardDetailCache.set(key, apiCard);
+    if (!Array.isArray(this.cardListCache)) return;
+    const list = [...this.cardListCache];
+    const index = list.findIndex(item => this.getCardIdKey(this.getResolvedCardId(item)) === key);
     if (index >= 0) {
-        list[index] = card;
+        list[index] = apiCard;
     } else {
-        list.push(card);
+        list.push(apiCard);
     }
     this.cardListCache = list;
     this.allCardsData = list;
-    this.cardDetailCache.set(key, card);
 };
 
 CardEditor.prototype.removeCardFromCache = function(cardId) {
@@ -3784,7 +3786,11 @@ CardEditor.prototype.saveCurrentCard = async function(isSaveAs, options = {}) {
                 await this.syncLinkedCrestAndFaithSections(finalSavedCard, sectionsToSync, { isSaveAs: !!isSaveAs });
             }
 
-            this.upsertCardInCache(finalSavedCard);
+            this.upsertCardInCache({
+                ...saved,
+                artPreview: finalSavedCard.artPreview,
+                artDetail: finalSavedCard.artDetail
+            });
 
             isStillEditingSavedCard = Boolean(
                 this.currentCard && (
@@ -3978,7 +3984,7 @@ CardEditor.prototype.syncLinkedCrestAndFaithSections = async function(ownerCard,
                 }
 
                 const convertedLinked = this.convertApiCardToEditorFormat(latestApiCard);
-                this.upsertCardInCache(convertedLinked);
+                this.upsertCardInCache(latestApiCard);
                 sec.refCardId = targetId;
                 sec.refToken = convertedLinked.name || rawRefToken;
                 if (convertedLinked.artPreview) {
@@ -4037,7 +4043,7 @@ CardEditor.prototype.syncLinkedCrestAndFaithSections = async function(ownerCard,
                 }
 
                 const convertedCreated = this.convertApiCardToEditorFormat(createdApiCard);
-                this.upsertCardInCache(convertedCreated);
+                this.upsertCardInCache(createdApiCard);
                 sec.refCardId = convertedCreated.id;
                 sec.refToken = convertedCreated.name || derivedName;
                 if (convertedCreated.artPreview) {
@@ -6319,14 +6325,21 @@ CardEditor.prototype.generateAbilitiesFromVisualCard = async function() {
         );
 
         if (isStillSameCard) {
-            this.currentCard.keywords = detectedKeywords;
+            const hasCountdown = (this.currentCard.keywords ?? []).some(keyword => equalsIgnoreCase(keyword, 'Countdown'));
+            const keywords = hasCountdown && !detectedKeywords.includes('Countdown')
+                ? [...detectedKeywords, 'Countdown']
+                : detectedKeywords;
+            const initialCountdown = result.initialCountdown;
+            this.currentCard.keywords = keywords;
+            if (Number.isInteger(initialCountdown)) this.currentCard.countdown = initialCountdown;
             this.currentCard.isImplemented = fullyCompiled;
             const liveCanvas = !this.useClassicBasicForm
                 && String(this.visualCanvas?.mseCard?.editorId) === String(targetCardId)
                 ? this.visualCanvas
                 : null;
             if (liveCanvas) {
-                liveCanvas.mseCard.keywords = [...detectedKeywords];
+                liveCanvas.mseCard.keywords = [...keywords];
+                liveCanvas.mseCard.countdown = this.currentCard.countdown;
                 liveCanvas.mseCard.isImplemented = fullyCompiled;
                 liveCanvas.renderKeywordsList();
                 liveCanvas.syncToEditorCard();
