@@ -101,7 +101,18 @@ internal static class RoomExitTests
         Check((await action).EnumerateArray().Single().GetGuid() == option, "The game did not continue with the submitted answer.");
         Check(!await fixture.Games.SubmitTargetChoiceAsync(gameId, owner, choice), "The same choice was applied twice.");
 
-        var settled = await fixture.Games.ReadSyncStateAsync(gameId, owner, deadline.Token);
+        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishSending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var syncAfterChoice = fixture.Games.ReadSyncStateAsync(gameId, owner, deadline.Token, _ =>
+        {
+            published.SetResult();
+            return finishSending.Task;
+        });
+        await published.Task.WaitAsync(deadline.Token);
+        await fixture.Games.ReadStateAsync(gameId, (_, _) => Task.FromResult(JsonSerializer.SerializeToElement(true)), deadline.Token);
+        Check(!syncAfterChoice.IsCompleted, "The sync reported success before delivery.");
+        finishSending.SetResult();
+        var settled = await syncAfterChoice;
         Check(settled?.GameMessage == "settled" && settled.PendingChoice == null, "A completed choice persisted in the next snapshot.");
         Console.WriteLine("Choice reconnect: read at the waiting boundary, recover the same choice, and resolve it once.");
     }

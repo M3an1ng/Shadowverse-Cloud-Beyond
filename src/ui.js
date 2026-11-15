@@ -1419,6 +1419,7 @@ function buildStandaloneMotionCardClone(cardDtoOrInstance, paidCost = null, play
 }
 
 function cancelAllBattleMotions() {
+    revealAnimator.clear();
     suppressedEnterUids.clear();
     suppressedExitUids.clear();
     pendingCardPlayHoverMap.clear();
@@ -5939,7 +5940,7 @@ export function getBuffSummaryHtml(cardInstance) {
         return '';
     }
 
-    return `<div class="buff-summary-list">${summaryLine}${keywordLine}${numericHtml}${lines}</div>`;
+    return `<div class="buff-summary-list custom-scrollbar" role="region" aria-label="附加信息" tabindex="0">${summaryLine}${keywordLine}${numericHtml}${lines}</div>`;
 }
 
 function getBattlePreviewPlaceholderHtml() {
@@ -6074,6 +6075,9 @@ function renderBattleCardPreview(cardInstance) {
 
     battleCardPreviewEl.classList.remove('is-empty');
     const previewUid = cardInstance.uid ?? cardInstance.InstanceId ?? '';
+    const summaryScrollTop = previewUid && battleCardPreviewEl.dataset.previewUid === String(previewUid)
+        ? battleCardPreviewEl.querySelector('.buff-summary-list')?.scrollTop
+        : 0;
     if (previewUid) {
         battleCardPreviewEl.dataset.previewUid = previewUid;
     } else {
@@ -6096,6 +6100,8 @@ function renderBattleCardPreview(cardInstance) {
         delete battleCardPreviewEl.dataset.previewCardName;
     }
     battleCardPreviewEl.innerHTML = buildBattlePreviewHtml(cardInstance);
+    const buffSummary = battleCardPreviewEl.querySelector('.buff-summary-list');
+    if (buffSummary && summaryScrollTop) buffSummary.scrollTop = summaryScrollTop;
     for (const button of battleCardPreviewEl.querySelectorAll('.battle-effect-source-button[data-card-id]')) {
         button.addEventListener('click', async event => {
             event.preventDefault();event.stopPropagation();
@@ -6850,6 +6856,7 @@ function updateReconnectButton() {
 function setConnectionStatus(status, message) {
     const normalized = status || 'connected';
     const isConnected = normalized === 'connected';
+    const wasLocked = isConnectionLocked;
     connectionStatus = normalized;
     connectionStatusMessage = message || '';
     isConnectionLocked = !isConnected;
@@ -6868,6 +6875,9 @@ function setConnectionStatus(status, message) {
         document.querySelectorAll('.pp-boost-button').forEach(button => {
             button.disabled = true;
         });
+    } else if (wasLocked) {
+        const player = getPlayerState(gameState.localPlayerId);
+        if (player) updatePpBoostDisplay(player.id, player.ppBoostUsesAvailable, player.ppBoostArmed === true);
     }
 }
 
@@ -8220,7 +8230,6 @@ document.addEventListener('cleanupGame', () => {
     clearTrackedVisualTimeouts();
     removeTransientVisualArtifacts();
     removeStrayBattleCardArtifacts();
-    revealAnimator.clear();
 });
 
 // --- Reveal UI: Mini flight, flip, return, then conceal the whole hidden batch. ---

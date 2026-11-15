@@ -1109,21 +1109,18 @@ namespace ShadowverseBeyond.Server.Hubs
         private async Task<bool> SendGameStateToCallerAsync(
             string gameId, Guid viewingPlayerId, int? viewEpoch = null, long? roomVersion = null)
         {
-            var state = await _gameService.ReadSyncStateAsync(gameId, viewingPlayerId, Context.ConnectionAborted);
-            if (state == null) return false;
-
-            var choice = state.PendingChoice;
-            if (state.IsGameOver || choice?.ChoiceRequest.RequestingPlayerId != GetAuthenticatedChoicePlayer(gameId))
-                choice = null;
-
-            await Clients.Caller.ReceiveGameState(state with
-            {
-                PendingChoice = choice,
-                ViewingPlayerId = viewEpoch.HasValue ? viewingPlayerId : state.ViewingPlayerId,
-                ViewEpoch = viewEpoch,
-                RoomVersion = roomVersion
-            });
-            return true;
+            var caller = Clients.Caller;
+            var authenticatedPlayer = GetAuthenticatedChoicePlayer(gameId);
+            var synced = await _gameService.ReadSyncStateAsync(gameId, viewingPlayerId, Context.ConnectionAborted,
+                state => caller.ReceiveGameState(state with
+                {
+                    PendingChoice = !state.IsGameOver && state.PendingChoice?.ChoiceRequest.RequestingPlayerId == authenticatedPlayer
+                        ? state.PendingChoice : null,
+                    ViewingPlayerId = viewEpoch.HasValue ? viewingPlayerId : state.ViewingPlayerId,
+                    ViewEpoch = viewEpoch,
+                    RoomVersion = roomVersion
+                }));
+            return synced != null;
         }
         // --- New Method for Playability Check ---
 
@@ -1537,6 +1534,19 @@ namespace ShadowverseBeyond.Server.Hubs
                 _playerConnections.Register(activeGameIdForPlayer, playerGuid, Context.ConnectionId);
                 var hadPendingDisconnect = CancelDisconnectTimeout(activeGameIdForPlayer, playerGuid);
                 await NotifyPlayerConnectionStatusAsync(roomIdStr, playerGuid, true, hadPendingDisconnect ? "Reconnect" : "Connected");
+                if (!room.UseAiFallback && room.GuestPlayerId is Guid guestId)
+                {
+                    var opponentId = playerGuid == room.HostPlayerId ? guestId : room.HostPlayerId;
+                    if (_disconnectEpochs.ContainsKey((activeGameIdForPlayer, opponentId)))
+                    {
+                        await Clients.Caller.PlayerConnectionStatusUpdated(new PlayerConnectionStatusEventDto
+                        {
+                            PlayerId = opponentId,
+                            IsConnected = _playerConnections.IsConnected(activeGameIdForPlayer, opponentId),
+                            Reason = "Sync"
+                        });
+                    }
+                }
                 _gameService.MarkPlayerReconnected(activeGameIdForPlayer.ToString("D"), playerGuid);
             }
 
@@ -1757,12 +1767,12 @@ namespace ShadowverseBeyond.Server.Hubs
                             return;
                         }
 
-                        await NotifyPlayerConnectionStatusAsync(roomId, playerGuid, false, "Disconnect");
                         if (gameId != Guid.Empty)
                         {
                             _gameService.MarkPlayerDisconnected(gameId.ToString("D"), playerGuid);
                             ScheduleDisconnectTimeout(gameId, playerGuid);
                         }
+                        await NotifyPlayerConnectionStatusAsync(roomId, playerGuid, false, "Disconnect");
                     }
                 }
                 catch (Exception ex)

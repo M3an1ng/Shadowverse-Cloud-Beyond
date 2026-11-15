@@ -4375,6 +4375,9 @@ button.pp-boost-button.leader-boost-pill.is-spent .pp-boost-chevron {
 .battle-card-preview .buff-summary-list {
     margin-top: 8px;
     padding: 6px 8px;
+    max-height: min(240px, 32vh);
+    overflow-y: auto;
+    overflow-wrap: anywhere;
     display: flex;
     flex-direction: column;
     gap: 4px;

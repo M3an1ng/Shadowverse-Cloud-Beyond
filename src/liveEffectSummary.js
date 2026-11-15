@@ -1,22 +1,50 @@
-// Mini's additive grouping rule, adapted to the native server's visible buff DTOs.
-// Different expiry/selection conditions never share a total. Set/base/multiply remain separate.
+// The server marks assignments superseded across sources. Older snapshots still
+// keep application order within each source, so keep its latest assignment per stat.
+const cardStats = new Set(['Cost', 'Attack', 'Health', 'Defense']);
+
 export function summarizeAttachedNumericEffects(summaries) {
-    const groups = [];
-    for (const summary of summaries || []) {
+    const groups = new Map();
+    for (const [sourceIndex, summary] of (summaries || []).entries()) {
+        const source = {
+            id: summary.SourceCardDefinitionId ?? summary.sourceCardDefinitionId,
+            name: summary.SourceCardName ?? summary.sourceCardName,
+            abilityName: summary.SourceAbilityName ?? summary.sourceAbilityName,
+            art: summary.SourceCardArtPreview ?? summary.sourceCardArtPreview
+        };
         for (const entry of summary.NumericEffects ?? summary.numericEffects ?? []) {
+            if (entry.IsSuperseded ?? entry.isSuperseded) continue;
             const field = entry.Field ?? entry.field;
             const layer = entry.Layer ?? entry.layer;
             const policy = entry.PolicyKey ?? entry.policyKey;
             const value = Number(entry.Value ?? entry.value);
             if (!field || !Number.isFinite(value)) continue;
-            const key = layer === 'Additive' ? JSON.stringify([field,policy,!!(entry.RemoveAfterUse ?? entry.removeAfterUse)]) : `separate:${groups.length}`;
-            const source = {id:summary.SourceCardDefinitionId ?? summary.sourceCardDefinitionId,name:summary.SourceCardName ?? summary.sourceCardName,abilityName:summary.SourceAbilityName ?? summary.sourceAbilityName,art:summary.SourceCardArtPreview ?? summary.sourceCardArtPreview};
-            const previous = groups.find(group => group.key === key);
-            if (previous) { previous.value += value; previous.sources.push(source); previous.count++; }
-            else groups.push({key,field,layer,value,policy,oneUse:!!(entry.RemoveAfterUse ?? entry.removeAfterUse),duration:entry.Duration ?? entry.duration,sources:[source],count:1});
+
+            const oneUse = !!(entry.RemoveAfterUse ?? entry.removeAfterUse);
+            const duration = entry.Duration ?? entry.duration;
+            let key = `separate:${groups.size}`;
+            if (layer === 'Additive') {
+                key = JSON.stringify([field, policy, oneUse]);
+                const previous = groups.get(key);
+                if (previous) {
+                    previous.value += value;
+                    previous.sources.push(source);
+                    previous.count++;
+                    continue;
+                }
+            } else if (layer === 'Set' && cardStats.has(field)) {
+                const stat = field === 'Defense' ? 'Health' : field;
+                key = `set:${sourceIndex}:${stat}`;
+            }
+            groups.set(key, { key, field, layer, value, policy, oneUse, duration, sources: [source], count: 1 });
         }
     }
-    return groups.filter(group => group.layer !== 'Additive' || group.value !== 0).map(group => ({...group,sources:group.sources.filter((source,index,all)=>all.findIndex(other=>other.name===source.name&&other.abilityName===source.abilityName&&other.art===source.art)===index)}));
+    return [...groups.values()]
+        .filter(group => group.layer !== 'Additive' || group.value !== 0)
+        .map(group => ({
+            ...group,
+            sources: group.sources.filter((source, index, all) => all.findIndex(other =>
+                other.name === source.name && other.abilityName === source.abilityName && other.art === source.art) === index)
+        }));
 }
 export function numericEffectTitle(effect) {
     const labels = {Attack:'攻击',Health:'生命',Defense:'生命',Cost:'费用',Act:'启动费用',Reanimate:'亡召上限',Enhance:'爆能强化费用',Accelerate:'激奏费用',Crystalize:'结晶费用'};

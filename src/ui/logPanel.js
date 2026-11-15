@@ -2581,11 +2581,14 @@ function resolveLogToken(rawToken) {
     return { text: token, className: 'log-token' };
 }
 
-export function renderGameLog(logs) {
+export function renderGameLog(logs, { timelineOnly = false } = {}) {
+    const showTimeline = isLogExpanded && !isActiveChatTab() && !isActiveHistoryTab();
+    let logContent = document.getElementById('game-log-content');
+    if (timelineOnly && (!showTimeline || !logContent)) return;
+
     const gameContainer = document.getElementById('game-container');
     document.getElementById('game-log-edge-zone')?.remove();
     let logContainer = document.getElementById('game-log-container');
-    let logContent = document.getElementById('game-log-content');
     let historyContent = document.getElementById('game-match-history-content');
 
     const docIconSvg = `
@@ -2736,6 +2739,7 @@ export function renderGameLog(logs) {
         syncTopShadowMask(logContent, logContent);
         return;
     }
+    if (!showTimeline && logs.length > 0) return;
 
     // Clear existing logs in content wrapper
     logContent.innerHTML = '';
@@ -2792,7 +2796,7 @@ export function renderGameLog(logs) {
     });
 
     // Auto-scroll only if user is already near bottom
-    if (isLogExpanded && !isActiveChatTab() && !isActiveHistoryTab()) {
+    if (showTimeline) {
         const shouldScrollToLatest = shouldScrollLogToLatestOnRender || wasNearBottom;
         if (shouldScrollToLatest) {
             logContent.scrollTop = logContent.scrollHeight;

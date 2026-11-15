@@ -19,19 +19,29 @@ export function isPresentationFastForward() {
 export function createRevealPresentationGate(isCurrent = () => true) {
   let waiting = 0,
     pending = [],
+    generation = 0,
     flushing = false;
 
   const syncDepth = () => {
     latestPendingDepth = pending.length;
   };
 
+  const clear = () => {
+    generation++;
+    waiting = 0;
+    pending = [];
+    syncDepth();
+  };
+
   const execute = (work) => {
+    const startedIn = generation;
     const completion = work();
     if (completion && typeof completion.then === "function") {
       waiting++;
       Promise.resolve(completion)
         .catch((error) => console.error("演出门禁等待异常", error))
         .finally(() => {
+          if (startedIn !== generation) return;
           waiting--;
           drain();
         });
@@ -61,8 +71,7 @@ export function createRevealPresentationGate(isCurrent = () => true) {
         return;
       }
       if (eventName === "ReceiveGameState") {
-        pending = [];
-        syncDepth();
+        clear();
         execute(work);
         return;
       }
@@ -73,9 +82,6 @@ export function createRevealPresentationGate(isCurrent = () => true) {
         execute(work);
       }
     },
-    clear() {
-      pending = [];
-      syncDepth();
-    },
+    clear,
   };
 }

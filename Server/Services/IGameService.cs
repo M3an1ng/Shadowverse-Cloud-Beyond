@@ -42,7 +42,8 @@ namespace ShadowverseBeyond.Server.Services
         /// <returns>The GameStateDto if found, otherwise null.</returns>
         GameState? GetGameState(string gameId); // Return Domain Entity
 
-        Task<GameStateDto?> ReadSyncStateAsync(string gameId, Guid viewingPlayerId, CancellationToken cancellationToken);
+        Task<GameStateDto?> ReadSyncStateAsync(string gameId, Guid viewingPlayerId, CancellationToken cancellationToken,
+            Func<GameStateDto, Task>? sendSnapshot = null);
         Task<JsonElement> ReadSnapshotAsync(string gameId, CancellationToken cancellationToken);
         Task<JsonElement> ReadStateAsync(string gameId, Func<GameState, IServiceProvider, Task<JsonElement>> reader, CancellationToken cancellationToken);
 

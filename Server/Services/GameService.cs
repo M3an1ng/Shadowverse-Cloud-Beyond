@@ -1309,38 +1309,66 @@ namespace ShadowverseBeyond.Server.Services
             return existingState;
         }
 
-        public async Task<GameStateDto?> ReadSyncStateAsync(string gameId, Guid viewingPlayerId, CancellationToken cancellationToken)
+        public async Task<GameStateDto?> ReadSyncStateAsync(string gameId, Guid viewingPlayerId, CancellationToken cancellationToken,
+            Func<GameStateDto, Task>? sendSnapshot = null)
         {
-            var snapshot = new TaskCompletionSource<GameStateDto>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var snapshot = new TaskCompletionSource<(GameStateDto State, Task Delivery)>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var readCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var readToken = readCancellation.Token;
+            int publishing = 0;
+
+            void Publish(GameStateDto state)
+            {
+                if (readToken.IsCancellationRequested || Interlocked.Exchange(ref publishing, 1) != 0) return;
+                try
+                {
+                    // Start the write in game-loop order. A slow connection must not block the game loop.
+                    var delivery = sendSnapshot?.Invoke(state) ?? Task.CompletedTask;
+                    snapshot.TrySetResult((state, delivery));
+                }
+                catch (Exception ex)
+                {
+                    snapshot.TrySetException(ex);
+                }
+            }
+
             void OnWaitingSnapshot(string waitingGameId, GameStateDto state)
             {
                 if (string.Equals(waitingGameId, gameId, StringComparison.OrdinalIgnoreCase))
-                    snapshot.TrySetResult(state);
+                    Publish(state);
             }
 
-            using var readCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var readToken = readCancellation.Token;
             _pendingActionService.WaitingSnapshotReady += OnWaitingSnapshot;
             try
             {
                 if (_pendingActionService.GetWaitingSnapshot(gameId) is { } waitingState)
-                    return waitingState;
-
-                // If an earlier action opens a choice, use its waiting snapshot instead of
-                // leaving this connection blocked behind the choice it needs to answer.
-                var read = new MatchStateRead((state, services) =>
                 {
-                    using var context = new GameContext(services, _mapper, services.GetRequiredService<IGameContextAccessor>(),
-                        state, viewingPlayerId, readToken);
-                    snapshot.TrySetResult(GameStateProjection.Create(state, context));
-                    return Task.FromResult(JsonSerializer.SerializeToElement(true));
-                }) { CancellationToken = readToken };
+                    Publish(waitingState);
+                }
+                else
+                {
+                    // A pending choice can publish its board while the game loop is paused.
+                    var read = new MatchStateRead((state, services) =>
+                    {
+                        if (Volatile.Read(ref publishing) == 0)
+                        {
+                            using var context = new GameContext(services, _mapper, services.GetRequiredService<IGameContextAccessor>(),
+                                state, viewingPlayerId, readToken);
+                            Publish(GameStateProjection.Create(state, context));
+                        }
+                        return Task.FromResult(JsonSerializer.SerializeToElement(true));
+                    }) { CancellationToken = readToken };
 
-                if (!await EnqueuePlayerActionAsync(gameId, read))
-                    return null;
+                    if (!await EnqueuePlayerActionAsync(gameId, read) && Volatile.Read(ref publishing) == 0)
+                        return null;
 
-                await Task.WhenAny(snapshot.Task, read.Completion).WaitAsync(cancellationToken);
-                return snapshot.Task.IsCompletedSuccessfully ? await snapshot.Task : null;
+                    await Task.WhenAny(snapshot.Task, read.Completion).WaitAsync(cancellationToken);
+                    if (Volatile.Read(ref publishing) == 0) return null;
+                }
+
+                var (state, delivery) = await snapshot.Task.WaitAsync(cancellationToken);
+                await delivery.WaitAsync(cancellationToken);
+                return state;
             }
             finally
             {

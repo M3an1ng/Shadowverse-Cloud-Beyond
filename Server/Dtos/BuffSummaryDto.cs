@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 
 namespace ShadowverseBeyond.Server.Dtos
 {
@@ -35,5 +36,7 @@ namespace ShadowverseBeyond.Server.Dtos
         public string PolicyKey { get; init; } = "";
         public string Duration { get; init; } = "";
         public string DisplayText { get; init; } = "";
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool IsSuperseded { get; init; }
     }
 }

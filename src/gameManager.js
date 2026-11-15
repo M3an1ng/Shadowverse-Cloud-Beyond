@@ -79,6 +79,7 @@ import { getUserSession } from "./userSession.js";
 const MAX_FIELD_SIZE = 5; // Maximum cards on a player's field
 const GAME_LOG_LIMIT = 200; // Prevent unbounded growth in UI log
 const CHAT_HISTORY_LIMIT = 200;
+let gameLogRenderFrame = null;
 
 // --- SignalR Connection ---
 let signalRConnection = null; // Holds the connection object passed from main.js
@@ -877,6 +878,10 @@ function selectDualControlMulliganSeat() {
 }
 
 function resetGameSessionState(abortReason = "new_game") {
+    if (gameLogRenderFrame !== null) {
+        cancelAnimationFrame(gameLogRenderFrame);
+        gameLogRenderFrame = null;
+    }
     abortMirageCombatPlayback(abortReason);
     stopTurnTimer();
     resetPlayabilityResyncState();
@@ -970,9 +975,14 @@ export function appendGameLog(eventName, payload) {
         gameState.gameLog.shift();
     }
 
-    // Keep console output consistent and structured
-
-    gameView.renderGameLog(gameState.gameLog);
+    if (typeof requestAnimationFrame !== 'function') {
+        gameView.renderGameLog(gameState.gameLog, { timelineOnly: true });
+    } else if (gameLogRenderFrame === null) {
+        gameLogRenderFrame = requestAnimationFrame(() => {
+            gameLogRenderFrame = null;
+            gameView.renderGameLog(gameState.gameLog, { timelineOnly: true });
+        });
+    }
 }
 // --- Mulligan Phase Logic ---
 
@@ -2806,10 +2816,10 @@ export function updateFullGameState(serverState, options = {}) {
 
     const incomingRoomVer = Number(readStateField(serverState, 'RoomVersion', 'roomVersion'));
     if (Number.isFinite(incomingRoomVer) && incomingRoomVer > 0) {
-        if (gameState.mirageRoomVersion > 0 && incomingRoomVer < gameState.mirageRoomVersion) {
+        if (!resetViewEpoch && incomingRoomVer < gameState.mirageRoomVersion) {
             return true;
         }
-        gameState.mirageRoomVersion = incomingRoomVer;
+        gameState.mirageRoomVersion = Math.max(gameState.mirageRoomVersion, incomingRoomVer);
     }
 
     if (incomingViewingPlayerId) {
@@ -4556,7 +4566,8 @@ export function handleMirageStandingsUpdated(standingsDto) {
 }
 
 export async function switchMirageSpectateTargetRequest(targetPlayerId) {
-    if (!signalRConnection || !targetPlayerId) return;
+    const connection = signalRConnection;
+    if (!connection || !targetPlayerId) return;
     const nextEpoch = (Number(gameState.viewEpoch) || 1) + 1;
     gameState.viewEpoch = nextEpoch;
     gameState.pendingSpectateTargetId = String(targetPlayerId);
@@ -4564,8 +4575,9 @@ export async function switchMirageSpectateTargetRequest(targetPlayerId) {
     gameState.miragePlacementModalDismissed = true;
     abortMirageCombatPlayback("new_game");
     try {
-        await signalRConnection.invoke("SwitchMirageSpectateTarget", String(targetPlayerId), nextEpoch);
+        await connection.invoke("SwitchMirageSpectateTarget", String(targetPlayerId), nextEpoch);
     } catch (error) {
+        if (connection !== signalRConnection || gameState.viewEpoch !== nextEpoch) return;
         gameState.pendingSpectateTargetId = null;
         console.error("GM: SwitchMirageSpectateTarget failed:", error);
         showAlert(`切换观战视角失败：${error?.message || error}`);

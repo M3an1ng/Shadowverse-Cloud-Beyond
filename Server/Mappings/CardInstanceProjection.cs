@@ -286,7 +286,8 @@ namespace ShadowverseBeyond.Server.Mappings
                 }).ToList();
         }
 
-        private static IEnumerable<AttachedNumericEffectDto> BuildNumericEffects(Buff buff, GameContext context)
+        private static IEnumerable<AttachedNumericEffectDto> BuildNumericEffects(
+            Buff buff, IReadOnlyDictionary<StatType, (Guid BuffId, int Index)> latestStatSets)
         {
             // These are already-applied buffs. Their originating ability's trigger/target IDs
             // do not change applicability; group by the buff's actual remaining lifetime instead.
@@ -302,7 +303,19 @@ namespace ShadowverseBeyond.Server.Mappings
             var texts = DescribeBuff(buff).ToList();
             var index = 0;
             foreach (var stat in buff.GetStatModifications())
-                yield return new AttachedNumericEffectDto { Field = stat.Stat.ToString(), Layer = stat.Layer.ToString(), Value = stat.Value, PolicyKey = key, RemoveAfterUse = buff.RemoveAfterUse, Duration = buff.DurationType.ToString(), DisplayText = texts[index++] };
+            {
+                yield return new AttachedNumericEffectDto
+                {
+                    Field = stat.Stat.ToString(),
+                    Layer = stat.Layer.ToString(),
+                    Value = stat.Value,
+                    PolicyKey = key,
+                    RemoveAfterUse = buff.RemoveAfterUse,
+                    Duration = buff.DurationType.ToString(),
+                    IsSuperseded = stat.Layer == ModifierLayer.Set && latestStatSets[stat.Stat] != (buff.Id, index),
+                    DisplayText = texts[index++]
+                };
+            }
             foreach (var effect in buff.Effects.OfType<AbilityKeywordBuffEffect>())
                 foreach (var modifier in effect.Modifications)
                     yield return new AttachedNumericEffectDto { Field = modifier.Keyword.ToString(), Layer = modifier.Layer.ToString(), Value = modifier.Value, PolicyKey = key, RemoveAfterUse = buff.RemoveAfterUse, Duration = buff.DurationType.ToString(), DisplayText = texts[index++] };
@@ -394,6 +407,19 @@ namespace ShadowverseBeyond.Server.Mappings
 
             var abilityManager = context.AbilityManager;
             var gameState = context.CurrentGameState;
+
+            // The buff list is in application order, before grouping by source.
+            var latestStatSets = new Dictionary<StatType, (Guid BuffId, int Index)>();
+            foreach (var buff in buffs)
+            {
+                var index = 0;
+                foreach (var stat in buff.GetStatModifications())
+                {
+                    if (stat.Layer == ModifierLayer.Set)
+                        latestStatSets[stat.Stat] = (buff.Id, index);
+                    index++;
+                }
+            }
 
             var summaries = new List<BuffSummaryDto>();
 
@@ -509,7 +535,7 @@ namespace ShadowverseBeyond.Server.Mappings
                     GrantedAbilities = group.SelectMany(GetVisibleGrants).Select(config => new GrantedAbilityDetailDto { Name = config.Name ?? "", Description = config.Description ?? "" }).ToList(),
                     Description = (ability as Ability)?.Description ?? string.Empty,
                     Details = group.SelectMany(buff => DescribeBuff(buff, GetVisibleGrants(buff))).ToList(),
-                    NumericEffects = group.SelectMany(buff => BuildNumericEffects(buff, context)).ToList()
+                    NumericEffects = group.SelectMany(buff => BuildNumericEffects(buff, latestStatSets)).ToList()
                 });
 
                 logger?.LogDebug(

@@ -128,6 +128,8 @@ coverage/
 !/tests/EngineMigration/
 !/tests/DiscoverInstances/
 !/tests/modeChoiceDialog.test.mjs
+!/tests/battleConnection.test.mjs
+!/tests/liveEffectSummary.test.mjs
 
 # Small native Mini presentation assets, separate from the downloaded card library.
 !/assets/

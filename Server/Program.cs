@@ -237,7 +237,12 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         // Explicitly set CamelCase naming policy for SignalR JSON protocol
         options.PayloadSerializerOptions.PropertyNamingPolicy = null; // FIX: Preserve PascalCase from C# DTOs // Restore CamelCase naming policy
         // Note: hubOptions configuration is separate from AddJsonProtocol options
-    }); // End AddJsonProtocol lambda body and add semicolon at the end of the statement
+    })
+    .AddHubOptions<GameHub>(options =>
+    {
+        // Mobile browsers can throttle their keepalive timers when the tab is backgrounded.
+        options.ClientTimeoutInterval = TimeSpan.FromSeconds(75);
+    });
     Log.Information("Successfully configured SignalR."); // Added Log
 
     // Register services dependent on SignalR (IHubContext)
