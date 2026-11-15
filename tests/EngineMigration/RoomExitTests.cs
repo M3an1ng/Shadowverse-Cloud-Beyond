@@ -18,6 +18,7 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Domain.Events.Services;
 using ShadowverseBeyond.Server.Dtos.Enums;
+using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
 using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
 using ShadowverseBeyond.Server.Services;
@@ -32,6 +33,7 @@ internal static class RoomExitTests
 
     internal static async Task RunAsync()
     {
+        await ReconnectStateAtChoiceAsync();
         await PendingChoicesAndBroadcastAsync();
         await FinishedGameBarrierAsync();
         await IdleFinishedGameAsync();
@@ -40,6 +42,68 @@ internal static class RoomExitTests
         await TimeoutKeepsSeatAsync();
         DraftHandoff();
         Console.WriteLine("Room exit: pending choices, broadcast/read barrier, idle/retiring/released games, concurrent leaves, timeout and draft handoff passed.");
+    }
+
+    private static async Task ReconnectStateAtChoiceAsync()
+    {
+        using var fixture = new Fixture();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var gameId = fixture.Game.GameId;
+        var owner = fixture.Game.Player1.PlayerId;
+        var opponent = fixture.Game.Player2.PlayerId;
+        var beganAction = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var openChoice = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var option = Guid.NewGuid();
+        var request = new PlayerChoiceRequest
+        {
+            PendingChoiceId = Guid.NewGuid(),
+            SourceAbilityRuntimeId = Guid.NewGuid(),
+            RequestingPlayerId = owner,
+            TargetKey = "discover",
+            SelectableTargetIds = [option],
+            MinSelectionCount = 1,
+            MaxSelectionCount = 1
+        };
+
+        var action = fixture.Games.ReadStateAsync(gameId, async (game, _) =>
+        {
+            beganAction.SetResult();
+            await openChoice.Task.WaitAsync(deadline.Token);
+            game.GameMessage = "waiting";
+            var result = await fixture.Pending.WaitForPlayerChoiceAsync(gameId, request, deadline.Token);
+            game.GameMessage = "settled";
+            return JsonSerializer.SerializeToElement(result.ChosenTargetIds);
+        }, deadline.Token);
+        await beganAction.Task.WaitAsync(deadline.Token);
+
+        var reconnect = fixture.Games.ReadSyncStateAsync(gameId, owner, deadline.Token);
+        Check(!reconnect.IsCompleted, "A reconnect read mutable state in the middle of an action.");
+        openChoice.SetResult();
+
+        var state = await reconnect;
+        Check(state?.GameMessage == "waiting" && state.PendingChoice?.ChoiceRequest.PendingChoiceId == request.PendingChoiceId,
+            "A queued reconnect did not resume at the choice boundary.");
+        var laterReconnect = await fixture.Games.ReadSyncStateAsync(gameId, owner, deadline.Token);
+        Check(laterReconnect?.PendingChoice?.ChoiceRequest.SelectableTargetIds.SequenceEqual([option]) == true,
+            "Reconnect lost or regenerated the existing choice.");
+
+        var choice = new SubmitTargetChoiceActionDto
+        {
+            PendingChoiceId = request.PendingChoiceId,
+            SourceAbilityRuntimeId = request.SourceAbilityRuntimeId,
+            TargetKey = request.TargetKey,
+            ChosenTargetIds = [option]
+        };
+        Check(!await fixture.Games.SubmitTargetChoiceAsync(gameId, opponent, choice),
+            "An opponent was able to resolve the choice.");
+        Check(await fixture.Games.SubmitTargetChoiceAsync(gameId, owner, choice),
+            "The reconnecting player was unable to resolve the choice.");
+        Check((await action).EnumerateArray().Single().GetGuid() == option, "The game did not continue with the submitted answer.");
+        Check(!await fixture.Games.SubmitTargetChoiceAsync(gameId, owner, choice), "The same choice was applied twice.");
+
+        var settled = await fixture.Games.ReadSyncStateAsync(gameId, owner, deadline.Token);
+        Check(settled?.GameMessage == "settled" && settled.PendingChoice == null, "A completed choice persisted in the next snapshot.");
+        Console.WriteLine("Choice reconnect: read at the waiting boundary, recover the same choice, and resolve it once.");
     }
 
     private static async Task PendingChoicesAndBroadcastAsync()

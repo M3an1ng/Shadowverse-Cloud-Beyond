@@ -7,7 +7,7 @@ const load = async path => import(`data:text/javascript;base64,${Buffer.from(awa
 const { splitModeNumber, getModeOptionContent, toggleModeSelection } = await load('../src/ui/modeChoiceDialog.js');
 const { shouldAutoConfirmChoice } = await load('../src/choiceSettingsPolicy.js');
 const uiSource = await readFile(new URL('../src/ui.js', import.meta.url), 'utf8');
-const functions = ['getChoiceMinMax', 'isChoiceSelectionValid', 'isFixedChoiceCount', 'isCurrentChoiceRequest', 'confirmPlayerChoice', 'handleChoiceTargetClick'];
+const functions = ['getChoiceMinMax', 'isChoiceSelectionValid', 'isFixedChoiceCount', 'confirmPlayerChoice', 'handleChoiceTargetClick'];
 const choiceCode = functions.map(name => {
     const start = uiSource.indexOf(`function ${name}(`);
     assert.ok(start >= 0, `${name} exists`);
@@ -20,6 +20,7 @@ function harness({ mode = true, max = 2, min = max, auto = false, submit } = {})
     const context = vm.createContext({
         Set, console, shouldAutoConfirmChoice, toggleModeSelection,
         isAwaitingPlayerChoice: true,
+        isConnectionLocked: false,
         currentChoiceSubmission: null,
         modeChoiceDialog: null,
         currentChoiceRequest: { PendingChoiceId: 'choice', SourceAbilityRuntimeId: 'ability', TargetKey: mode ? 'decision' : 'target', SelectableTargetIds: ['a', 'b', 'c'], MinSelectionCount: min, MaxSelectionCount: max },
@@ -27,7 +28,13 @@ function harness({ mode = true, max = 2, min = max, auto = false, submit } = {})
         gameState: {}, renderHighlights() {}, updateChoiceOverlayUI() {}, canSelectChoiceTarget: () => true,
         readOperationSettings: () => ({ autoConfirmModes: auto, autoConfirmTargets: auto }),
         submitPlayerChoice: async (...args) => { submissions.push(args); return submit ? submit(...args) : true; },
-        endPlayerChoice() { context.isAwaitingPlayerChoice = false; context.currentChoiceRequest = null; context.currentChoiceSelectedTargetIds = new Set(); context.currentChoiceSubmission = null; }
+        hidePlayerChoiceUI(id) {
+            if (context.currentChoiceRequest?.PendingChoiceId !== id) return;
+            context.isAwaitingPlayerChoice = false;
+            context.currentChoiceRequest = null;
+            context.currentChoiceSelectedTargetIds = new Set();
+            context.currentChoiceSubmission = null;
+        }
     });
     vm.runInContext(choiceCode, context);
     return { context, submissions, click: key => context.handleChoiceTargetClick(key), confirm: () => context.confirmPlayerChoice(), selected: () => [...context.currentChoiceSelectedTargetIds] };

@@ -31,7 +31,7 @@ import {
     handleCardSummoned, handleCardPlayed, handleHealthChanged, handleCardVanished,
     handleStatChange, handleUnitEvolved, handleGameOver, handlePlayerMulliganCompleted, handleAttackStateUpdated,
     handleActStateUpdated, handleFusionStateUpdated, handleEvolveStateUpdated, handleSuperEvolveStateUpdated, handleHandPlayabilityUpdate, handleActPlayabilityUpdate,
-    handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested,
+    handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested, handlePlayerChoiceResolved, syncPlayerChoiceFromSnapshot,
     handleCardRevealed, handleFusion, handleAbilityTriggered, handleKeywordAdded, handleKeywordRemoved, handleCardInstanceUpdated,
     handleChatHistory, handleChatMessage, handleMatchHistorySync, surrenderGame,
     handleCardMoved, handleEmblemUpdated, handleCounterChanged, handleCardReturned, handleTuck, appendGameLog,
@@ -46,7 +46,7 @@ import {
     refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets,
     showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState,
     updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi,
-    refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast,
+    refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, hidePlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast,
     replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard,
     appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual,
     prepareCardMoveVisual, commitCardMoveVisual, notifyCardPlayed, playAttackLunge, playUnitEvolutionEffect, notifyShieldRemoved, cancelAllBattleMotions,
@@ -95,7 +95,7 @@ import menuBg4Url from './background/background_4.jpg';
 import menuBg5Url from './background/background_5.jpg';
 // 在页面初始化前接入真实 console；面板首次打开时才创建 DOM。
 bindGameView({
-    renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual,
+    renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, hidePlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual,
     prepareCardMoveVisual, commitCardMoveVisual, notifyCardPlayed, playAttackLunge, playUnitEvolutionEffect, notifyShieldRemoved, cancelAllBattleMotions,
     startMirageCombatPlaybackUi, renderMirageCombatStep, renderMirageCombatOutcome, hideMirageCombatPlaybackOverlay, showMirageReconnectLockOverlay
 });
@@ -240,7 +240,18 @@ let gamePageSession = 0;
 const HUB_URL = "/gamehub"; // Use relative URL, assumes same origin or proxy configured
 let connection = null; // Module-level variable for SignalR connection - Moved here
 let guestConnection = null;
-let initialStateReceived = false; // Flag to track if initial state has been handled
+let initialStateReceived = false;
+let deferredChoiceEvents = null;
+
+function deliverChoiceEvent(handler, payload, isCurrent) {
+    if (deferredChoiceEvents) {
+        deferredChoiceEvents.push(() => {
+            if (isCurrent()) handler(payload);
+        });
+    } else if (isCurrent()) {
+        handler(payload);
+    }
+}
 let forceFullStateOnNextReceive = false;
 let reconnectEpochResetPending = false;
 let reconnectDesiredSpectateTarget = null;
@@ -1277,7 +1288,7 @@ async function setupActionSignalRConnection(gameId, playerId, token) {
         .build();
 
     guestConnection = trackedGuestConnection;
-    registerActionSignalREventHandlers(trackedGuestConnection);
+    registerActionSignalREventHandlers(trackedGuestConnection, playerId);
     trackedGuestConnection.onclose(() => {
         stopConnectionHeartbeat(trackedGuestConnection);
         if (guestConnection === trackedGuestConnection) {
@@ -1304,11 +1315,11 @@ async function setupActionSignalRConnection(gameId, playerId, token) {
     }
 }
 
-function registerActionSignalREventHandlers(conn) {
+function registerActionSignalREventHandlers(conn, playerId) {
     const onCurrentEvent = (eventName, handler) => conn.on(eventName, (...args) => {
         if (guestConnection === conn) handler(...args);
     });
-    let lastChoiceRequestKey = null;
+    const handleChoiceEvent = (handler, payload) => deliverChoiceEvent(handler, payload, () => guestConnection === conn);
     // Keep this list aligned with gameplay interaction handlers in registerSignalREventHandlers.
     onCurrentEvent("ReceiveHandPlayabilityUpdate", handleHandPlayabilityUpdate);
     onCurrentEvent("ReceiveActPlayabilityUpdate", handleActPlayabilityUpdate);
@@ -1319,23 +1330,12 @@ function registerActionSignalREventHandlers(conn) {
     onCurrentEvent("SuperEvolveStateUpdated", handleSuperEvolveStateUpdated);
     onCurrentEvent("PpBoostStateUpdated", handlePpBoostStateUpdated);
 
-    // Dual-control guest connection must receive player-scoped choice events,
-    // otherwise the selected seat cannot submit a decision and the game stalls.
-    onCurrentEvent("PlayerChoiceRequested", (eventData) => {
-        const choiceRequest = eventData?.ChoiceRequest;
-        const pendingChoiceId = choiceRequest?.PendingChoiceId;
-        const sourceAbilityRuntimeId = choiceRequest?.SourceAbilityRuntimeId;
-        const requestKey = pendingChoiceId && sourceAbilityRuntimeId
-            ? `${pendingChoiceId}:${sourceAbilityRuntimeId}`
-            : null;
-
-        if (requestKey && requestKey === lastChoiceRequestKey) {
-            return;
-        }
-        lastChoiceRequestKey = requestKey;
-
-        handlePlayerChoiceRequested(eventData);
+    // Use only the choice payload from this seat's snapshot. The primary connection owns the board.
+    onCurrentEvent("ReceiveGameState", state => {
+        handleChoiceEvent(snapshot => syncPlayerChoiceFromSnapshot(snapshot, playerId), state);
     });
+    onCurrentEvent("PlayerChoiceRequested", event => handleChoiceEvent(handlePlayerChoiceRequested, event));
+    onCurrentEvent("PlayerChoiceResolved", id => handleChoiceEvent(handlePlayerChoiceResolved, id));
 
     onCurrentEvent("ReceiveError", (errorMessage) => {
         const message = typeof errorMessage === 'string' ? errorMessage : String(errorMessage ?? '');
@@ -1558,7 +1558,9 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
             // During Mulligan, the server may broadcast full GameState snapshots on opponent actions.
             // Applying the full snapshot forces a full UI re-render and can disrupt local interaction state.
             // We rely on incremental events (HandUpdated / PlayerMulliganCompleted) during Mulligan instead.
-            if (!forceFullStateOnNextReceive && !reconnectEpochResetPending && gameState.phase === 'Mulligan' && receivedGameState?.Phase === 'Mulligan') {
+            if (!forceFullStateOnNextReceive && !reconnectEpochResetPending
+                && gameState.phase === 'Mulligan' && receivedGameState?.Phase === 'Mulligan'
+                && !(receivedGameState.PendingChoice ?? receivedGameState.pendingChoice)) {
                 return;
             }
             const shouldResetViewEpoch = reconnectEpochResetPending;
@@ -1572,7 +1574,8 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
                 setConnectionStatus('connected');
                 const hydrationSucceeded = updateFullGameState(receivedGameState, {
                     isReconnectFullSync: true,
-                    resetViewEpoch: shouldResetViewEpoch
+                    resetViewEpoch: shouldResetViewEpoch,
+                    syncPendingChoice: true
                 }); // Directly update the game state and UI
                 if (hydrationSucceeded === false) {
                     void handleStateHydrationFailure('重连失败').catch(error => console.error('MAIN: 状态同步失败后的连接清理失败。', error));
@@ -1643,7 +1646,8 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     wireEvent("EvolveStateUpdated", handleEvolveStateUpdated);
     wireEvent("SuperEvolveStateUpdated", handleSuperEvolveStateUpdated);
     // NEW: Handler for when the server requests the player to make a choice
-    wireEvent("PlayerChoiceRequested", handlePlayerChoiceRequested);
+    wireEvent("PlayerChoiceRequested", event => deliverChoiceEvent(handlePlayerChoiceRequested, event, () => connection === conn));
+    onCurrentEvent("PlayerChoiceResolved", id => deliverChoiceEvent(handlePlayerChoiceResolved, id, () => connection === conn));
     wireEvent("CardRevealed", handleCardRevealed);
     wireEvent("Fusion", handleFusion);
     wireEvent("AbilityTriggered", handleAbilityTriggered);
@@ -2002,6 +2006,8 @@ async function initializeApp() {
         return false;
     }
     isInitializing = true;
+    const initialChoiceEvents = [];
+    deferredChoiceEvents = initialChoiceEvents;
 
     try {
         // 0. Initialize basic UI elements (maybe show loading indicator)
@@ -2104,11 +2110,15 @@ async function initializeApp() {
             // This ensures the *initial* state (received via the promise)
             // is processed and rendered correctly (e.g., showing the Mulligan phase).
             // The ReceiveGameState handler handles *subsequent* updates directly.
-            const hydrationSucceeded = updateFullGameState(serverState); // <-- RESTORED
+            const hydrationSucceeded = updateFullGameState(serverState, { syncPendingChoice: true });
             if (hydrationSucceeded === false) {
                 await handleStateHydrationFailure('重连失败');
                 return false;
             }
+
+            // Choice events can arrive while SignalR is still handing over the initial snapshot.
+            deferredChoiceEvents = null;
+            initialChoiceEvents.forEach(deliver => deliver());
 
             // 7. Setup core event listeners (AFTER connection and UI are ready)
             setupEventListeners();
@@ -2144,6 +2154,7 @@ async function initializeApp() {
         }
         return false;
     } finally {
+        if (deferredChoiceEvents === initialChoiceEvents) deferredChoiceEvents = null;
         isInitializing = false;
     }
 }

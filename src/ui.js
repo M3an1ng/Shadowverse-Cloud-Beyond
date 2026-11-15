@@ -51,8 +51,7 @@ import {
     mirageSelectLeaderRequest,
     abortMirageCombatPlayback,
     switchMirageSpectateTargetRequest,
-    submitPlayerChoice,
-    cancelPlayerChoice
+    submitPlayerChoice
 } from './gameManager.js';
 
 function isMirageMode(state = gameState) {
@@ -2766,15 +2765,6 @@ let currentChoiceSelectedTargetIds = new Set();
 let currentChoiceSubmission = null;
 let modeChoiceDialog = null;
 
-function isCurrentChoiceRequest(pendingChoiceId, sourceAbilityRuntimeId) {
-    if (!isAwaitingPlayerChoice || !currentChoiceRequest) {
-        return false;
-    }
-
-    return String(currentChoiceRequest.PendingChoiceId) === String(pendingChoiceId)
-        && String(currentChoiceRequest.SourceAbilityRuntimeId) === String(sourceAbilityRuntimeId);
-}
-
 function startPlayerChoice(requestData) {
     evolutionDrag.cancel();
     isAwaitingPlayerChoice = true;
@@ -2791,10 +2781,10 @@ function startPlayerChoice(requestData) {
     // Potentially disable other buttons like evolve here as well if needed.
 }
 
-function endPlayerChoice(notifyBackendOfCancellation = true) {
-    if (!isAwaitingPlayerChoice) return; // Prevent multiple calls
-
-    const choiceToCancel = currentChoiceRequest; // Capture before clearing
+export function hidePlayerChoiceUI(pendingChoiceId = null, playerId = null) {
+    if (!currentChoiceRequest
+        || (pendingChoiceId && pendingChoiceId !== currentChoiceRequest.PendingChoiceId)
+        || (playerId && !equalsIgnoreCase(playerId, currentChoiceRequest.RequestingPlayerId))) return;
     isAwaitingPlayerChoice = false;
     currentChoiceRequest = null;
     currentChoiceSubmission = null;
@@ -2806,23 +2796,7 @@ function endPlayerChoice(notifyBackendOfCancellation = true) {
 
     removeChoiceOverlayUI();
 
-    // BUG-FIX: Notify the backend that the choice was cancelled, only if requested.
-    if (notifyBackendOfCancellation && choiceToCancel && choiceToCancel.PendingChoiceId && choiceToCancel.SourceAbilityRuntimeId) {
-        cancelPlayerChoice(choiceToCancel.PendingChoiceId, choiceToCancel.SourceAbilityRuntimeId);
-    } else if (notifyBackendOfCancellation) {
-        console.warn("UI: endPlayerChoice was called to notify backend, but there was no active choice request to cancel.");
-    }
-
-    if (notifyBackendOfCancellation) {
-        cancelCommittedHandPlayVisual(choiceToCancel?.SourceCardUid ?? null);
-    }
-
-    // BUG-FIX: Restore the state of the end turn button.
-    if (endTurnButtonEl) {
-        const isLocalPlayerTurn = gameState.localPlayerId === gameState.currentPlayerId;
-        // Only enable if it's the local player's turn and the game is in a phase where ending the turn is possible.
-        endTurnButtonEl.disabled = !isLocalPlayerTurn || (gameState.phase !== 'Main' && gameState.phase !== 'TurnStart');
-    }
+    renderActionButtons(gameState);
 
     // Re-apply normal highlights after exiting choice mode.
     renderHighlights(gameState);
@@ -2984,21 +2958,21 @@ function updateChoiceOverlayUI() {
     });
 }
 
-async function confirmPlayerChoice() {
-    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
-    if (currentChoiceSubmission === currentChoiceRequest) return;
+async function confirmPlayerChoice(wasCancelled = false) {
     const request = currentChoiceRequest;
-    const { PendingChoiceId, SourceAbilityRuntimeId } = currentChoiceRequest;
-
-    const chosenIds = Array.from(currentChoiceSelectedTargetIds);
-    if (!isChoiceSelectionValid(currentChoiceRequest, chosenIds.length)) return;
+    if (!isAwaitingPlayerChoice || !request || currentChoiceSubmission === request || isConnectionLocked) return;
+    const chosenIds = wasCancelled ? [] : Array.from(currentChoiceSelectedTargetIds);
+    if (wasCancelled ? request.IsCancellable !== true : !isChoiceSelectionValid(request, chosenIds.length)) return;
 
     currentChoiceSubmission = request;
     updateChoiceOverlayUI();
     try {
-        const ok = await submitPlayerChoice(PendingChoiceId, chosenIds, SourceAbilityRuntimeId, false);
-        if (ok && isCurrentChoiceRequest(PendingChoiceId, SourceAbilityRuntimeId)) {
-            endPlayerChoice(false);
+        const ok = await submitPlayerChoice(request, chosenIds, wasCancelled);
+        if (ok) {
+            if (wasCancelled && (!currentChoiceRequest || currentChoiceRequest === request)) {
+                cancelCommittedHandPlayVisual(request.SourceCardUid ?? null);
+            }
+            hidePlayerChoiceUI(request.PendingChoiceId);
         }
     } finally {
         if (currentChoiceSubmission === request) currentChoiceSubmission = null;
@@ -3007,17 +2981,11 @@ async function confirmPlayerChoice() {
 }
 
 function requestCancelPlayerChoiceUI() {
-    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
-    if (currentChoiceSubmission === currentChoiceRequest) return;
-    if (currentChoiceRequest.IsCancellable !== true) {
-        console.warn("UI: Player choice is not cancellable. Ignoring cancel request.");
-        return;
-    }
-    endPlayerChoice(true);
+    void confirmPlayerChoice(true);
 }
 
 async function handleChoiceTargetClick(targetUid) {
-    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
+    if (!isAwaitingPlayerChoice || !currentChoiceRequest || isConnectionLocked) return;
     if (currentChoiceSubmission === currentChoiceRequest) return;
 
     const validTargetUids = new Set((currentChoiceRequest.SelectableTargetIds || []).map(x => String(x)));
@@ -6789,7 +6757,7 @@ function renderActionButtons(currentGameState) {
             const readyCnt = Number(standings?.readyCount ?? standings?.ReadyCount ?? 0);
             const countSuffix = aliveCnt > 0 ? ` (${readyCnt}/${aliveCnt})` : '';
             endTurnButtonEl.style.display = 'inline-block';
-            endTurnButtonEl.disabled = isConnectionLocked || isReady || gateClosed;
+            endTurnButtonEl.disabled = isConnectionLocked || isAwaitingPlayerChoice || isReady || gateClosed;
             const mirageStateCls = isReady ? 'is-mirage-locked' : 'is-mirage-recruit';
             endTurnButtonEl.classList.add(mirageStateCls);
             rightDockEl?.classList.add(mirageStateCls);
@@ -6837,7 +6805,7 @@ function renderActionButtons(currentGameState) {
         if (endTurnLabelEl) {
             endTurnLabelEl.textContent = isLocalPlayerTurn ? 'END TURN' : 'ENEMY TURN';
         }
-        endTurnButtonEl.disabled = isConnectionLocked || !isLocalPlayerTurn; // Disable if not local player's turn
+        endTurnButtonEl.disabled = isConnectionLocked || isAwaitingPlayerChoice || !isLocalPlayerTurn; // Disable if not local player's turn
     } else {
         // Other phases or opponent's turn: Hide both (or just hide confirm, end turn might be handled by turn manager logic implicitly)
         confirmMulliganButtonEl.style.display = 'none';
@@ -7648,7 +7616,7 @@ async function handleGameClick(event) {
     // Check if the click was on the End Turn / Lock Lineup button
     const clickedEndTurnButton = event.target.closest('#end-turn-button');
     if (clickedEndTurnButton) {
-        if (gameState.isSpectator) return;
+        if (gameState.isSpectator || isAwaitingPlayerChoice) return;
         if (clickedEndTurnButton.disabled) return;
         if (isMirageMode(gameState)) {
             if (gameState.phase === 'Recruit' && typeof mirageSetReadyRequest === 'function') {
@@ -8027,11 +7995,8 @@ async function confirmEndTurnAction() {
  * @param {string} eventData.ChoicePrompt - The prompt to show to the player
  */
 export function showPlayerChoiceUI(choiceRequest) {
-
-    if (isAwaitingPlayerChoice) {
-        console.warn("UI: Received a new player choice request while another one is active. Clearing UI state without notifying backend.");
-        endPlayerChoice(false);
-    }
+    if (currentChoiceRequest?.PendingChoiceId === choiceRequest.PendingChoiceId) return;
+    hidePlayerChoiceUI();
 
     const selectableTargetIds = Array.isArray(choiceRequest?.SelectableTargetIds) ? choiceRequest.SelectableTargetIds : [];
 
@@ -8039,7 +8004,6 @@ export function showPlayerChoiceUI(choiceRequest) {
         const canSubmitEmpty = isChoiceSelectionValid(choiceRequest, 0);
         if (choiceRequest?.IsCancellable !== true && !canSubmitEmpty) {
             console.warn("UI: No selectable targets provided for a non-cancellable choice. Ending choice UI.");
-            endPlayerChoice(false);
             return;
         }
 
@@ -8240,6 +8204,7 @@ document.addEventListener('cleanupGame', () => {
     removeChoiceOverlayUI();
     isAwaitingPlayerChoice = false;
     currentChoiceRequest = null;
+    currentChoiceSubmission = null;
     currentChoiceSelectedTargetIds = new Set();
     hoveredHandPreviewUid = null;
     gameContainerEl?.classList.remove('player-choice-active');

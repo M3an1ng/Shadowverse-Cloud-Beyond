@@ -5,13 +5,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using ShadowverseBeyond.Server.Domain.Events;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
-using ShadowverseBeyond.Server.Mappings;
-using ShadowverseBeyond.Server.Models;
 using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
@@ -178,7 +174,6 @@ namespace ShadowverseBeyond.Server.Hubs
                 await Groups.AddToGroupAsync(Context.ConnectionId, SignalRGroupNames.Game(resolvedSeatGameId));
 
                 await SendMirageSeatStateToCallerAsync(
-                    httpContext.RequestServices,
                     resolvedSeatGameId,
                     resolvedTargetPlayerId,
                     viewEpoch: 1,
@@ -244,7 +239,7 @@ namespace ShadowverseBeyond.Server.Hubs
 
                     _mirageLobbyService.RegisterSpectatorConnection(targetMirageRoomId, Context.ConnectionId);
                     await Groups.AddToGroupAsync(Context.ConnectionId, SignalRGroupNames.Game(targetSeatGid));
-                    await SendMirageSeatStateToCallerAsync(httpContext.RequestServices, targetSeatGid, targetPid, 1, rVer);
+                    await SendMirageSeatStateToCallerAsync(targetSeatGid, targetPid, 1, rVer);
                     if (specStandings != null)
                     {
                         await Clients.Caller.ReceiveMirageStandings(specStandings);
@@ -278,7 +273,6 @@ namespace ShadowverseBeyond.Server.Hubs
             }
 
             await SendMirageSeatStateToCallerAsync(
-                httpContext.RequestServices,
                 participantSeatGameId,
                 participantGuid,
                 viewEpoch: 1,
@@ -381,7 +375,6 @@ namespace ShadowverseBeyond.Server.Hubs
             if (httpContext != null)
             {
                 await SendMirageSeatStateToCallerAsync(
-                    httpContext.RequestServices,
                     resolvedSeatGameId,
                     resolvedTargetPlayerId,
                     nextEpoch,
@@ -395,50 +388,17 @@ namespace ShadowverseBeyond.Server.Hubs
         }
 
         private async Task SendMirageSeatStateToCallerAsync(
-            IServiceProvider requestServices,
             string seatGameId,
             Guid viewingPlayerId,
             int viewEpoch,
             long? roomVersion)
         {
-            if (_gameService.GetGameState(seatGameId) == null)
-            {
-                await Clients.Caller.ReceiveError("目标席位对局状态不可用。");
-                return;
-            }
-
-            GameStateDto? dto = null;
-            var read = new MatchStateRead((state, sp) =>
-            {
-                var acc = sp.GetRequiredService<IGameContextAccessor>();
-                using var ctx = new GameContext(sp, _mapper, acc, state, viewingPlayerId, Context.ConnectionAborted);
-                dto = GameStateProjection.Create(state, ctx);
-                return Task.FromResult(System.Text.Json.JsonSerializer.SerializeToElement(true));
-            })
-            {
-                CancellationToken = Context.ConnectionAborted
-            };
-
-            if (await _gameService.EnqueuePlayerActionAsync(seatGameId, read))
-            {
-                var completion = await read.Completion.WaitAsync(Context.ConnectionAborted);
-                if (completion.Status != PlayerActionCompletionStatus.Completed)
-                {
-                    dto = null;
-                }
-            }
-
-            if (dto == null)
+            if (!await SendGameStateToCallerAsync(seatGameId, viewingPlayerId, viewEpoch, roomVersion))
             {
                 await Clients.Caller.ReceiveError("目标席位对局状态同步失败。");
                 return;
             }
 
-            dto.ViewingPlayerId = viewingPlayerId;
-            dto.ViewEpoch = viewEpoch;
-            dto.RoomVersion = roomVersion;
-
-            await Clients.Caller.ReceiveGameState(dto);
             await SendMatchHistoryToCallerAsync(seatGameId);
         }
     }

@@ -174,7 +174,7 @@ export const gameState = createInitialGameState();
 let turnTimerIntervalId = null;
 let turnTimerEndsAtMs = null;
 let turnTimerTotalMs = 0;
-let lastHandledChoiceRequestKey = null;
+const resolvedChoiceIds = new Set();
 const playabilityResyncTimers = new Map();
 const playabilityResyncInflight = new Set();
 const playabilityResyncLastRequestAt = new Map();
@@ -881,7 +881,8 @@ function resetGameSessionState(abortReason = "new_game") {
     stopTurnTimer();
     resetPlayabilityResyncState();
     resetPlayCardRequestLocks();
-    lastHandledChoiceRequestKey = null;
+    resolvedChoiceIds.clear();
+    rawGameView?.hidePlayerChoiceUI?.();
     pendingChatClientMessageIds.clear();
     // 保留状态对象本身，读者不会继续持有上一局的容器。
     Object.assign(gameState, createInitialGameState());
@@ -2834,6 +2835,8 @@ export function updateFullGameState(serverState, options = {}) {
         gameState.playabilityUpdateClock = { hand: {}, act: {} };
         resetPlayabilityResyncState();
         resetPlayCardRequestLocks();
+        resolvedChoiceIds.clear();
+        rawGameView?.hidePlayerChoiceUI?.();
         pendingChatClientMessageIds.clear();
         gameView.renderGameLog(gameState.gameLog);
         gameView.clearInMatchChatUiState();
@@ -3074,6 +3077,8 @@ export function updateFullGameState(serverState, options = {}) {
         return true;
     }
 
+    if (gameState.gameOver) rawGameView?.hidePlayerChoiceUI?.();
+
     // Ensure the UI is re-rendered with the fully updated state
     if (typeof rawGameView?.renderGame === "function") {
         rawGameView.renderGame(gameState); // Pass the updated complete gameState
@@ -3091,6 +3096,10 @@ export function updateFullGameState(serverState, options = {}) {
         const pendingEnd = mirageCombatPlayback.pendingGameEndDto;
         mirageCombatPlayback.pendingGameEndDto = null;
         finalizeGameOverPresentation(pendingEnd);
+    }
+
+    if (options.syncPendingChoice === true) {
+        syncPlayerChoiceFromSnapshot(serverState, gameState.selfOriginalPlayerId);
     }
 
     getPlayabilityResyncCandidatePlayerIds().forEach(playerId => {
@@ -4420,6 +4429,7 @@ export function handleGameOver(eventData) {
     gameState.gamePhase = "GameOver";
     gameState.phase = "GameOver";
     gameState.winner = winnerId;
+    rawGameView?.hidePlayerChoiceUI?.();
 
     if (isMiragePlaybackDomGateActive()) {
         mirageCombatPlayback.pendingGameEndDto = eventData;
@@ -4818,44 +4828,35 @@ export function handleSuperEvolveStateUpdated(eventData) {
 }
 // --- END NEW Specific Event Handlers --- (Placeholder comment for structure)
 
-/**
- * Handles the PlayerChoiceRequested event from the server.
- * This event pauses the game flow and asks the client to make a selection.
- * @param {object} eventData - The PlayerChoiceRequestDto from the server.
- *                           - SourceCardUid: The card initiating the choice.
- *                           - SelectableTargets: An array of UIDs that are valid choices.
- *                           - PromptMessage: A message to display to the user.
- */
 export function handlePlayerChoiceRequested(eventData) {
+    const request = eventData?.ChoiceRequest;
+    if (!request?.PendingChoiceId || !request.SourceAbilityRuntimeId || !Array.isArray(request.SelectableTargetIds)
+        || gameState.isSpectator || gameState.gameOver
+        || normalizePlayerId(request.GameId) !== normalizePlayerId(gameState.gameId)
+        || resolvedChoiceIds.has(request.PendingChoiceId)) return;
 
-    // BUG-FIX: The actual choice data is nested inside the 'choiceRequest' property.
-    // C# PascalCase becomes camelCase in JS, so we look for 'choiceRequest'.
-    // BUG-FIX: C# DTOs use PascalCase. Access the correct property from the event data.
-    const choiceRequest = eventData.ChoiceRequest;
+    const playerId = normalizePlayerId(request.RequestingPlayerId);
+    const localSeats = gameState.dualControl
+        ? [gameState.dualControlSeatIds.hostPlayerId, gameState.dualControlSeatIds.guestPlayerId]
+        : [gameState.localPlayerId];
+    if (!playerId || !localSeats.some(id => normalizePlayerId(id) === playerId)) return;
 
-    // Further validation using PascalCase properties
-    if (!choiceRequest || !choiceRequest.SourceAbilityRuntimeId || !choiceRequest.SelectableTargetIds) {
-        console.error("GM Error: Invalid data in handlePlayerChoiceRequested. Missing nested ChoiceRequest object or its properties (SourceAbilityRuntimeId, SelectableTargetIds).", eventData);
-        return;
-    }
+    gameView?.showPlayerChoiceUI?.(request);
+}
 
-    const dedupeKey = `${choiceRequest.PendingChoiceId ?? ''}:${choiceRequest.SourceAbilityRuntimeId}`;
-    if (dedupeKey === lastHandledChoiceRequestKey) {
-        return;
-    }
-    lastHandledChoiceRequestKey = dedupeKey;
+export function syncPlayerChoiceFromSnapshot(state, playerId) {
+    if (!playerId || gameState.isSpectator
+        || normalizePlayerId(state?.GameId ?? state?.gameId) !== normalizePlayerId(gameState.gameId)) return;
 
-    // The primary role of this handler is to pass the choice request to the UI module.
-    try {
-        if (gameView.showPlayerChoiceUI) {
-            // Pass the nested choiceRequest object to the UI function.
-            gameView.showPlayerChoiceUI(choiceRequest);
-        } else {
-            console.error("GM Error: ui.js module does not have showPlayerChoiceUI function.");
-        }
-    } catch (error) {
-        console.error("GM Error: Failed to load or call ui.js for PlayerChoiceRequested:", error);
-    }
+    const request = state.PendingChoice ?? state.pendingChoice;
+    if (request) handlePlayerChoiceRequested(request);
+    else rawGameView?.hidePlayerChoiceUI?.(null, playerId);
+}
+
+export function handlePlayerChoiceResolved(pendingChoiceId) {
+    if (!pendingChoiceId) return;
+    resolvedChoiceIds.add(pendingChoiceId);
+    rawGameView?.hidePlayerChoiceUI?.(pendingChoiceId);
 }
 
 /**
@@ -5108,44 +5109,32 @@ export function handleChatMessage(eventData) {
 
 /**
  * Submits the player's choice back to the server.
- * @param {string} choiceId - The UID of the selected target.
- * @param {string} sourceCardUid - The UID of the card that initiated the choice.
+ * @param {object} request - The pending choice received from the server.
+ * @param {string[]} chosenTargetIds - The selected targets or options.
+ * @param {boolean} wasCancelled - Whether the player cancelled the choice.
  */
-export async function submitPlayerChoice(pendingChoiceId, chosenTargetIds, sourceAbilityRuntimeId, wasCancelled = false) {
-    const connection = getActiveConnection();
+export async function submitPlayerChoice(request, chosenTargetIds, wasCancelled = false) {
+    const connection = getConnectionForPlayer(request.RequestingPlayerId);
     if (!connection || connection.state !== "Connected") {
         console.error("GM: SubmitPlayerChoice failed - SignalR connection not available.");
         showAlert("与服务器连接丢失，无法提交选择！");
         return false;
     }
 
-    // Ensure chosenTargetIds is always an array
-    const targetIds = Array.isArray(chosenTargetIds) ? chosenTargetIds : (chosenTargetIds ? [chosenTargetIds] : []);
-
-    const choiceDto = {
-        PendingChoiceId: pendingChoiceId,
-        SourceAbilityRuntimeId: sourceAbilityRuntimeId,
-        ChosenTargetIds: targetIds,
-        WasCancelled: wasCancelled // Add the new property
-    };
-
-    // --- DIAGNOSTIC LOGGING ---
     try {
-        await connection.invoke("SubmitTargetChoice", choiceDto);
-        return true;
+        const accepted = await connection.invoke("SubmitTargetChoice", {
+            PendingChoiceId: request.PendingChoiceId,
+            SourceAbilityRuntimeId: request.SourceAbilityRuntimeId,
+            TargetKey: request.TargetKey,
+            ChosenTargetIds: chosenTargetIds,
+            WasCancelled: wasCancelled
+        });
+        // The server either accepted this choice or reports that it has already ended.
+        if (typeof accepted === 'boolean') handlePlayerChoiceResolved(request.PendingChoiceId);
+        return accepted !== false;
     } catch (err) {
-        console.error("[CHOICE_DEBUG] GameManager: 'SubmitTargetChoice' invocation FAILED.", err);
+        console.error("GameManager: SubmitTargetChoice failed.", err);
         showAlert(`提交选择失败：${err.message}`);
         return false;
     }
-    // --- END DIAGNOSTIC LOGGING ---
-}
-
-/**
- * Sends a cancellation for the current player choice request to the server.
- * @param {string} sourceAbilityRuntimeId - The runtime ID of the ability that initiated the choice.
- */
-export async function cancelPlayerChoice(pendingChoiceId, sourceAbilityRuntimeId) {
-    // To cancel, we submit a choice with the correct PendingChoiceId, an empty target array, and the WasCancelled flag set to true.
-    return await submitPlayerChoice(pendingChoiceId, [], sourceAbilityRuntimeId, true);
 }

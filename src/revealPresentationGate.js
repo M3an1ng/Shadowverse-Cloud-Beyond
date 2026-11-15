@@ -6,6 +6,7 @@ const BYPASS_EVENTS = new Set([
   "ChatMessage",
   "ChatHistory",
   "PlayerConnectionStatusUpdated",
+  "PlayerChoiceResolved",
   "ReceiveError",
 ]);
 

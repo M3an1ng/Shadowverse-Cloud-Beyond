@@ -31,6 +31,8 @@ namespace ShadowverseBeyond.Server.Services
         private readonly IMatchService? _matchService;
         private readonly ReplayRecorder? _replayRecorder;
 
+        public event Action<string, GameStateDto>? WaitingSnapshotReady;
+
         public PendingActionService(IHubContext<GameHub, IGameClient> hubContext, ILogger<PendingActionService> logger, IServiceProvider serviceProvider, IMapper mapper, IMatchService? matchService = null, ReplayRecorder? replayRecorder = null)
         {
             _hubContext = hubContext;
@@ -60,7 +62,7 @@ namespace ShadowverseBeyond.Server.Services
                 return await tcs.Task;
             }
 
-            cancellationToken.Register(() =>
+            using var cancellationRegistration = cancellationToken.Register(() =>
             {
                 if (_pendingChoices.TryRemove(request.PendingChoiceId, out var removedContext))
                 {
@@ -96,7 +98,28 @@ namespace ShadowverseBeyond.Server.Services
                 }
             }
 
-            if (player != null && player.IsAI)
+            var choiceEvent = player?.IsAI == true ? null : new PlayerChoiceRequestedEventDto(
+                request.RequestingPlayerId, request, MatchCommandObservation.CurrentActionId, MatchCommandObservation.CurrentCommandId);
+
+            if (game != null && !tcs.Task.IsCompleted)
+            {
+                try
+                {
+                    // Capture the board and its choice together on the game loop before it pauses.
+                    var services = initialScope.ServiceProvider;
+                    using var viewContext = new Domain.Events.GameContext(services, _mapper,
+                        services.GetRequiredService<IGameContextAccessor>(), game, request.RequestingPlayerId, cancellationToken);
+                    var snapshot = GameStateProjection.Create(game, viewContext) with { PendingChoice = choiceEvent };
+                    context.WaitingSnapshot = snapshot;
+                    WaitingSnapshotReady?.Invoke(gameId, snapshot);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not capture the board for choice {ChoiceId}.", request.PendingChoiceId);
+                }
+            }
+
+            if (player?.IsAI == true)
             {
                 _logger.LogInformation("Pending choice {ChoiceId} is for an AI player {PlayerId}. Triggering AI decision task.", request.PendingChoiceId, request.RequestingPlayerId);
                 // Fire-and-forget the AI decision task to avoid deadlocking the game loop.
@@ -115,15 +138,16 @@ namespace ShadowverseBeyond.Server.Services
                             _logger.LogError("Cannot trigger AI choice because game state is null for GameId {GameId}", gameId);
                             return;
                         }
-                        var accessor = scope.ServiceProvider.GetRequiredService<IGameContextAccessor>();
-                        GameStateDto gameStateDto;
-                        using (var gameContext = new Domain.Events.GameContext(
-                            scope.ServiceProvider, _mapper, accessor, game, request.RequestingPlayerId, cancellationToken))
+                        var snapshot = context.WaitingSnapshot;
+                        if (snapshot == null)
                         {
-                            gameStateDto = GameStateProjection.Create(game, gameContext);
+                            var accessor = scope.ServiceProvider.GetRequiredService<IGameContextAccessor>();
+                            using var viewContext = new Domain.Events.GameContext(
+                                scope.ServiceProvider, _mapper, accessor, game, request.RequestingPlayerId, cancellationToken);
+                            snapshot = GameStateProjection.Create(game, viewContext);
                         }
 
-                        var aiResult = await aiService.DecideTargetChoiceAsync(request, gameStateDto, cancellationToken);
+                        var aiResult = await aiService.DecideTargetChoiceAsync(request, snapshot, cancellationToken);
 
                         var dto = new SubmitTargetChoiceActionDto
                         {
@@ -150,27 +174,41 @@ namespace ShadowverseBeyond.Server.Services
                     }
                 }, cancellationToken);
             }
-            else
+            else if (choiceEvent != null)
             {
                 _logger.LogInformation("Requesting player choice {ChoiceId} from player {PlayerId}. Sending 'PlayerChoiceRequested' event to client.", request.PendingChoiceId, request.RequestingPlayerId);
 
-                // Create the DTO to send to the client, matching the frontend handler's expectation.
-                var choiceEventDto = new PlayerChoiceRequestedEventDto(request.RequestingPlayerId, request,
-                    MatchCommandObservation.CurrentActionId, MatchCommandObservation.CurrentCommandId);
-                var roomScopedId = ResolveRoomScopedId(request.GameId);
-                string groupName = SignalRGroupNames.Player(roomScopedId, request.RequestingPlayerId);
+                var playerGroup = SignalRGroupNames.Player(ResolveRoomScopedId(gameId), request.RequestingPlayerId);
+                var client = _hubContext.Clients.Group(playerGroup);
 
-                // Asynchronously send the request to all clients in the game group.
-                // The client-side will be responsible for checking if the request is for them.
-                _ = _hubContext.Clients.Group(groupName).PlayerChoiceRequested(choiceEventDto);
+                try
+                {
+                    if (tcs.Task.IsCompleted) return await tcs.Task;
+                    _ = client.PlayerChoiceRequested(choiceEvent);
+                    return await tcs.Task;
+                }
+                finally
+                {
+                    try
+                    {
+                        await client.PlayerChoiceResolved(request.PendingChoiceId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Could not deliver resolution of choice {ChoiceId}.", request.PendingChoiceId);
+                    }
+                }
             }
 
             return await tcs.Task;
         }
 
-        public void CompletePlayerChoice(Guid choiceId, SubmitTargetChoiceActionDto dto)
+        public bool CompletePlayerChoice(string gameId, Guid playerId, SubmitTargetChoiceActionDto dto)
         {
-            if (_pendingChoices.TryGetValue(choiceId, out var context))
+            var choiceId = dto.PendingChoiceId;
+            if (_pendingChoices.TryGetValue(choiceId, out var context)
+                && context.Request.RequestingPlayerId == playerId
+                && string.Equals(context.Request.GameId, gameId, StringComparison.OrdinalIgnoreCase))
             {
                 if (dto.SourceAbilityRuntimeId != context.Request.SourceAbilityRuntimeId)
                 {
@@ -189,8 +227,9 @@ namespace ShadowverseBeyond.Server.Services
                         _replayRecorder?.ChoiceResolved(choiceId, "cancelled", []);
                         removedContext.Tcs.TrySetResult(PlayerChoiceResult.Cancelled);
                         _logger.LogInformation("Completed pending choice {ChoiceId} as cancelled.", choiceId);
+                        return true;
                     }
-                    return;
+                    return false;
                 }
 
                 var chosen = dto.ChosenTargetIds ?? new List<Guid>();
@@ -223,13 +262,11 @@ namespace ShadowverseBeyond.Server.Services
                     };
                     finalContext.Tcs.TrySetResult(result);
                     _logger.LogInformation("Completed pending choice {ChoiceId}.", choiceId);
+                    return true;
                 }
-                return;
             }
-            else
-            {
-                _logger.LogWarning("Could not find pending choice with ID {ChoiceId} to complete.", choiceId);
-            }
+
+            return false;
         }
 
         private string ResolveRoomScopedId(string gameOrRoomId)
@@ -247,27 +284,22 @@ namespace ShadowverseBeyond.Server.Services
 
         public PendingChoiceContext? GetPendingChoiceForPlayer(string gameId, Guid playerId)
         {
-            _logger.LogWarning("[STATE_POLLUTION_TRACE] GetPendingChoiceForPlayer called for GameId: {GameId}, PlayerId: {PlayerId}. Current pending choices count: {Count}",
-                gameId, playerId, _pendingChoices.Count);
-
-            // This implementation is more complex as it requires iterating.
-            // It's better if we can look up by player ID directly.
-            // For now, let's find the first match.
-            var result = _pendingChoices.Values.FirstOrDefault(c =>
+            return _pendingChoices.Values.FirstOrDefault(c =>
                 c.Request.RequestingPlayerId == playerId &&
                 string.Equals(c.Request.GameId, gameId, StringComparison.OrdinalIgnoreCase));
+        }
 
-            if (result != null)
+        public GameStateDto? GetWaitingSnapshot(string gameId)
+        {
+            foreach (var pending in _pendingChoices.Values)
             {
-                _logger.LogWarning("[STATE_POLLUTION_TRACE] Found a pending choice for PlayerId {PlayerId}. ChoiceId: {ChoiceId}, SourceAbilityRuntimeId: {AbilityId}, Original GameId in Request: {OriginalGameId}",
-                    playerId, result.Request.PendingChoiceId, result.Request.SourceAbilityRuntimeId, result.Request.GameId);
+                if (string.Equals(pending.Request.GameId, gameId, StringComparison.OrdinalIgnoreCase)
+                    && pending.WaitingSnapshot is { } snapshot)
+                {
+                    return snapshot;
+                }
             }
-            else
-            {
-                _logger.LogInformation("[STATE_POLLUTION_TRACE] No pending choice found for PlayerId {PlayerId}.", playerId);
-            }
-
-            return result;
+            return null;
         }
 
         public void CancelChoicesForGame(string gameId)

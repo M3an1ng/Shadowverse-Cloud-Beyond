@@ -1,9 +1,9 @@
 using System;
-using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
 
 namespace ShadowverseBeyond.Server.Services.Abstractions
@@ -25,9 +25,8 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
         /// <summary>
         /// Completes a pending choice with the data submitted by the player.
         /// </summary>
-        /// <param name="choiceId">The ID of the pending choice to complete.</param>
-        /// <param name="dto">The data submitted by the player.</param>
-        void CompletePlayerChoice(Guid choiceId, SubmitTargetChoiceActionDto dto);
+        /// <returns>Whether the submitting player still owned this choice and resolved it.</returns>
+        bool CompletePlayerChoice(string gameId, Guid playerId, SubmitTargetChoiceActionDto dto);
 
         /// <summary>
         /// Retrieves the context for a currently pending choice, if one exists for the specified player.
@@ -44,6 +43,10 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
         /// <param name="choiceId">The ID of the pending choice to force-resolve.</param>
         /// <param name="forcedResult">The result to force upon the choice.</param>
         void ForceResolveChoice(Guid choiceId, PlayerChoiceResult forcedResult);
+
+        // A queued state read can be waiting behind the action that opened this choice.
+        GameStateDto? GetWaitingSnapshot(string gameId);
+        event Action<string, GameStateDto>? WaitingSnapshotReady;
 
         // Room exit must also interrupt choices created by the transaction while it unwinds.
         void CancelChoicesForGame(string gameId);
@@ -68,6 +71,8 @@ namespace ShadowverseBeyond.Server.Services.Abstractions
         public PlayerChoiceRequest Request { get; }
         public TaskCompletionSource<PlayerChoiceResult> Tcs { get; }
         public CancellationToken CancellationToken { get; }
+
+        internal volatile GameStateDto? WaitingSnapshot;
 
         public PendingChoiceContext(PlayerChoiceRequest request, TaskCompletionSource<PlayerChoiceResult> tcs, CancellationToken cancellationToken)
         {

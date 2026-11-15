@@ -1,4 +1,3 @@
-using ShadowverseBeyond.Server.Mappings;
 // File: Server/Hubs/GameHub.cs
 //
 // 相关文档:
@@ -22,7 +21,6 @@ using ShadowverseBeyond.Server.Exceptions; // GameLogicException
 using ShadowverseBeyond.Server.Services.Abstractions; // Added for IClientMethodMapper
 using ShadowverseBeyond.Server.Domain.Entities; // Added for GameState / MatchRoom
 using ShadowverseBeyond.Server.Domain.Constants;
-using AutoMapper; // Added for IMapper
 using System;
 using System.Collections.Generic; // List<> for events
 using System.Threading.Tasks;
@@ -49,7 +47,6 @@ namespace ShadowverseBeyond.Server.Hubs
         private readonly ILogger<GameHub> _logger;
         private readonly IMemoryCache _memoryCache; // Added for Idempotency Check
         private readonly IClientMethodMapper _clientMethodMapper; // ADDED
-        private readonly IMapper _mapper; // Added for Entity to DTO mapping
         private readonly IMatchService _matchService; // Added for lobby validation
         private readonly IGameChatService _gameChatService;
         private readonly IEmoteCatalogService _emoteCatalogService;
@@ -79,7 +76,6 @@ namespace ShadowverseBeyond.Server.Hubs
             ILogger<GameHub> logger,
             IMemoryCache memoryCache,
             IClientMethodMapper clientMethodMapper,
-            IMapper mapper,
             IMatchService matchService,
             IGameChatService gameChatService,
             IEmoteCatalogService emoteCatalogService,
@@ -95,7 +91,6 @@ namespace ShadowverseBeyond.Server.Hubs
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _memoryCache = memoryCache ?? throw new ArgumentNullException(nameof(memoryCache)); // Added assignment
             _clientMethodMapper = clientMethodMapper ?? throw new ArgumentNullException(nameof(clientMethodMapper)); // ADDED assignment
-            _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper)); // Added assignment
             _matchService = matchService ?? throw new ArgumentNullException(nameof(matchService));
             _gameChatService = gameChatService ?? throw new ArgumentNullException(nameof(gameChatService));
             _emoteCatalogService = emoteCatalogService ?? throw new ArgumentNullException(nameof(emoteCatalogService));
@@ -494,7 +489,7 @@ namespace ShadowverseBeyond.Server.Hubs
                     var viewingPid = Context.Items.TryGetValue("ViewingPlayerId", out var vpObj) && vpObj is Guid g ? g : Guid.Empty;
                     var vEpoch = Context.Items.TryGetValue("ViewEpoch", out var epObj) && epObj is int ep ? ep : 1;
                     var standings = _mirageLobbyService?.GetStandingsSnapshot(mRoomId);
-                    await SendMirageSeatStateToCallerAsync(reqHttp.RequestServices, viewSeatGameId, viewingPid, vEpoch, standings?.RoomVersion);
+                    await SendMirageSeatStateToCallerAsync(viewSeatGameId, viewingPid, vEpoch, standings?.RoomVersion);
                     if (standings != null)
                     {
                         await Clients.Caller.ReceiveMirageStandings(standings);
@@ -549,23 +544,11 @@ namespace ShadowverseBeyond.Server.Hubs
 
             try
             {
-                var requestServices = httpContext.RequestServices;
-                var gameContextAccessor = requestServices.GetRequiredService<IGameContextAccessor>();
-
-                GameStateDto currentState;
-                using (var tempContext = new GameContext(
-                    requestServices,
-                    _mapper,
-                    gameContextAccessor,
-                    currentStateEntity,
-                    contextPlayerId,
-                    Context.ConnectionAborted
-                ))
+                if (!await SendGameStateToCallerAsync(gameIdStr, contextPlayerId))
                 {
-                    currentState = GameStateProjection.Create(currentStateEntity, tempContext);
+                    await Clients.Caller.ReceiveError("当前对局状态不可用，无法同步。");
+                    return;
                 }
-
-                await Clients.Caller.ReceiveGameState(currentState);
                 await SendMatchHistoryToCallerAsync(gameIdStr);
 
                 if (contextPlayerId != Guid.Empty)
@@ -1090,42 +1073,57 @@ namespace ShadowverseBeyond.Server.Hubs
             }
         }
 
-        public async Task SubmitTargetChoice(SubmitTargetChoiceActionDto actionDto)
+        public async Task<bool> SubmitTargetChoice(SubmitTargetChoiceActionDto actionDto)
         {
-            // --- DIAGNOSTIC LOGGING ---
-            _logger.LogWarning("[CHOICE_DEBUG] SubmitTargetChoice method ENTERED. DTO: {DtoJson}", System.Text.Json.JsonSerializer.Serialize(actionDto));
-            // --- END DIAGNOSTIC LOGGING ---
-
-            var (gameId, playerId) = await GetGamePlayerInfoFromContextAsync();
-            if (gameId == Guid.Empty || string.IsNullOrEmpty(playerId))
+            if (!Context.Items.TryGetValue("GameId", out var gameIdValue) || gameIdValue is not string gameId
+                || GetAuthenticatedChoicePlayer(gameId) is not Guid playerId)
             {
-                _logger.LogWarning("SubmitTargetChoice called by unidentified connection: {ConnectionId}", Context.ConnectionId);
-                return;
+                return false;
             }
 
             try
             {
-                _logger.LogInformation("Player {PlayerId} in Game {GameId} submitting target choice for ability {AbilityId}",
-                    playerId, gameId, actionDto.SourceAbilityRuntimeId);
-
-                // Directly call the new out-of-band method on the game service
-                await _gameService.SubmitTargetChoiceAsync(gameId.ToString(), Guid.Parse(playerId), actionDto);
-
-                _logger.LogInformation("Player {PlayerId} successfully processed SubmitTargetChoice action in Game {GameId}.",
-                    playerId, gameId);
+                return await _gameService.SubmitTargetChoiceAsync(gameId, playerId, actionDto);
             }
             catch (GameLogicException ex)
             {
-                _logger.LogWarning("Game Logic Error for Player {PlayerId} in Game {GameId} submitting target choice: {Message}",
-                    playerId, gameId, ex.Message);
-                await Clients.Caller.ReceiveError($"Submit Target Choice Error: {ex.Message}");
+                throw new HubException(ex.Message);
             }
-            catch (Exception ex)
+        }
+
+        private Guid? GetAuthenticatedChoicePlayer(string gameId)
+        {
+            if (IsSpectatorOrReadOnlyContext()
+                || !Context.Items.TryGetValue("ParticipantType", out var participant) || participant is not ChatSenderType.Player
+                || !Context.Items.TryGetValue("GameId", out var authenticatedGameId)
+                || !string.Equals(authenticatedGameId as string, gameId, StringComparison.OrdinalIgnoreCase)
+                || !Context.Items.TryGetValue("PlayerId", out var authenticatedPlayerId)
+                || !Guid.TryParse(authenticatedPlayerId as string, out var playerId))
             {
-                _logger.LogError(ex, "Unexpected error processing SubmitTargetChoice for Player {PlayerId} in Game {GameId}",
-                    playerId, gameId);
-                await Clients.Caller.ReceiveError("An unexpected server error occurred while submitting the target choice.");
+                return null;
             }
+
+            return playerId;
+        }
+
+        private async Task<bool> SendGameStateToCallerAsync(
+            string gameId, Guid viewingPlayerId, int? viewEpoch = null, long? roomVersion = null)
+        {
+            var state = await _gameService.ReadSyncStateAsync(gameId, viewingPlayerId, Context.ConnectionAborted);
+            if (state == null) return false;
+
+            var choice = state.PendingChoice;
+            if (state.IsGameOver || choice?.ChoiceRequest.RequestingPlayerId != GetAuthenticatedChoicePlayer(gameId))
+                choice = null;
+
+            await Clients.Caller.ReceiveGameState(state with
+            {
+                PendingChoice = choice,
+                ViewingPlayerId = viewEpoch.HasValue ? viewingPlayerId : state.ViewingPlayerId,
+                ViewEpoch = viewEpoch,
+                RoomVersion = roomVersion
+            });
+            return true;
         }
         // --- New Method for Playability Check ---
 
@@ -1443,23 +1441,11 @@ namespace ShadowverseBeyond.Server.Hubs
                         return;
                     }
 
-                    var requestServices = httpContext.RequestServices;
-                    var gameContextAccessor = requestServices.GetRequiredService<IGameContextAccessor>();
-
-                    GameStateDto currentState;
-                    using (var tempContext = new GameContext(
-                        requestServices,
-                        _mapper,
-                        gameContextAccessor,
-                        currentStateEntity,
-                        roomResult.Room.HostPlayerId, // Best-effort for context construction
-                        Context.ConnectionAborted
-                    ))
+                    if (!await SendGameStateToCallerAsync(activeGameIdStr, roomResult.Room.HostPlayerId))
                     {
-                        currentState = GameStateProjection.Create(currentStateEntity, tempContext);
+                        await Clients.Caller.ReceiveError("当前对局状态不可用，无法观战。");
+                        return;
                     }
-
-                    await Clients.Caller.ReceiveGameState(currentState);
                     await SendRecentChatHistoryToCallerAsync(activeGameIdStr);
                     await SendMatchHistoryToCallerAsync(activeGameIdStr);
                     await BroadcastSystemChatMessageAsync(
@@ -1586,24 +1572,13 @@ namespace ShadowverseBeyond.Server.Hubs
 
                 if (currentStateEntity != null)
                 {
-                    var gameContextAccessor = requestServices.GetRequiredService<IGameContextAccessor>();
-
-                    GameStateDto currentState;
-                    using (var tempContext = new GameContext(
-                        requestServices,
-                        _mapper,
-                        gameContextAccessor,
-                        currentStateEntity,
-                        playerGuid,
-                        Context.ConnectionAborted // Use the connection's cancellation token
-                    ))
-                    {
-                        currentState = GameStateProjection.Create(currentStateEntity, tempContext);
-                    }
-
                     _logger.LogInformation("Sending initial game state to caller for Room {RoomId}, Game {GameId}, Player {PlayerId}",
                         roomIdStr, activeGameIdForPlayer, playerIdStr);
-                    await Clients.Caller.ReceiveGameState(currentState);
+                    if (!await SendGameStateToCallerAsync(activeGameIdStrForPlayer!, playerGuid))
+                    {
+                        await Clients.Caller.ReceiveError("当前对局状态不可用，无法同步。");
+                        return;
+                    }
                     await SendRecentChatHistoryToCallerAsync(activeGameIdStrForPlayer!);
                     await SendMatchHistoryToCallerAsync(activeGameIdStrForPlayer!);
                     if (currentStateEntity.Mode == Dtos.Enums.GameMode.Mirage && currentStateEntity.Phase == Dtos.Enums.GamePhase.Recruit)

@@ -1309,6 +1309,46 @@ namespace ShadowverseBeyond.Server.Services
             return existingState;
         }
 
+        public async Task<GameStateDto?> ReadSyncStateAsync(string gameId, Guid viewingPlayerId, CancellationToken cancellationToken)
+        {
+            var snapshot = new TaskCompletionSource<GameStateDto>(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnWaitingSnapshot(string waitingGameId, GameStateDto state)
+            {
+                if (string.Equals(waitingGameId, gameId, StringComparison.OrdinalIgnoreCase))
+                    snapshot.TrySetResult(state);
+            }
+
+            using var readCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var readToken = readCancellation.Token;
+            _pendingActionService.WaitingSnapshotReady += OnWaitingSnapshot;
+            try
+            {
+                if (_pendingActionService.GetWaitingSnapshot(gameId) is { } waitingState)
+                    return waitingState;
+
+                // If an earlier action opens a choice, use its waiting snapshot instead of
+                // leaving this connection blocked behind the choice it needs to answer.
+                var read = new MatchStateRead((state, services) =>
+                {
+                    using var context = new GameContext(services, _mapper, services.GetRequiredService<IGameContextAccessor>(),
+                        state, viewingPlayerId, readToken);
+                    snapshot.TrySetResult(GameStateProjection.Create(state, context));
+                    return Task.FromResult(JsonSerializer.SerializeToElement(true));
+                }) { CancellationToken = readToken };
+
+                if (!await EnqueuePlayerActionAsync(gameId, read))
+                    return null;
+
+                await Task.WhenAny(snapshot.Task, read.Completion).WaitAsync(cancellationToken);
+                return snapshot.Task.IsCompletedSuccessfully ? await snapshot.Task : null;
+            }
+            finally
+            {
+                _pendingActionService.WaitingSnapshotReady -= OnWaitingSnapshot;
+                readCancellation.Cancel();
+            }
+        }
+
         public async Task<System.Text.Json.JsonElement> ReadSnapshotAsync(string gameId, CancellationToken cancellationToken)
         {
             var game = GetGameState(gameId) ?? throw new ArgumentException("missing_match: " + gameId);
@@ -3615,16 +3655,12 @@ namespace ShadowverseBeyond.Server.Services
         /// Handles the submission of a player's target choice, bypassing the main action queue.
         /// This is an "out-of-band" request that resumes a paused action.
         /// </summary>
-        public Task SubmitTargetChoiceAsync(string gameId, Guid playerId, SubmitTargetChoiceActionDto dto)
+        public Task<bool> SubmitTargetChoiceAsync(string gameId, Guid playerId, SubmitTargetChoiceActionDto dto)
         {
             _logger.LogInformation("[SubmitTargetChoiceAsync:{GameId}] Received target choice from Player {PlayerId} for ability {AbilityId}",
                 gameId, playerId, dto.SourceAbilityRuntimeId);
 
-            // This method now only completes the pending choice.
-            // The actual processing of the choice happens inside the game loop.
-            _pendingActionService.CompletePlayerChoice(dto.PendingChoiceId, dto);
-
-            return Task.CompletedTask;
+            return Task.FromResult(_pendingActionService.CompletePlayerChoice(gameId, playerId, dto));
         }
 
     } // Closing brace for GameService class
