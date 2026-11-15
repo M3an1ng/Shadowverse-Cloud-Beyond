@@ -35,7 +35,7 @@ namespace ShadowverseBeyond.Server.Services
     /// <summary>
     /// Implements the service for processing player actions as atomic, cancellable transactions.
     /// </summary>
-    public class GameActionTransactionService : IGameActionTransactionService
+    public partial class GameActionTransactionService : IGameActionTransactionService
     {
         private readonly ILogger<GameActionTransactionService> _logger;
         private readonly IAbilityManager _abilityManager;
@@ -58,6 +58,7 @@ namespace ShadowverseBeyond.Server.Services
         private enum DecisionResolutionPhase
         {
             Preflight,
+            ChainedPreflight,
             Commit
         }
 
@@ -134,6 +135,8 @@ namespace ShadowverseBeyond.Server.Services
             public Dictionary<TargetSignatureKey, TargetSignatureSnapshot> TargetSignatures { get; } = new();
             public Dictionary<ChainedAbilitySnapshotKey, List<IAbility>> ChainedAbilitySnapshots { get; } = new();
             public Dictionary<Guid, List<IAbility>> AlternatePlayAbilitiesByEvent { get; } = new();
+            public Dictionary<ChainedModeKey, PreparedChainedMode> ChainedModes { get; } = new();
+            public Dictionary<Guid, Guid> ChainedModeRootEventsByEffect { get; } = new();
             public CommitPlan CommitPlan { get; set; } = new();
             public string StateFingerprint { get; init; } = string.Empty;
             public bool CommitStarted { get; set; }
@@ -213,6 +216,19 @@ namespace ShadowverseBeyond.Server.Services
                 if (analysisResult.ShouldStop)
                 {
                     return analysisResult;
+                }
+
+                foreach (var play in expansionResult.ActionRootEvents.OfType<PlayCardEvent>())
+                {
+                    if (play.PlayMode != PlayMode.Enhance) continue;
+
+                    var targetSelection = gameContext.ServiceProvider.GetRequiredService<TargetSelectionService>();
+                    var choices = await targetSelection.PrepareEnhanceChoicesAsync(play, gameContext);
+                    if (choices.WasCancelled) return PausableTransactionResult.Cancelled();
+                    if (choices.Status == ResolutionStatus.Failed)
+                    {
+                        return PausableTransactionResult.Failure(choices.ErrorMessage ?? "Failed to prepare Enhance targets.");
+                    }
                 }
 
                 // Action is now locked in.
@@ -715,9 +731,16 @@ namespace ShadowverseBeyond.Server.Services
                             out var requiresDecisionPreflight,
                             out var requiresChainedTargetChoicePreflight);
 
-                        // If no target-choice preflight is needed and there is no Choose flow, skip preflight and handle it during submit.
+                        // A chain can also contain a mode that is known before playing, even when the
+                        // ordinary preflight does not find a direct target or mode on the root ability.
                         if (!requiresPreflight)
                         {
+                            if (gameEvent is PlayCardEvent play && ability is Ability rootAbility)
+                            {
+                                var chainedModeResult = await PrepareChainedModeAsync(primaryContext, play, rootAbility);
+                                if (chainedModeResult.ShouldStop) return chainedModeResult;
+                            }
+
                             _logger.LogDebug(
                                 "Skipping preflight for primary ability '{AbilityKeywords}' (RuntimeId: {RuntimeId}) because it requires neither target choice nor decision preflight.",
                                 ability.KeywordSummary,
@@ -2266,6 +2289,12 @@ namespace ShadowverseBeyond.Server.Services
                 orderedOptions.Add(option);
             }
 
+            if (phase == DecisionResolutionPhase.Commit && resolvedChoose != null
+                && TryTakePreparedChainedMode(currentEffect, ability, resolvedChoose, orderedOptions))
+            {
+                return PausableTransactionResult.Success(new List<IGameEvent>());
+            }
+
             var usePreflightDecisionCache = decisionMode == Ability.DecisionMode.Choose;
             DecisionInputSignature signature = default;
             DecisionCacheKey cacheKey = default;
@@ -2382,16 +2411,16 @@ namespace ShadowverseBeyond.Server.Services
                     MinSelectionCount = selectionCount,
                     MaxSelectionCount = selectionCount,
                     Message = BuildDecisionChoicePrompt(selectionCount),
-                    IsCancellable = phase == DecisionResolutionPhase.Preflight
+                    IsCancellable = phase != DecisionResolutionPhase.Commit
                 };
 
-                AiGeneratedDefenseModes.Bind(request,currentEffect,ability,phase==DecisionResolutionPhase.Preflight);
+                AiGeneratedDefenseModes.Bind(request, currentEffect, ability, request.IsCancellable);
                 _logger.LogInformation("Awaiting player decision for ability {AbilityKeywords}.", ability.KeywordSummary);
                 var choiceResult = await _pendingActionService.WaitForPlayerChoiceAsync(gameContext.CurrentGameState.GameId, request, gameContext.CancellationToken);
 
                 if (choiceResult.WasCancelled)
                 {
-                    return phase == DecisionResolutionPhase.Preflight
+                    return request.IsCancellable
                         ? PausableTransactionResult.Cancelled()
                         : PausableTransactionResult.Failure("Decision event cannot be cancelled during commit.");
                 }
@@ -4505,6 +4534,7 @@ namespace ShadowverseBeyond.Server.Services
 
                     foreach (var newEffect in result.Effects)
                     {
+                        TrackChainedModeRoot(executedEffect, newEffect);
                         var subEffectResult = await ProcessEffectAsync(
                             newEffect,
                             abilityContext,
