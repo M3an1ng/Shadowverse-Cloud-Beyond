@@ -1,7 +1,9 @@
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Infrastructure.Data;
+using ShadowverseBeyond.Server.Infrastructure.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
 namespace ShadowverseBeyond.Server.Controllers;
@@ -100,6 +102,7 @@ public class AuthController : ControllerBase
             failed = migration.FailedCount;
         }
 
+        await AccountSession.SignInAsync(HttpContext, user);
         return Ok(new AuthResponse
         {
             UserId = userId,
@@ -151,6 +154,7 @@ public class AuthController : ControllerBase
             occurredAtUtc: user.LastLoginAt,
             cancellationToken: cancellationToken);
 
+        await AccountSession.SignInAsync(HttpContext, user);
         return Ok(new AuthResponse
         {
             UserId = user.Id,
@@ -161,6 +165,13 @@ public class AuthController : ControllerBase
             MigratedDecks = 0,
             FailedDecks = 0
         });
+    }
+
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout()
+    {
+        await HttpContext.SignOutAsync(AccountSession.Scheme);
+        return Ok(new { signedOut = true });
     }
 
     private static string NormalizeUsername(string? username)

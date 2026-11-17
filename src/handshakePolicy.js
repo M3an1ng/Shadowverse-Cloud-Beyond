@@ -6,6 +6,13 @@ export function getRouteNameFromHash(hashValue) {
     return raw.replace(/^#/, '').trim();
 }
 
+export function isClassicRoomHandshake(handshake) {
+    return Boolean(handshake?.gameId && handshake.playerId && handshake.token
+        && (handshake.role === 'host' || handshake.role === 'guest')
+        && !handshake.kind && !handshake.isMirage && !handshake.isTakeTwo
+        && !handshake.useAiFallback && !handshake.dualControl);
+}
+
 export function shouldReuseCachedHandshake(cachedHandshake, context = {}) {
     if (cachedHandshake?.kind === 'mirage-8p') {
         const hasRoom = Boolean(cachedHandshake.roomId);

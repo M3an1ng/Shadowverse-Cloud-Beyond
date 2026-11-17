@@ -8,10 +8,12 @@ using System.Linq;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
+using ShadowverseBeyond.Server.Infrastructure.Data;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Models;
 using ShadowverseBeyond.Server.Services;
@@ -136,7 +138,7 @@ namespace ShadowverseBeyond.Server.Controllers
             if (!auth.Success) return MapResult(auth, ResponseTokenScope.None);
 
             var result = _matchService.MarkReady(id, request.PlayerId, request.Ready ?? true, request.Token);
-            return MapResult(result, ResponseTokenScope.None);
+            return MapResult(result, ResponseTokenScope.None, request.PlayerId);
         }
 
         [HttpPost("{id}/start")]
@@ -153,7 +155,7 @@ namespace ShadowverseBeyond.Server.Controllers
             if (!auth.Success) return MapResult(auth, ResponseTokenScope.None);
 
             var result = _matchService.Start(id, request.PlayerId, request.Token);
-            return MapResult(result, ResponseTokenScope.None);
+            return MapResult(result, ResponseTokenScope.None, request.PlayerId);
         }
 
         [HttpPost("{id}/deck")]
@@ -198,6 +200,7 @@ namespace ShadowverseBeyond.Server.Controllers
                 UserId = owner.UserId,
                 GuestId = owner.GuestId,
                 DeckId = playerDeckId,
+                DeckName = playerDeck.Name,
                 DeckClass = playerDeck.Class,
                 SecondaryClass = playerDeck.SecondaryClass,
                 Environment = playerDeck.Environment,
@@ -296,7 +299,7 @@ namespace ShadowverseBeyond.Server.Controllers
             }
 
             var result = _matchService.SubmitDeckSelection(id, request.PlayerId, selection, aiSelection, request.Token);
-            return MapResult(result, ResponseTokenScope.None);
+            return MapResult(result, ResponseTokenScope.None, request.PlayerId);
         }
 
         [HttpPost("{id}/leave")]
@@ -312,6 +315,8 @@ namespace ShadowverseBeyond.Server.Controllers
             var auth = _matchService.ValidateConnection(id, request.PlayerId, request.Token);
             if (!auth.Success && auth.Error != MatchOperationError.AlreadyClosed) return MapResult(auth, ResponseTokenScope.None);
             if (auth.Room == null) return MapResult(auth, ResponseTokenScope.None);
+            if (auth.Room.TournamentMatchId.HasValue)
+                return Conflict("请从赛事房间管理对局。");
             if (auth.Error == MatchOperationError.AlreadyClosed)
             {
                 return Ok(ToResponse(auth.Room, ResponseTokenScope.None));
@@ -378,10 +383,11 @@ namespace ShadowverseBeyond.Server.Controllers
             }
 
             await _hubContext.Clients.Group(SignalRGroupNames.Game(id)).ReceiveError("ROOM_KICKED:已被房主移出房间。");
-            return MapResult(kickResult, ResponseTokenScope.None);
+            return MapResult(kickResult, ResponseTokenScope.None, request.PlayerId);
         }
 
         [HttpGet("{id}")]
+        [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
         [ProducesResponseType(typeof(MatchResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         public ActionResult<MatchResponse> Get(string id, [FromQuery] Guid? playerId = null, [FromQuery] string? token = null)
@@ -397,19 +403,59 @@ namespace ShadowverseBeyond.Server.Controllers
                 ? token
                 : Request.Headers["X-Room-Token"].FirstOrDefault();
 
-            var scope = ResponseTokenScope.None;
+            MatchOperationResult? authenticated = null;
             if (effectivePlayerId.HasValue && effectivePlayerId.Value != Guid.Empty && !string.IsNullOrWhiteSpace(effectiveToken))
             {
                 var auth = _matchService.ValidateConnection(id, effectivePlayerId.Value, effectiveToken);
                 if (auth.Success)
                 {
                     _matchService.RefreshExpiration(id, effectivePlayerId.Value);
-                    scope = ResponseTokenScope.AuthenticatedParticipant;
+                    authenticated = auth;
                 }
             }
 
-            var result = _matchService.Get(id);
-            return MapResult(result, scope);
+            var result = authenticated ?? _matchService.Get(id);
+            if (result.Room?.TournamentMatchId.HasValue == true)
+                return NotFound("请从赛事房间进入对战。");
+            return authenticated == null
+                ? MapResult(result, ResponseTokenScope.None)
+                : MapResult(result, ResponseTokenScope.AuthenticatedParticipant, effectivePlayerId);
+        }
+
+        [HttpGet("{id}/preparation")]
+        [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+        public async Task<ActionResult<MatchResponse>> Preparation(
+            string id,
+            [FromHeader(Name = "X-Room-PlayerId")] Guid playerId,
+            [FromHeader(Name = "X-Room-Token")] string? token,
+            [FromQuery] bool includeProfiles,
+            [FromServices] ApplicationDbContext db,
+            CancellationToken cancellationToken)
+        {
+            if (playerId == Guid.Empty || string.IsNullOrWhiteSpace(token))
+                return Unauthorized("房间准备室需要有效的座位凭证。");
+
+            var auth = _matchService.ValidateConnection(id, playerId, token);
+            if (!auth.Success || auth.Room is not { } room)
+                return MapResult(auth, ResponseTokenScope.None);
+            if (room.TournamentMatchId.HasValue)
+                return NotFound("请从赛事房间进入对战。");
+
+            _matchService.RefreshExpiration(id, playerId);
+            var response = ToResponse(room, ResponseTokenScope.AuthenticatedParticipant, playerId);
+            var ownDeck = room.HostPlayerId == playerId ? room.HostDeckSelection : room.GuestDeckSelection;
+            response.SelectedDeckId = ownDeck.DeckId;
+            response.SelectedDeckName = ownDeck.DeckName;
+            response.SelectedDeckMatchesRoom = room.HostPlayerId == playerId || !room.HostDeckSelection.HasSelection
+                || ownDeck.Environment == response.RequiredEnvironment && ownDeck.Rule == response.RequiredRule;
+            if (includeProfiles)
+            {
+                response.SeatProfiles = await db.Users.AsNoTracking()
+                    .Where(user => user.Id == room.HostPlayerId || user.Id == room.GuestPlayerId)
+                    .Select(user => new MatchSeatProfile(user.Id, user.Username, user.AvatarUrl))
+                    .ToArrayAsync(cancellationToken);
+            }
+            return Ok(response);
         }
 
         [HttpGet]
@@ -458,11 +504,12 @@ namespace ShadowverseBeyond.Server.Controllers
             return null;
         }
 
-        private ActionResult<MatchResponse> MapResult(MatchOperationResult result, ResponseTokenScope tokenScope)
+        private ActionResult<MatchResponse> MapResult(
+            MatchOperationResult result, ResponseTokenScope tokenScope, Guid? viewerPlayerId = null)
         {
             if (result.Success && result.Room != null)
             {
-                return Ok(ToResponse(result.Room, tokenScope));
+                return Ok(ToResponse(result.Room, tokenScope, viewerPlayerId));
             }
 
             return result.Error switch
@@ -512,13 +559,23 @@ namespace ShadowverseBeyond.Server.Controllers
             return BadRequest(error ?? "请求无效");
         }
 
-        private static MatchResponse ToResponse(MatchRoom room, ResponseTokenScope tokenScope)
+        private static MatchResponse ToResponse(
+            MatchRoom room, ResponseTokenScope tokenScope, Guid? viewerPlayerId = null)
         {
-            var isTakeTwo = room.HostDeckSelection?.GeneratedDraftCardIds?.Length == 30;
+            var hostDeck = room.HostDeckSelection;
+            var guestDeck = room.GuestDeckSelection;
+            var isTakeTwo = hostDeck.GeneratedDraftCardIds?.Length == 30;
             var isMirage = room.Mode == GameMode.Mirage;
+            var revealBothDecks = isMirage || isTakeTwo || room.UseAiFallback;
+            var showHostClass = hostDeck.HasSelection &&
+                (revealBothDecks || tokenScope == ResponseTokenScope.HostOnly || viewerPlayerId == room.HostPlayerId);
+            var showGuestClass = guestDeck.HasSelection &&
+                (revealBothDecks || tokenScope == ResponseTokenScope.GuestOnly ||
+                 viewerPlayerId.HasValue && viewerPlayerId == room.GuestPlayerId);
             var canRematch = room.GuestPlayerId.HasValue &&
                              !room.UseAiFallback &&
                              !room.IsResumedRoom &&
+                             !room.TournamentMatchId.HasValue &&
                              !isTakeTwo;
             var includeJoinCode = tokenScope != ResponseTokenScope.None || room.IsPublic;
 
@@ -542,16 +599,20 @@ namespace ShadowverseBeyond.Server.Controllers
                 HostWins = room.HostWins,
                 GuestWins = room.GuestWins,
                 Draws = room.Draws,
-                HostDeckClass = room.HostDeckSelection?.HasSelection == true ? room.HostDeckSelection.DeckClass.ToString() : null,
-                GuestDeckClass = room.GuestDeckSelection?.HasSelection == true ? room.GuestDeckSelection.DeckClass.ToString() : null,
+                HostDeckSelected = hostDeck.HasSelection,
+                GuestDeckSelected = guestDeck.HasSelection,
+                HostDeckClass = showHostClass ? hostDeck.DeckClass?.ToString() : null,
+                GuestDeckClass = showGuestClass ? guestDeck.DeckClass?.ToString() : null,
+                HostSecondaryClass = showHostClass && viewerPlayerId.HasValue ? hostDeck.SecondaryClass : null,
+                GuestSecondaryClass = showGuestClass && viewerPlayerId.HasValue ? guestDeck.SecondaryClass : null,
                 CanRematch = canRematch,
                 ClosedReason = room.ClosedReason
             };
 
-            if (!isMirage && room.HostDeckSelection?.HasSelection == true)
+            if (!isMirage && hostDeck.HasSelection)
             {
-                response.RequiredEnvironment = room.HostDeckSelection.Environment ?? DeckEnvironment.Rotation;
-                response.RequiredRule = room.HostDeckSelection.Rule ?? DeckRule.Standard;
+                response.RequiredEnvironment = hostDeck.Environment ?? DeckEnvironment.Rotation;
+                response.RequiredRule = hostDeck.Rule ?? DeckRule.Standard;
             }
 
 #pragma warning disable CS0618
@@ -666,13 +727,23 @@ namespace ShadowverseBeyond.Server.Controllers
             public int HostWins { get; set; }
             public int GuestWins { get; set; }
             public int Draws { get; set; }
+            public bool HostDeckSelected { get; set; }
+            public bool GuestDeckSelected { get; set; }
             public string? HostDeckClass { get; set; }
             public string? GuestDeckClass { get; set; }
             public bool CanRematch { get; set; }
             public string? ClosedReason { get; set; }
             public DeckEnvironment? RequiredEnvironment { get; set; }
             public DeckRule? RequiredRule { get; set; }
+            public MatchSeatProfile[]? SeatProfiles { get; set; }
+            public Guid? SelectedDeckId { get; set; }
+            public string? SelectedDeckName { get; set; }
+            public bool? SelectedDeckMatchesRoom { get; set; }
+            public CardClass? HostSecondaryClass { get; set; }
+            public CardClass? GuestSecondaryClass { get; set; }
         }
+
+        public sealed record MatchSeatProfile(Guid PlayerId, string DisplayName, string? AvatarUrl);
 
         public class MatchRoomListResponse
         {

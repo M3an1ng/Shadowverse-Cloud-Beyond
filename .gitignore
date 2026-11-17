@@ -126,6 +126,7 @@ coverage/
 !/tests/
 /tests/*
 !/tests/EngineMigration/
+!/tests/tournament/
 !/tests/DiscoverInstances/
 !/tests/modeChoiceDialog.test.mjs
 !/tests/battleConnection.test.mjs

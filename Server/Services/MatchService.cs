@@ -85,6 +85,9 @@ namespace ShadowverseBeyond.Server.Services
 
             lock (room)
             {
+                if (room.TournamentMatchId.HasValue)
+                    return MatchOperationResult.Fail(MatchOperationError.Forbidden, "请从赛事房间进入对战。");
+
                 if (IsExpired(room))
                 {
                     CloseInternal(roomId, "房间已过期");
@@ -413,7 +416,7 @@ namespace ShadowverseBeyond.Server.Services
             {
                 lock (room)
                 {
-                    if (room.Status != MatchStatus.Closed && !IsExpired(room))
+                    if (!room.TournamentMatchId.HasValue && room.Status != MatchStatus.Closed && !IsExpired(room))
                     {
                         rooms.Add(Clone(room));
                     }
@@ -696,6 +699,7 @@ namespace ShadowverseBeyond.Server.Services
                 var canRematchInRoom = room.GuestPlayerId.HasValue &&
                                        !room.UseAiFallback &&
                                        !room.IsResumedRoom &&
+                                       !room.TournamentMatchId.HasValue &&
                                        !isTakeTwoRoom;
 
                 if (canRematchInRoom)
@@ -759,7 +763,8 @@ namespace ShadowverseBeyond.Server.Services
                 room.HostReady = false;
                 room.GuestReady = false;
                 room.ExpiresAt = DateTime.UtcNow.Add(_closedRetention);
-                _joinCodeRegistry?.Release(room.JoinCode, roomId);
+                if (!string.IsNullOrEmpty(room.JoinCode))
+                    _joinCodeRegistry?.Release(room.JoinCode, roomId);
                 _logger.LogInformation("[MatchService] Room {RoomId} closed: {Reason}", roomId, reason);
 
                 if (!string.IsNullOrWhiteSpace(activeGameId))
@@ -939,6 +944,7 @@ namespace ShadowverseBeyond.Server.Services
                 GuestToken = source.GuestToken,
                 Status = source.Status,
                 Mode = source.Mode,
+                TournamentMatchId = source.TournamentMatchId,
                 HostReady = source.HostReady,
                 GuestReady = source.GuestReady,
                 UseAiFallback = source.UseAiFallback,
@@ -985,10 +991,12 @@ namespace ShadowverseBeyond.Server.Services
             return new MatchDeckSelection
             {
                 GeneratedDraftCardIds = selection.GeneratedDraftCardIds?.ToArray(),
+                TournamentCardIds = selection.TournamentCardIds?.ToArray(),
                 DraftEnvironment = selection.DraftEnvironment,
                 UserId = selection.UserId,
                 GuestId = selection.GuestId,
                 DeckId = selection.DeckId,
+                DeckName = selection.DeckName,
                 DeckCode = selection.DeckCode,
                 DeckClass = selection.DeckClass,
                 SecondaryClass = selection.SecondaryClass,

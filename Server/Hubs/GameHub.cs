@@ -970,6 +970,9 @@ namespace ShadowverseBeyond.Server.Hubs
 
             try
             {
+                if (_matchService.GetByGameId(gameId.ToString()).Room?.TournamentMatchId.HasValue == true)
+                    throw new HubException("赛事对局不支持调试指令。");
+
                 if (!Guid.TryParse(playerId, out var playerGuid))
                 {
                     throw new HubException("debug-error: invalid player id");
@@ -1364,6 +1367,13 @@ namespace ShadowverseBeyond.Server.Hubs
                     _logger.LogWarning("Spectator attempted to join non-existent room. ConnectionId={ConnectionId}, RoomId={RoomId}",
                         Context.ConnectionId, roomIdStr);
                     await Clients.Caller.ReceiveError("房间不存在，无法观战。");
+                    Context.Abort();
+                    return;
+                }
+
+                if (roomResult.Room.TournamentMatchId.HasValue)
+                {
+                    await Clients.Caller.ReceiveError("赛事对局仅对参赛选手开放。");
                     Context.Abort();
                     return;
                 }

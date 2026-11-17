@@ -6,10 +6,13 @@ public class MatchDeckSelection
 {
     [System.Text.Json.Serialization.JsonIgnore]
     public int[]? GeneratedDraftCardIds { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public int[]? TournamentCardIds { get; init; }
     public string? DraftEnvironment { get; set; }
     public Guid? UserId { get; set; }
     public Guid? GuestId { get; set; }
     public Guid? DeckId { get; set; }
+    public string? DeckName { get; set; }
     public string? DeckCode { get; set; }
     public CardClass? DeckClass { get; set; }
     public CardClass? SecondaryClass { get; set; }

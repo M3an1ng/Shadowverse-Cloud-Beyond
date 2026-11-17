@@ -34,6 +34,8 @@ function roleLabel(role) {
 
 async function readJsonResponse(response) {
     if (response.ok) return response.json();
+    if (response.status === 401) throw new Error('请重新登录管理员账号。');
+    if (response.status === 403) throw new Error('当前登录未通过管理员权限验证。');
     const rawText = await response.text();
     let message = rawText.trim();
     try {

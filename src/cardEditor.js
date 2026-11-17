@@ -1,5 +1,6 @@
 import { mountStyleEditor } from './cardStyles.js';
 import { installCardHistoryActions } from './cardHistory.js';
+import { formatBeijingTime } from './beijingTime.js';
 import { confirmDialog } from './siteDialog.js';
 import { showAlert } from './siteDialog.js';
 import { VisualCardCanvas, sectionsFromDescription, findCardByReference } from './components/VisualCardCanvas.js';
@@ -117,24 +118,6 @@ async function readErrorResponseMessage(response) {
     } catch (_) {
         return fallback;
     }
-}
-
-function formatEditorMetaTimestamp(value) {
-    if (!value) return '';
-
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-        return '';
-    }
-
-    return new Intl.DateTimeFormat('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-    }).format(parsed);
 }
 
 function equalsIgnoreCase(a, b) {
@@ -1127,7 +1110,7 @@ class CardEditor {
 
         const updatedAt = this.currentCard.updatedAt ?? this.currentCard.UpdatedAt ?? '';
         const updatedBy = String(this.currentCard.updatedBy ?? this.currentCard.UpdatedBy ?? '').trim();
-        const formattedTime = formatEditorMetaTimestamp(updatedAt);
+        const formattedTime = formatBeijingTime(updatedAt, '', { includeSeconds: false });
 
         if (!formattedTime && !updatedBy) {
             metaEl.textContent = '';

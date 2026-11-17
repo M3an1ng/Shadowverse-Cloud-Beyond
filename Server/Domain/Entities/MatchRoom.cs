@@ -53,6 +53,7 @@ namespace ShadowverseBeyond.Server.Domain.Entities
         public string? GuestToken { get; set; }
         public MatchStatus Status { get; set; } = MatchStatus.Waiting;
         public GameMode Mode { get; init; } = GameMode.Standard;
+        public Guid? TournamentMatchId { get; init; }
         public bool HostReady { get; set; }
         public bool GuestReady { get; set; }
         public bool UseAiFallback { get; init; }

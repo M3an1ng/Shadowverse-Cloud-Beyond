@@ -9,7 +9,7 @@ export function isRoomSeatAlreadyReleased(error) {
 
 export function isNonAiMultiplayerHandshake(handshake) {
     if (!handshake) return false;
-    if (handshake.kind === 'mirage-8p') return false;
+    if (handshake.kind === 'mirage-8p' || handshake.kind === 'tournament-match') return false;
     if (handshake.role === 'spectator' || handshake.role === 'eliminated-spectator') return false;
     if (handshake.useAiFallback === true) return false;
 

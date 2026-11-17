@@ -205,7 +205,7 @@ namespace ShadowverseBeyond.Server.Services
             if (!state.IsGameOver)
                 throw new GameLogicException(completion?.Reason ?? "The room exit action did not finish the game.");
 
-            var completed = _matchService.CompleteGame(gameId, state.WinnerId);
+            var completed = await CompleteRoomGameAsync(state);
             if (!completed.Success && completed.Error is not (MatchOperationError.NotFound or MatchOperationError.AlreadyClosed))
                 throw new GameLogicException(completed.Message);
         }
@@ -519,7 +519,7 @@ namespace ShadowverseBeyond.Server.Services
 
                                     if (gameState.IsGameOver && !gameState.IsMirageTournamentSeat)
                                     {
-                                        _matchService.CompleteGame(gameId, gameState.WinnerId);
+                                        await CompleteRoomGameAsync(gameState);
                                     }
 
                                     // 先发布本次状态，再允许 AI 读取下一次决策所需的可用性。
@@ -593,7 +593,7 @@ namespace ShadowverseBeyond.Server.Services
                                 GameHub.ReleaseDisconnectTrackingForGame(gameId);
                                 if (!observedState.IsMirageTournamentSeat)
                                 {
-                                    _matchService.CompleteGame(gameId, observedState.WinnerId);
+                                    await CompleteRoomGameAsync(observedState);
                                 }
                             }
                             if (observedState != null && _replayRecorder != null)
@@ -1420,6 +1420,17 @@ namespace ShadowverseBeyond.Server.Services
             bool requireComplete,
             CancellationToken cancellationToken)
         {
+            if (selection.TournamentCardIds is { } tournamentCards)
+            {
+                if (tournamentCards.Length != GameConstants.Cards.StandardDeckSize || !selection.DeckClass.HasValue
+                    || tournamentCards.Any(id => _gameDataProvider.GetCardDefinition(id) is not { IsMirageCard: false }))
+                    return null;
+
+                return new ResolvedDeckSelection(tournamentCards.ToList(), selection.DeckClass.Value,
+                    selection.SecondaryClass, selection.Environment ?? DeckEnvironment.Rotation,
+                    selection.Rule ?? DeckRule.Standard, null);
+            }
+
             if (selection.GeneratedDraftCardIds is { Length:30 } draftIds && selection.DeckClass.HasValue)
             {
                 if (draftIds.Any(id => id <= 0 || _gameDataProvider.GetCardDefinition(id) is not { IsMirageCard: false }))

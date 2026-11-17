@@ -32,6 +32,7 @@ using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
 if(args.Length==1&&args[0]=="--room-exit"){await RoomExitTests.RunAsync();return 0;}
+if (args is ["--tournament-schedule"]) { TournamentScheduleTests.Run(); return 0; }
 if(args.Length==3&&args[0]=="--planned-mode-real"){AiPlannedModeTests.RunReal(args[1],args[2]);return 0;}
 if(args.Length==2&&args[0]=="--planned-mode-native"){AiPlannedModeTests.Run(args[1]);return 0;}
 if(args.Length==1&&args[0]=="--plan-archives"){AiPlanArchiveTests.Run();return 0;}
@@ -1007,6 +1008,40 @@ Test("applied permanent numeric buffs combine across source turns",()=>{
  var summaries=ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create(card,context).BuffSummaries;
  Check(summaries.Count==2,"sources lost");Check(summaries.SelectMany(x=>x.NumericEffects).Select(x=>x.PolicyKey).Distinct().Count()==1,"source turn incorrectly separates permanent buffs");
 });
+Test("only the latest active set per card stat is shown across source groups", () =>
+{
+    activeAbilities.Clear();
+    p1.Field.Clear();
+    var card = factory.CreateAndRegisterNewCard(game, 2, p1.PlayerId, CardZone.Field);
+    var initial = new Buff(Guid.Empty, card.InstanceId, 1, new() { new StatBuffEffect(new() {
+        new(StatType.Cost, 3, ModifierLayer.Set),
+        new(StatType.Attack, 4, ModifierLayer.Set),
+        new(StatType.Health, 7, ModifierLayer.Set)
+    }) }) { EffectKey = "z-first", SourceCardName = "First" };
+    var latest = new Buff(Guid.Empty, card.InstanceId, 1, new() { new StatBuffEffect(new() {
+        new(StatType.Cost, 0, ModifierLayer.Set),
+        new(StatType.Attack, 5, ModifierLayer.Set),
+        new(StatType.Attack, 6, ModifierLayer.Set),
+        new(StatType.Health, 1, ModifierLayer.Additive)
+    }) }) { EffectKey = "a-latest", SourceCardName = "Latest" };
+    buffs.RegisterBuffInstance(initial, game);
+    buffs.RegisterBuffInstance(latest, game);
+
+    var summaries = ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create(card, context).BuffSummaries;
+    var effects = summaries.SelectMany(summary => summary.NumericEffects).ToList();
+    var visible = effects.Where(effect => !effect.IsSuperseded).ToList();
+    Check(effects.Count == 7, "original numeric effects were dropped");
+    Check(visible.Where(effect => effect.Field == "Cost").Single().Value == 0, "the latest cost set was lost");
+    Check(visible.Where(effect => effect.Field == "Attack").Single().Value == 6, "attack did not use the last set within a buff");
+    Check(visible.Count(effect => effect.Field == "Health") == 2, "another stat or additive modifier was hidden");
+    Check(summaries.Single(summary => summary.SourceCardName == "Latest").NumericEffects.Any(effect => effect.Field == "Cost" && !effect.IsSuperseded),
+        "the current cost set lost its source");
+
+    buffs.UnregisterBuffInstance(latest.Id);
+    var remaining = ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create(card, context).BuffSummaries.Single().NumericEffects;
+    Check(remaining.Count == 3 && remaining.All(effect => !effect.IsSuperseded), "the previous set did not reappear after removal");
+});
+
 Test("reveal transport includes hand position and log announcement",()=>{
  p2.Hand.Clear();var card=factory.CreateAndRegisterNewCard(game,4,p2.PlayerId,CardZone.Hand);var ev=new CardRevealedEvent(p2,card);
  var processor=new EventProcessor(NullLogger<EventProcessor>.Instance,services.GetRequiredService<IEventHistoryService>());
@@ -1220,6 +1255,23 @@ Test("match room isolates seat tokens, blocks unauthenticated rejoin, and enforc
  Check(validRejoin.Success&&validRejoin.Room!.GuestToken==joinRes.GuestToken,"valid token rejoin failed");
  var wrongTokenSubmit=matches.SubmitDeckSelection(createdRes.RoomId,guestId,new(){DeckId=Guid.NewGuid(),DeckClass=CardClass.Forestcraft},token:"wrong-token");
  Check(!wrongTokenSubmit.Success&&wrongTokenSubmit.Error==MatchOperationError.Forbidden,"in-lock token check bypassed");
+
+ var hostDeck=new MatchDeckSelection{DeckId=Guid.NewGuid(),DeckClass=CardClass.Dragoncraft,SecondaryClass=CardClass.Runecraft,Rule=DeckRule.DualClass};
+ var guestDeck=new MatchDeckSelection{DeckId=Guid.NewGuid(),DeckClass=CardClass.Swordcraft,SecondaryClass=CardClass.Havencraft,Rule=DeckRule.DualClass};
+ Check(matches.SubmitDeckSelection(createdRes.RoomId,hostId,hostDeck,token:createdRes.HostToken).Success,"host deck select failed");
+ Check(matches.SubmitDeckSelection(createdRes.RoomId,guestId,guestDeck,token:joinRes.GuestToken).Success,"guest deck select failed");
+
+ var hostPreparation=(ctrl.Preparation(createdRes.RoomId,hostId,createdRes.HostToken,false,null!,CancellationToken.None)
+    .GetAwaiter().GetResult().Result as Microsoft.AspNetCore.Mvc.OkObjectResult)!.Value as ShadowverseBeyond.Server.Controllers.MatchController.MatchResponse;
+ Check(hostPreparation is { HostDeckClass: "Dragoncraft", HostSecondaryClass: CardClass.Runecraft, GuestDeckSelected: true,
+    GuestDeckClass: null, GuestSecondaryClass: null },"host preparation exposed the guest deck or hid the host deck");
+ var guestPreparation=(ctrl.Preparation(createdRes.RoomId,guestId,joinRes.GuestToken,false,null!,CancellationToken.None)
+    .GetAwaiter().GetResult().Result as Microsoft.AspNetCore.Mvc.OkObjectResult)!.Value as ShadowverseBeyond.Server.Controllers.MatchController.MatchResponse;
+ Check(guestPreparation is { GuestDeckClass: "Swordcraft", GuestSecondaryClass: CardClass.Havencraft, HostDeckSelected: true,
+    HostDeckClass: null, HostSecondaryClass: null },"guest preparation exposed the host deck or hid the guest deck");
+ var unverifiedGet=(ctrl.Get(createdRes.RoomId,hostId,"wrong-token").Result as Microsoft.AspNetCore.Mvc.OkObjectResult)!.Value as ShadowverseBeyond.Server.Controllers.MatchController.MatchResponse;
+ Check(unverifiedGet is { HostDeckClass: null, GuestDeckClass: null, HostSecondaryClass: null, GuestSecondaryClass: null },
+    "ordinary room status disclosed a deck class without an authenticated seat");
 });
 Test("match room requires self deck before ready, supports cancel ready, kick guest, and join by code",()=>{
  var matches=new MatchService(NullLogger<MatchService>.Instance);

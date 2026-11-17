@@ -27,6 +27,10 @@
     <link rel="stylesheet" href="src/styles/animations.css">
     <link rel="stylesheet" href="src/styles/forms.css">
     <link rel="stylesheet" href="src/styles/devtools.css">
+    <link rel="stylesheet" href="src/styles/tournament-admin.css">
+    <link rel="stylesheet" href="src/styles/tournament-lobby.css">
+    <link rel="stylesheet" href="src/styles/tournament-report.css">
+    <link rel="stylesheet" href="src/styles/duel-room.css">
     <link rel="stylesheet" href="src/styles/game.css"> <!-- Legacy styles, to be refactored -->
     <link rel="stylesheet" href="src/styles/mirage.css">
     <link rel="stylesheet" href="src/styles/mirage-lobby.css">
@@ -217,6 +221,12 @@
                 </div>
             </div>
         </div>
+
+        <button id="tournament-entrance" class="icon-btn" type="button" data-route="tournaments" aria-label="大赛" title="大赛">
+            <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+                <path d="M7 3h10v2h4v3a5 5 0 0 1-4.6 5A5.4 5.4 0 0 1 13 16v2h2a2 2 0 0 1 2 2v1H7v-1a2 2 0 0 1 2-2h2v-2a5.4 5.4 0 0 1-3.4-3A5 5 0 0 1 3 8V5h4V3ZM5 7v1a3 3 0 0 0 2 2.8V7H5Zm12 0v3.8A3 3 0 0 0 19 8V7h-2Z" />
+            </svg>
+        </button>
 
         <div id="daily-quest-widget" class="daily-quest-widget">
             <button id="daily-quest-toggle" class="icon-btn daily-quest-toggle" type="button" aria-label="日常任务" aria-expanded="false">
@@ -437,7 +447,7 @@
                 <div class="mp-grid">
                     <div class="mp-card">
                         <div class="mp-card-title">创建房间</div>
-                        <p class="mp-card-desc">创建房间并生成邀请码，等待对手加入并自动就绪</p>
+                        <p class="mp-card-desc">创建房间并生成邀请码，邀请对手加入</p>
                         <div class="mp-field mp-field-checkbox">
                             <label for="mp-is-public" title="公开房间允许其他玩家在「查看房间」列表中一键加入；私密房需凭6位邀请码加入（开局后仍允许观战）">
                                 <input id="mp-is-public" type="checkbox" checked>
@@ -475,15 +485,15 @@
                             <label for="mp-join-code">JoinCode（6位邀请码）</label>
                             <input id="mp-join-code" type="text" placeholder="6位邀请码" autocomplete="off" maxlength="10">
                         </div>
-                        <button id="mp-join-btn" class="mp-btn primary">加入并准备</button>
+                        <button id="mp-join-btn" class="mp-btn primary">加入房间</button>
                         <div id="mp-join-output" class="mp-output"></div>
                     </div>
                 </div>
 
                 <div class="mp-footer">
-                    <div class="mp-hint">提示：创建房间后会自动就绪；对手加入并就绪后即可开始。</div>
+                    <div class="mp-hint">创建或加入后，可在房间内选卡组并准备。</div>
                     <div class="mp-actions">
-                        <button id="mp-go-game" class="mp-btn primary">进入对战</button>
+                        <button id="mp-go-game" class="mp-btn primary">返回房间</button>
                         <button id="mp-back-btn" class="mp-btn ghost" data-route="navigation">← 返回主菜单</button>
                     </div>
                 </div>
@@ -1114,6 +1124,11 @@
                         <button class="tool-button" data-route="mirage-card-editor" type="button">打开幻境工坊</button>
                     </div>
 
+                    <section id="tournament-admin-entry" class="tool-card" hidden>
+                        <h3>赛事管理</h3>
+                        <p>创建广场赛或大赛，设置报名时间和赛制。</p>
+                        <button class="tool-button" data-route="dev-tools/tournaments" type="button">管理赛事</button>
+                    </section>
                     <section id="admin-user-management" class="tool-card admin-user-management" aria-label="用户管理">
                         <h3>用户管理</h3>
                         <p>仅管理员可访问，用于查看当前注册用户并调整权限等级。</p>
@@ -1498,7 +1513,382 @@
             </div>
         </div>
 
-        <!-- Devtools Match Lab Page -->
+        <div id="match-room-page" class="page duel-room-page">
+            <header class="page-header duel-room-header">
+                <button type="button" class="duel-room-button" data-route="multiplayer">← 退出房间</button>
+                <h1>对战房间</h1>
+            </header>
+            <div class="duel-room-scroll">
+                <p id="match-room-message" class="duel-room-message" role="status"></p>
+                <div id="match-room-layout" class="duel-room-layout" hidden>
+                    <div class="duel-room-center">
+                        <div class="duel-room-joincard">
+                            <div class="duel-room-invite">
+                                <div>
+                                    <span>邀请码</span>
+                                    <strong id="match-room-code"></strong>
+                                </div>
+                                <button id="match-room-copy" class="duel-room-button" type="button" aria-label="复制邀请码">复制</button>
+                            </div>
+                            <p id="match-room-format" class="duel-room-format"></p>
+                        </div>
+                        <button id="match-room-ready" class="duel-room-ready" type="button" disabled>
+                            <span class="duel-room-ready-symbol" aria-hidden="true"></span>
+                            <span class="duel-room-ready-label">准备就绪</span>
+                        </button>
+                    </div>
+                    <div id="match-room-seats" class="duel-room-seats"></div>
+                </div>
+            </div>
+            <p id="match-room-copy-toast" class="duel-room-copy-toast" role="status"></p>
+            <template id="duel-room-seat-template">
+                <section class="duel-room-seat">
+                    <div class="duel-room-person">
+                        <div class="duel-room-avatar">
+                            <span></span>
+                            <img alt="" loading="lazy" decoding="async" hidden>
+                        </div>
+                        <div class="duel-room-person-info">
+                            <div class="duel-room-name-line">
+                                <h2 class="duel-room-name"></h2>
+                                <span class="duel-room-self" hidden>你</span>
+                            </div>
+                            <div class="duel-room-person-meta">
+                                <span class="duel-room-seat-state" hidden></span>
+                                <span class="duel-room-score" hidden></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="duel-room-decks"></div>
+                    <div class="duel-room-actions"></div>
+                </section>
+            </template>
+        </div>
+
+        <div id="tournament-lobby-page" class="page tournament-page">
+            <header class="page-header tournament-lobby-header">
+                <button class="tournament-button" type="button" data-route="navigation">← 返回首页</button>
+                <h1>大赛</h1>
+            </header>
+            <div class="tournament-lobby-content">
+                <p id="tournament-lobby-status" class="tournament-message" role="status"></p>
+                <div class="tournament-lobby-grid">
+                    <aside class="tournament-panel tournament-event-list-panel">
+                        <div class="tournament-panel-title">
+                            <h2>赛事列表</h2>
+                            <div class="tournament-list-controls">
+                                <select id="tournament-lobby-filter" class="tournament-button" aria-label="筛选赛事">
+                                    <option value="all">全部</option>
+                                    <option value="running">进行中</option>
+                                    <option value="finished">已结束</option>
+                                </select>
+                                <button id="tournament-lobby-refresh" class="tournament-button" type="button">刷新</button>
+                            </div>
+                        </div>
+                        <div id="tournament-lobby-events" class="tournament-item-list"></div>
+                    </aside>
+                    <div id="tournament-lobby-detail" class="tournament-detail-grid" hidden>
+                        <section class="tournament-panel tournament-event-summary" aria-labelledby="tournament-event-title">
+                            <div class="tournament-panel-title">
+                                <h2 id="tournament-event-title"></h2>
+                                <div class="tournament-list-controls">
+                                    <span id="tournament-event-state" class="tournament-event-state"></span>
+                                    <button id="tournament-view-report" class="tournament-button" type="button" hidden>赛事战报</button>
+                                </div>
+                            </div>
+                            <p id="tournament-event-meta" class="tournament-muted"></p>
+                            <dl class="tournament-event-facts">
+                                <div><dt>报名开始</dt><dd id="tournament-event-start"></dd></div>
+                                <div><dt>报名截止</dt><dd id="tournament-event-end"></dd></div>
+                                <div><dt>报名人数</dt><dd id="tournament-event-count"></dd></div>
+                            </dl>
+                        </section>
+                        <section id="tournament-registration" class="tournament-panel" aria-labelledby="tournament-registration-title">
+                            <h3 id="tournament-registration-title">报名</h3>
+                            <p id="tournament-registration-note" class="tournament-muted"></p>
+                            <p id="tournament-registration-status" class="tournament-message" role="status"></p>
+                            <button id="tournament-registration-login" class="tournament-button" type="button" hidden>打开账号登录</button>
+                            <ol id="tournament-submitted-decks" class="tournament-submitted-decks" hidden></ol>
+                            <form id="tournament-registration-form" hidden>
+                                <fieldset id="tournament-registration-fields" class="tournament-deck-fields"></fieldset>
+                                <button id="tournament-registration-submit" class="tournament-button tournament-button-primary" type="submit">
+                                    提交卡组
+                                </button>
+                            </form>
+                        </section>
+                    </div>
+                </div>
+                <section id="tournament-lobby-schedule" class="tournament-panel tournament-lobby-schedule" aria-labelledby="tournament-stages-title" hidden>
+                    <h3 id="tournament-stages-title">赛程</h3>
+                    <ol id="tournament-event-stages" class="tournament-stages-list"></ol>
+                    <div id="tournament-event-pairings" class="tournament-pairings" hidden></div>
+                </section>
+            </div>
+            <dialog id="tournament-report-dialog" class="tournament-report-dialog" aria-labelledby="tournament-report-title">
+                <div class="tournament-report-dialog-header">
+                    <div class="tournament-panel-title">
+                        <h2 id="tournament-report-title">赛事战报</h2>
+                        <form method="dialog"><button class="tournament-button" type="submit">关闭</button></form>
+                    </div>
+                    <div class="tournament-report-controls">
+                        <label>统计范围 <select id="tournament-report-stage" disabled></select></label>
+                        <label>统计项目 <select id="tournament-report-view" disabled></select></label>
+                        <label id="tournament-report-subject-label" hidden>对阵类型 <select id="tournament-report-subject"></select></label>
+                        <button id="tournament-report-refresh" type="button" class="tournament-button">刷新</button>
+                        <a id="tournament-report-download" class="tournament-button tournament-button-primary" hidden>下载 Excel</a>
+                    </div>
+                    <p id="tournament-report-status" class="tournament-message" role="status"></p>
+                </div>
+                <div class="tournament-report-dialog-body">
+                    <dl id="tournament-report-totals" class="tournament-report-totals"></dl>
+                    <div id="tournament-report-content"></div>
+                </div>
+            </dialog>
+        </div>
+
+        <div id="tournament-match-page" class="page duel-room-page">
+            <header class="page-header duel-room-header">
+                <button type="button" class="duel-room-button" data-route="tournaments">← 返回赛程</button>
+                <h1>赛事房间</h1>
+            </header>
+            <div class="duel-room-scroll">
+                <p id="tournament-match-message" class="duel-room-message" role="status"></p>
+                <div id="tournament-match-layout" class="duel-room-layout" hidden>
+                    <div class="duel-room-center">
+                        <div class="duel-room-joincard">
+                            <span id="tournament-match-event"></span>
+                            <strong id="tournament-match-score" class="duel-room-series-score"></strong>
+                            <span id="tournament-match-round"></span>
+                            <p id="tournament-match-phase" class="duel-room-format"></p>
+                        </div>
+                        <button id="tournament-match-enter" class="duel-room-ready" type="button" hidden>
+                            <span class="duel-room-ready-symbol" aria-hidden="true"></span>
+                            <span class="duel-room-ready-label">进入对战</span>
+                        </button>
+                    </div>
+                    <div id="tournament-match-seats" class="duel-room-seats"></div>
+                </div>
+                <section id="tournament-match-results" class="duel-room-results" hidden>
+                    <h2>小局结果</h2>
+                    <ol id="tournament-match-games"></ol>
+                </section>
+            </div>
+        </div>
+
+        <div id="tournament-admin-page" class="page tournament-page">
+            <header class="page-header tournament-admin-header">
+                <button class="tool-button" type="button" data-route="dev-tools">← 返回设置</button>
+                <h1>赛事管理</h1>
+            </header>
+            <div class="tournament-admin-content">
+                <p id="tournament-admin-status" role="status" aria-live="polite"></p>
+                <div id="tournament-admin-workspace" class="tournament-admin-workspace" hidden>
+                    <section class="tournament-admin-card">
+                        <div class="tournament-admin-card-header">
+                            <h2>赛事列表</h2>
+                            <div class="tournament-admin-actions">
+                                <button id="tournament-admin-refresh" class="tool-button" type="button">刷新</button>
+                                <button id="tournament-admin-new" class="tool-button" type="button">新建赛事</button>
+                            </div>
+                        </div>
+                        <ul id="tournament-admin-list" class="tournament-admin-list"></ul>
+                    </section>
+                    <form id="tournament-admin-form" class="tournament-admin-card">
+                        <h2 id="tournament-admin-form-title" tabindex="-1">新建赛事</h2>
+                        <fieldset id="tournament-admin-fields" class="tournament-admin-fields">
+                            <label class="tournament-admin-field">
+                                赛事名称
+                                <input class="form-input" name="name" maxlength="120" required>
+                            </label>
+                            <label class="tournament-admin-field">
+                                版本
+                                <input class="form-input" name="cardVersion" maxlength="40" placeholder="如 EOT" required>
+                            </label>
+                            <label class="tournament-admin-field">
+                                赛事类型
+                                <select class="form-select" name="format">
+                                    <option value="plaza">广场赛</option>
+                                    <option value="major">大赛</option>
+                                </select>
+                            </label>
+                            <label class="tournament-admin-field">
+                                报名人数上限
+                                <input class="form-input" type="number" name="playerLimit" min="2" step="1">
+                            </label>
+                            <label class="tournament-admin-field">
+                                对战环境
+                                <select class="form-select" name="deckEnvironment">
+                                    <option value="rotation">指定</option>
+                                </select>
+                            </label>
+                            <label class="tournament-admin-field">
+                                构筑规则
+                                <select class="form-select" name="deckRule">
+                                    <option value="standard">传统对战</option>
+                                    <option value="dualClass">混合职业</option>
+                                </select>
+                            </label>
+                            <label class="tournament-admin-field" id="tournament-admin-stage-mode" hidden>
+                                阶段安排
+                                <select class="form-select" name="stageMode">
+                                    <option value="both">瑞士轮 → 淘汰赛</option>
+                                    <option value="swiss">仅瑞士轮</option>
+                                    <option value="elimination">仅淘汰赛</option>
+                                </select>
+                            </label>
+                            <fieldset id="tournament-admin-plaza" class="tournament-admin-fields tournament-admin-stages">
+                                <legend>广场赛 · 四轮</legend>
+                                <p class="tournament-admin-note">每轮随机匹配逐轮胜负顺序相同的选手。</p>
+                                <label class="tournament-admin-field">
+                                    广场赛对局格式
+                                    <select class="form-select" name="plazaMatchFormat">
+                                        <option value="bo1">BO1 · 1 套</option>
+                                        <option value="bo3">BO3 · 2 套征服</option>
+                                        <option value="bo3Ban1">BO3 Ban1 · 3 套各禁 1 套</option>
+                                        <option value="bo5">BO5 · 3 套征服</option>
+                                    </select>
+                                </label>
+                                <label class="tournament-admin-check">
+                                    <input type="checkbox" name="plazaResubmission">
+                                    允许重新提交卡组
+                                </label>
+                            </fieldset>
+                            <fieldset id="tournament-admin-swiss" class="tournament-admin-fields tournament-admin-stages" hidden>
+                                <legend>瑞士轮</legend>
+                                <label class="tournament-admin-field">
+                                    瑞士轮轮数
+                                    <input class="form-input" type="number" name="swissRounds" value="4" min="1" step="1">
+                                </label>
+                                <label class="tournament-admin-field">
+                                    瑞士轮对局格式
+                                    <select class="form-select" name="swissMatchFormat">
+                                        <option value="bo1">BO1 · 1 套</option>
+                                        <option value="bo3">BO3 · 2 套征服</option>
+                                        <option value="bo3Ban1" selected>BO3 Ban1 · 3 套各禁 1 套</option>
+                                        <option value="bo5">BO5 · 3 套征服</option>
+                                    </select>
+                                </label>
+                                <label class="tournament-admin-check">
+                                    <input type="checkbox" name="swissResubmission">
+                                    允许重新提交卡组
+                                </label>
+                            </fieldset>
+                            <fieldset id="tournament-admin-elimination" class="tournament-admin-fields tournament-admin-stages" hidden>
+                                <legend>淘汰赛</legend>
+                                <label class="tournament-admin-field">
+                                    淘汰方式
+                                    <select class="form-select" name="elimination">
+                                        <option value="singleElimination">单败淘汰</option>
+                                        <option value="doubleElimination">双败淘汰</option>
+                                    </select>
+                                </label>
+                                <label class="tournament-admin-check" hidden>
+                                    <input type="checkbox" name="allowGrandFinalReset">
+                                    败者组冠军赢下总决赛后加赛
+                                </label>
+                                <label class="tournament-admin-field">
+                                    淘汰赛对局格式
+                                    <select class="form-select" name="eliminationMatchFormat">
+                                        <option value="bo1">BO1 · 1 套</option>
+                                        <option value="bo3">BO3 · 2 套征服</option>
+                                        <option value="bo3Ban1" selected>BO3 Ban1 · 3 套各禁 1 套</option>
+                                        <option value="bo5">BO5 · 3 套征服</option>
+                                    </select>
+                                </label>
+                                <label class="tournament-admin-field" id="tournament-admin-advancing">
+                                    晋级淘汰赛人数
+                                    <input class="form-input" type="number" name="advancingPlayers" value="8" min="2" step="1">
+                                </label>
+                                <label class="tournament-admin-check">
+                                    <input type="checkbox" name="eliminationResubmission">
+                                    允许重新提交卡组
+                                </label>
+                                <label class="tournament-admin-field" hidden>
+                                    晋级后重交时长（分钟）
+                                    <input class="form-input" type="number" name="deckSubmissionMinutes" min="1" step="1" placeholder="留空则手动截止">
+                                </label>
+                            </fieldset>
+                            <fieldset class="tournament-admin-fields tournament-admin-stages">
+                                <legend>报名时间（北京时间）</legend>
+                                <label class="tournament-admin-field">
+                                    开始（留空则发布即开放）
+                                    <input class="form-input" type="datetime-local" name="registrationOpensAt">
+                                </label>
+                                <label class="tournament-admin-field">
+                                    截止（留空则手动截止）
+                                    <input class="form-input" type="datetime-local" name="registrationClosesAt">
+                                </label>
+                            </fieldset>
+                            <div id="tournament-admin-submit" class="tournament-admin-actions tournament-admin-submit">
+                                <button class="tool-button" type="submit">保存草稿</button>
+                                <button id="tournament-admin-publish" class="tool-button" type="submit">发布赛事</button>
+                            </div>
+                        </fieldset>
+                        <section id="tournament-admin-registration-controls" class="tournament-admin-registration-controls" hidden>
+                            <h3 id="tournament-admin-cutoff-title">报名管理</h3>
+                            <label class="tournament-admin-field">
+                                <span id="tournament-admin-cutoff-label">报名截止（北京时间）</span>
+                                <input class="form-input" type="datetime-local" name="registrationDeadline">
+                            </label>
+                            <div class="tournament-admin-actions">
+                                <button id="tournament-admin-save-cutoff" class="tool-button" type="button">保存截止时间</button>
+                                <button id="tournament-admin-close-registration" class="tool-button" type="button">立即截止报名</button>
+                            </div>
+                        </section>
+                        <div class="tournament-admin-actions">
+                            <button id="tournament-admin-classify" class="tool-button" type="button" hidden>卡组分类与导出</button>
+                            <button id="tournament-admin-delete" class="tool-button tournament-admin-danger" type="button" hidden>删除赛事</button>
+                        </div>
+                    </form>
+                </div>
+                <button id="tournament-admin-retry" class="tool-button" type="button" hidden>重新加载</button>
+            </div>
+            <dialog id="tournament-classification-dialog" class="tournament-report-dialog" aria-labelledby="tournament-classification-title">
+                <div class="tournament-report-dialog-header">
+                    <div class="tournament-panel-title">
+                        <h2 id="tournament-classification-title">卡组分类</h2>
+                        <form method="dialog"><button class="tournament-button" type="submit">关闭</button></form>
+                    </div>
+                    <div class="tournament-report-controls">
+                        <label>阶段 <select id="tournament-classification-stage" disabled></select></label>
+                        <label>搜索 <input id="tournament-classification-search" type="search" placeholder="选手或卡组" disabled></label>
+                        <button id="tournament-classification-save" class="tournament-button tournament-button-primary" type="button" disabled>保存分类</button>
+                        <a id="tournament-classification-download" class="tournament-button" hidden>下载 Excel</a>
+                    </div>
+                    <p id="tournament-classification-status" class="tournament-message" role="status"></p>
+                </div>
+                <div class="tournament-report-dialog-body">
+                    <datalist id="tournament-classification-types"></datalist>
+                    <div id="tournament-classification-decks" class="tournament-classification-decks"></div>
+                    <div id="tournament-classification-pages" class="tournament-report-controls" hidden>
+                        <button id="tournament-classification-prev" class="tournament-button" type="button">上一页</button>
+                        <span id="tournament-classification-page"></span>
+                        <button id="tournament-classification-next" class="tournament-button" type="button">下一页</button>
+                    </div>
+                </div>
+            </dialog>
+            <dialog id="tournament-classification-preview-modal" class="deck-preview-modal" aria-labelledby="tournament-classification-preview-title">
+                <div class="deck-preview-dialog">
+                    <div class="deck-preview-toolbar">
+                        <div class="deck-preview-title-group">
+                            <div class="deck-preview-caption">卡组预览</div>
+                            <h3 id="tournament-classification-preview-title" class="deck-preview-title"></h3>
+                            <div id="tournament-classification-preview-meta" class="deck-preview-meta"></div>
+                        </div>
+                        <div id="tournament-classification-preview-toolbar-stats" class="deck-preview-toolbar-stats"></div>
+                        <div class="deck-preview-toolbar-actions">
+                            <button id="tournament-classification-preview-close-btn" class="btn-secondary" type="button" aria-label="关闭预览" autofocus>关闭</button>
+                        </div>
+                    </div>
+                    <div class="deck-preview-summary">
+                        <div id="tournament-classification-preview-curve" class="deck-preview-curve"></div>
+                        <div id="tournament-classification-preview-counts" class="deck-preview-counts"></div>
+                    </div>
+                    <div id="tournament-classification-preview-cards" class="deck-preview-cards"></div>
+                </div>
+            </dialog>
+        </div>
+
         <div id="dev-tools-match-lab-page" class="page">
             <div class="page-header">
                 <div class="page-header-left">

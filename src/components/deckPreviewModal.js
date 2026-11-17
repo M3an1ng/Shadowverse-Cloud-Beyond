@@ -1,4 +1,6 @@
 import { bindCardStyle } from '../cardStyleDom.js';
+import { loadCardDefinitions } from "../cardDefinitionsLoader.js";
+import { CARD_CATALOG_INVALIDATED_EVENT, isAbilityOnlyInvalidation } from "../dataChangeEvents.js";
 import { compareCardsForEditorAndDeck } from "../cardListSort.js";
 import { buildDeckCardRootClassName } from "../deckCardTypeStyling.js";
 
@@ -16,6 +18,36 @@ function toInt(value, fallback = 0) {
 function toNumber(value, fallback = 0) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+let cardDefinitionsTask;
+document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, (event) => {
+    if (!isAbilityOnlyInvalidation(event.detail || {})) cardDefinitionsTask = null;
+});
+
+function loadCardDefinitionMap() {
+    if (!cardDefinitionsTask) {
+        const task = loadCardDefinitions().then(cards => new Map(cards.map(card => [Number(card?.id ?? card?.Id), card])));
+        cardDefinitionsTask = task;
+        task.catch(() => {
+            if (cardDefinitionsTask === task) cardDefinitionsTask = null;
+        });
+    }
+    return cardDefinitionsTask;
+}
+
+export async function loadDeckPreviewCards(deck) {
+    const rows = Array.isArray(deck?.cards) ? deck.cards : deck?.Cards;
+    const entries = (Array.isArray(rows) ? rows : []).map(entry => ({
+        cardDefinitionId: toNumber(entry?.cardDefinitionId ?? entry?.CardDefinitionId),
+        count: toNumber(entry?.count ?? entry?.Count),
+        cost: entry?.cost,
+        name: entry?.name
+    })).filter(entry => entry.cardDefinitionId > 0 && entry.count > 0);
+    if (entries.length === 0) return [];
+
+    const definitions = await loadCardDefinitionMap().catch(() => null);
+    return entries.map(entry => ({ ...entry, card: definitions?.get(entry.cardDefinitionId) }));
 }
 
 function normalizeEnumValue(value) {
@@ -194,6 +226,7 @@ export function createDeckPreviewModal({
 } = {}) {
     const getElement = (suffix) => document.getElementById(`${idPrefix}-${suffix}`);
     const modal = getElement("modal");
+    const dialog = modal?.tagName === "DIALOG" ? modal : null;
     const title = getElement("title");
     const meta = getElement("meta");
     const curve = getElement("curve");
@@ -205,19 +238,28 @@ export function createDeckPreviewModal({
 
     const available = Boolean(modal && title && meta && curve && counts && cards);
     const removeHandlers = [];
+    const notifyClose = () => {
+        if (typeof onClose === "function") onClose();
+    };
 
     const close = () => {
         if (!available) return;
+        if (dialog) {
+            dialog.close();
+            return;
+        }
         modal.classList.remove("open");
         modal.setAttribute("aria-hidden", "true");
-        if (typeof onClose === "function") {
-            onClose();
-        }
+        notifyClose();
     };
 
-    const isOpen = () => Boolean(available && modal.classList.contains("open"));
+    const isOpen = () => Boolean(available && (dialog ? dialog.open : modal.classList.contains("open")));
 
     if (available) {
+        if (dialog && typeof onClose === "function") {
+            dialog.addEventListener("close", notifyClose);
+            removeHandlers.push(() => dialog.removeEventListener("close", notifyClose));
+        }
         const modalClick = (event) => {
             if (event.target === modal) {
                 close();
@@ -298,8 +340,12 @@ export function createDeckPreviewModal({
             exportBtn.disabled = !exportEnabled || typeof onExport !== "function";
         }
 
-        modal.classList.add("open");
-        modal.setAttribute("aria-hidden", "false");
+        if (dialog) {
+            if (!dialog.open) dialog.showModal();
+        } else {
+            modal.classList.add("open");
+            modal.setAttribute("aria-hidden", "false");
+        }
         return true;
     };
 

@@ -141,6 +141,16 @@ export function clearUserSession() {
     emitSessionChanged();
 }
 
+export function getLocalAvatarUrl(value) {
+    if (!value) return '';
+    try {
+        const url = new URL(value, window.location.href);
+        return url.origin === window.location.origin ? url.href : '';
+    } catch {
+        return '';
+    }
+}
+
 export function getDeckOwnerQuery() {
     const session = getUserSession();
     if (session.userId) {

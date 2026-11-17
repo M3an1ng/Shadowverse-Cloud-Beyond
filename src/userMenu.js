@@ -989,12 +989,20 @@ export function setupUserInfoUI({ apiGetJson, apiPostJson, syncTopNavHoverLock }
             }
         });
 
-        logoutBtn.addEventListener('click', () => {
-            clearUserSession();
-            if (passwordInput) passwordInput.value = '';
-            applySession();
-            setStatus('已退出。');
-            document.dispatchEvent(new Event('deckListUpdated'));
+        logoutBtn.addEventListener('click', async () => {
+            setAuthBusy(true);
+            try {
+                await apiPostJson('/api/auth/logout', {});
+                clearUserSession();
+                passwordInput.value = '';
+                applySession();
+                setStatus('已退出。');
+                document.dispatchEvent(new Event('deckListUpdated'));
+            } catch (error) {
+                setStatus('退出失败：' + error.message, true);
+            } finally {
+                setAuthBusy(false);
+            }
         });
     }
 }

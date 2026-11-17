@@ -1,12 +1,7 @@
 import { showAlert } from '../siteDialog.js';
-import { getDeckOwnerQuery } from "../userSession.js";
-import { createDeckPreviewModal } from "./deckPreviewModal.js";
-import { loadCardDefinitions } from "../cardDefinitionsLoader.js";
+import { getDeckOwnerQuery, getLocalAvatarUrl } from "../userSession.js";
+import { createDeckPreviewModal, loadDeckPreviewCards } from "./deckPreviewModal.js";
 import { getDeckEnvironmentLabel, getDeckRuleLabel } from "../deckPresentation.js";
-import {
-    CARD_CATALOG_INVALIDATED_EVENT,
-    isAbilityOnlyInvalidation
-} from "../dataChangeEvents.js";
 
 function escapeHtml(value) {
     return String(value ?? "")
@@ -88,90 +83,51 @@ function getDeckStats(deck) {
     };
 }
 
-let cardDefinitionsCache = null;
-let cardDefinitionsPromise = null;
-
-document.addEventListener(CARD_CATALOG_INVALIDATED_EVENT, (event) => {
-    if (isAbilityOnlyInvalidation(event?.detail || {})) {
-        return;
-    }
-    cardDefinitionsCache = null;
-    cardDefinitionsPromise = null;
-});
-
-async function ensureCardDefinitionMap() {
-    if (cardDefinitionsCache instanceof Map) {
-        return cardDefinitionsCache;
-    }
-
-    if (!cardDefinitionsPromise) {
-        cardDefinitionsPromise = loadCardDefinitions({
-            useCache: true,
-            force: false
-        }).then((cards) => {
-            const map = new Map();
-            (Array.isArray(cards) ? cards : []).forEach((card) => {
-                const id = Number(card?.id ?? card?.Id ?? 0);
-                if (Number.isFinite(id) && id > 0) {
-                    map.set(id, card);
-                }
-            });
-            cardDefinitionsCache = map;
-            return map;
-        }).finally(() => {
-            cardDefinitionsPromise = null;
-        });
-    }
-
-    return await cardDefinitionsPromise;
+function buildTournamentDeckHtml(deck) {
+    const { totalGames, totalWins } = getDeckStats(deck.stats);
+    const rate = totalGames ? (totalWins / totalGames * 100).toFixed(1) : null;
+    const name = escapeHtml(deck.name || "未命名卡组");
+    const deckClass = escapeHtml(String(deck.class ?? "").toLowerCase());
+    const record = totalGames ? `${totalWins} 胜 · ${totalGames - totalWins} 负`
+        : (deck.stats ? "暂无小局" : "暂无统计");
+    const bans = deck.stats?.bansReceived;
+    return `
+        <article class="tournament-player-deck" data-deck-class="${deckClass}">
+            <div class="tournament-player-deck-heading">
+                <div class="tournament-player-deck-emblem" aria-hidden="true"></div>
+                <div>
+                    <span>${escapeHtml(deck.classLabel)}</span>
+                    <h4>${name}</h4>
+                </div>
+            </div>
+            <div class="tournament-player-deck-stats">
+                <div><span>小局胜率</span><strong>${rate === null ? "—" : rate + "%"}</strong></div>
+                <span>${record}</span>
+            </div>
+            <div class="tournament-player-deck-meter" aria-hidden="true"><span style="width: ${rate ?? 0}%"></span></div>
+            ${bans == null ? "" : `
+                <div class="tournament-player-deck-ban" title="本阶段已结算对局的禁用次数">
+                    <span>被禁用</span><span><strong>${toSafeInt(bans)}</strong> 次</span>
+                </div>
+            `}
+            <button class="tournament-button tournament-player-deck-preview" type="button"
+                data-picker-action="preview" data-deck-id="${escapeHtml(deck.id)}">预览卡组</button>
+        </article>
+    `;
 }
 
-function normalizeDeckEntry(entry) {
-    const cardDefinitionId = Number(entry?.cardDefinitionId ?? entry?.CardDefinitionId ?? 0);
-    const count = Number(entry?.count ?? entry?.Count ?? 0);
-    return {
-        cardDefinitionId: Number.isFinite(cardDefinitionId) ? cardDefinitionId : 0,
-        count: Number.isFinite(count) ? Math.max(0, count) : 0
-    };
+let sharedPicker;
+
+export function openDeckSelectionPicker(options) {
+    sharedPicker ??= createDeckSelectionPickerModal();
+    return sharedPicker.open(options);
 }
 
-function buildPreviewCardFromDefinition(entry, definition) {
-    const cardDefinitionId = entry.cardDefinitionId;
-    return {
-        cardDefinitionId,
-        count: entry.count,
-        cost: Number(definition?.cost ?? definition?.Cost ?? 99),
-        name: String(definition?.name ?? definition?.Name ?? `未知卡牌 #${cardDefinitionId}`),
-        type: String(definition?.type ?? definition?.Type ?? "unknown"),
-        rarity: String(definition?.rarity ?? definition?.Rarity ?? ""),
-        artPreview: String(definition?.artPreview ?? definition?.ArtPreview ?? ""),
-        card: definition ?? null
-    };
+export function closeDeckSelectionPicker() {
+    sharedPicker?.close();
 }
 
-async function buildPreviewCards(deckDetail) {
-    const rawEntries = Array.isArray(deckDetail?.cards)
-        ? deckDetail.cards
-        : (Array.isArray(deckDetail?.Cards) ? deckDetail.Cards : []);
-    const entries = rawEntries.map(normalizeDeckEntry).filter((entry) => entry.cardDefinitionId > 0 && entry.count > 0);
-    if (entries.length === 0) {
-        return [];
-    }
-
-    let definitionMap = null;
-    try {
-        definitionMap = await ensureCardDefinitionMap();
-    } catch {
-        definitionMap = null;
-    }
-
-    return entries.map((entry) => {
-        const definition = definitionMap?.get(entry.cardDefinitionId) ?? null;
-        return buildPreviewCardFromDefinition(entry, definition);
-    });
-}
-
-export function createDeckSelectionPickerModal() {
+function createDeckSelectionPickerModal() {
     const root = document.createElement("div");
     root.className = "deck-picker-modal";
     root.setAttribute("aria-hidden", "true");
@@ -179,13 +135,31 @@ export function createDeckSelectionPickerModal() {
         <div class="deck-selection-view deck-picker-selection-view" role="dialog" aria-modal="true" aria-labelledby="deck-picker-modal-title">
             <div class="view-header">
                 <div class="header-left">
-                    <h2 id="deck-picker-modal-title">选择卡组</h2>
+                    <div class="deck-picker-profile-avatar" aria-hidden="true" hidden>
+                        <span></span>
+                        <img alt="" decoding="async" hidden>
+                    </div>
+                    <div class="deck-picker-profile-identity">
+                        <h2 id="deck-picker-modal-title">选择卡组</h2>
+                        <div class="deck-picker-profile-record" hidden>
+                            <span>本赛事战绩</span>
+                            <div class="deck-picker-profile-tally">
+                                <span><strong class="deck-picker-profile-wins"></strong> 胜</span>
+                                <span><strong class="deck-picker-profile-losses"></strong> 负</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div class="header-right">
                     <button class="mp-btn ghost deck-picker-close-btn" type="button">关闭</button>
                 </div>
             </div>
+            <h3 class="deck-picker-profile-lineup" hidden>参赛卡组</h3>
             <div class="deck-grid deck-picker-grid" id="deck-picker-grid"></div>
+            <section class="deck-picker-profile-history" aria-labelledby="deck-picker-history-title" hidden>
+                <h3 id="deck-picker-history-title">前半程卡组</h3>
+                <div class="deck-grid deck-picker-grid"></div>
+            </section>
         </div>
         <div class="deck-preview-modal" id="deck-picker-preview-modal" aria-hidden="true">
             <div class="deck-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="deck-picker-preview-title">
@@ -199,6 +173,7 @@ export function createDeckSelectionPickerModal() {
                     </div>
                     <div class="deck-preview-toolbar-stats" id="deck-picker-preview-toolbar-stats"></div>
                     <div class="deck-preview-toolbar-actions">
+                        <select class="form-select deck-picker-preview-switcher" aria-label="切换卡组" hidden></select>
                         <button class="btn-secondary" id="deck-picker-preview-close-btn" type="button" aria-label="关闭预览">关闭</button>
                     </div>
                 </div>
@@ -213,15 +188,39 @@ export function createDeckSelectionPickerModal() {
     document.body.appendChild(root);
 
     const titleEl = root.querySelector("#deck-picker-modal-title");
+    const selectionView = root.querySelector(".deck-picker-selection-view");
+    const profileAvatar = root.querySelector(".deck-picker-profile-avatar");
+    const profileAvatarImage = profileAvatar.querySelector("img");
+    const profileAvatarFallback = profileAvatar.querySelector("span");
+    const profileRecord = root.querySelector(".deck-picker-profile-record");
+    const profileWins = root.querySelector(".deck-picker-profile-wins");
+    const profileLosses = root.querySelector(".deck-picker-profile-losses");
+    const profileLineup = root.querySelector(".deck-picker-profile-lineup");
     const gridEl = root.querySelector("#deck-picker-grid");
+    const profileHistory = root.querySelector(".deck-picker-profile-history");
+    const historyTitle = profileHistory.querySelector("h3");
+    const historyGrid = profileHistory.querySelector(".deck-picker-grid");
     const closeBtn = root.querySelector(".deck-picker-close-btn");
+    const previewCaption = root.querySelector(".deck-preview-caption");
+    const previewClose = root.querySelector("#deck-picker-preview-close-btn");
+    const previewSwitcher = root.querySelector(".deck-picker-preview-switcher");
     const deckMap = new Map();
 
     let resolver = null;
-    let previewOpening = false;
+    let openVersion = 0;
+    let previewVersion = -1;
+    let profileMode = false;
+    let returnFocus;
+    let previewFocus;
+    profileAvatarImage.addEventListener("error", () => { profileAvatarImage.hidden = true; });
 
     const deckPreview = createDeckPreviewModal({
-        idPrefix: "deck-picker-preview"
+        idPrefix: "deck-picker-preview",
+        onClose: () => {
+            selectionView.inert = false;
+            if (root.classList.contains("open") && previewFocus?.isConnected) previewFocus.focus();
+            previewFocus = undefined;
+        }
     });
 
     const fetchDeckDetail = async (deckId) => {
@@ -229,43 +228,56 @@ export function createDeckSelectionPickerModal() {
         return await apiGetJson(`/api/decks/${encodeURIComponent(deckId)}?${query}`);
     };
 
-    const openDeckPreview = async (deckId) => {
-        if (!deckPreview.isAvailable() || !deckId || previewOpening) return;
+    const openDeckPreview = async (deckId, previewBtn) => {
+        if (!deckPreview.isAvailable() || !deckId || previewVersion === openVersion) return;
         const deck = deckMap.get(String(deckId));
         if (!deck) return;
 
-        const previewBtn = gridEl.querySelector(`[data-picker-action="preview"][data-deck-id="${deckId}"]`);
-        previewOpening = true;
+        const buttonText = previewBtn?.textContent;
+        const version = openVersion;
+        previewVersion = version;
         if (previewBtn instanceof HTMLButtonElement) {
             previewBtn.disabled = true;
             previewBtn.textContent = "加载中...";
         }
 
         try {
-            const detail = await fetchDeckDetail(deckId);
-            const cards = await buildPreviewCards(detail);
+            const detail = profileMode ? deck : await fetchDeckDetail(deckId);
+            const cards = await loadDeckPreviewCards(detail);
+            if (version !== openVersion) return;
+            const firstPreview = !deckPreview.isOpen();
             deckPreview.open({
                 titleText: deck.name || "未命名卡组",
                 metaText: `${deck.classLabel || "未知职业"} | ${deck.ruleLabel || getDeckRuleLabel(deck?.rule)} | ${deck.environmentLabel || getDeckEnvironmentLabel(deck?.environment)}`,
                 cards,
-                stats: getDeckStats(deck),
+                stats: getDeckStats(profileMode ? deck.stats : deck),
                 exportEnabled: false,
                 exportVisible: false
             });
+            if (profileMode) previewSwitcher.value = deckId;
+            if (firstPreview) {
+                selectionView.inert = true;
+                previewClose.focus();
+            }
+        } catch (error) {
+            if (version === openVersion) throw error;
         } finally {
-            previewOpening = false;
+            if (previewVersion === version) previewVersion = -1;
             if (previewBtn instanceof HTMLButtonElement) {
                 previewBtn.disabled = false;
-                previewBtn.textContent = "预览";
+                previewBtn.textContent = buttonText;
             }
         }
     };
 
     const close = (selectedDeckId = null) => {
         if (!root.classList.contains("open")) return;
-        deckPreview.close();
+        openVersion++;
         root.classList.remove("open");
         root.setAttribute("aria-hidden", "true");
+        if (deckPreview.isOpen()) deckPreview.close();
+        if (returnFocus?.isConnected) returnFocus.focus();
+        returnFocus = null;
         if (resolver) {
             const resolve = resolver;
             resolver = null;
@@ -273,18 +285,49 @@ export function createDeckSelectionPickerModal() {
         }
     };
 
-    const open = ({ title = "选择卡组", decks = [], selectedDeckId = null } = {}) => {
-        if (resolver) {
-            const pendingResolve = resolver;
-            resolver = null;
-            pendingResolve(null);
-        }
+    function requestPreview(deckId, button) {
+        if (!deckPreview.isOpen() && previewVersion !== openVersion) previewFocus = button ?? document.activeElement;
+        openDeckPreview(deckId, button).catch((err) => {
+            showAlert(`预览失败：${err.message}`);
+        });
+    }
+
+    const open = ({
+        title = "选择卡组", decks = [], selectedDeckId = null, playerProfile = null,
+        emptyText = "没有可用卡组，请先在牌组编辑中创建。"
+    } = {}) => {
+        close();
+        openVersion++;
+        returnFocus = document.activeElement;
+        profileMode = Boolean(playerProfile);
+        const previous = playerProfile?.previousLineup;
+        const earlierDecks = previous?.decks ?? [];
 
         titleEl.textContent = title;
+        previewCaption.textContent = profileMode ? title + "的参赛卡组" : "卡组预览";
+        root.toggleAttribute("data-player-profile", profileMode);
+        profileAvatar.hidden = !profileMode;
+        profileRecord.hidden = !profileMode;
+        profileLineup.hidden = !profileMode;
+        profileHistory.hidden = earlierDecks.length === 0;
+        closeBtn.textContent = profileMode ? "×" : "关闭";
+        closeBtn.setAttribute("aria-label", profileMode ? "关闭选手资料" : "关闭");
+        closeBtn.title = "关闭";
+        if (profileMode) {
+            const avatarUrl = getLocalAvatarUrl(playerProfile.avatarUrl);
+            profileAvatarFallback.textContent = Array.from(title.trim())[0] ?? "?";
+            profileAvatarImage.hidden = !avatarUrl;
+            if (avatarUrl) profileAvatarImage.src = avatarUrl;
+            else profileAvatarImage.removeAttribute("src");
+            profileWins.textContent = playerProfile.record ? toSafeInt(playerProfile.record.wins) : "—";
+            profileLosses.textContent = playerProfile.record ? toSafeInt(playerProfile.record.losses) : "—";
+            const label = playerProfile.stageLabel ? playerProfile.stageLabel + "卡组" : "参赛卡组";
+            profileLineup.textContent = earlierDecks.length ? "后半程 · " + label : label;
+        }
         deckMap.clear();
 
         if (!Array.isArray(decks) || decks.length === 0) {
-            gridEl.innerHTML = '<div class="deck-picker-empty">没有可用卡组，请先在牌组编辑中创建。</div>';
+            gridEl.innerHTML = '<div class="deck-picker-empty">' + escapeHtml(emptyText) + '</div>';
         } else {
             decks.forEach(deck => {
                 const id = String(deck?.id ?? "");
@@ -292,11 +335,26 @@ export function createDeckSelectionPickerModal() {
                     deckMap.set(id, deck);
                 }
             });
-            gridEl.innerHTML = decks.map(deck => buildDeckCardHtml(deck, selectedDeckId)).join("");
+            gridEl.innerHTML = decks.map(deck => profileMode
+                ? buildTournamentDeckHtml(deck) : buildDeckCardHtml(deck, selectedDeckId)).join("");
         }
+        if (earlierDecks.length) {
+            historyTitle.textContent = previous.stageLabel ? "前半程 · " + previous.stageLabel + "卡组" : "前半程卡组";
+            for (const deck of earlierDecks) {
+                const id = String(deck.id);
+                if (!deckMap.has(id)) deckMap.set(id, deck);
+            }
+        }
+        historyGrid.innerHTML = earlierDecks.map(buildTournamentDeckHtml).join("");
+        root.toggleAttribute("data-single-profile-deck", profileMode && !earlierDecks.length && deckMap.size === 1);
+        previewSwitcher.replaceChildren(...(profileMode
+            ? Array.from(deckMap.values(), deck => new Option(
+                earlierDecks.length && deck.stageLabel ? `${deck.stageLabel} · ${deck.name}` : deck.name, deck.id)) : []));
+        previewSwitcher.hidden = !profileMode || deckMap.size <= 1;
 
         root.classList.add("open");
         root.setAttribute("aria-hidden", "false");
+        selectionView.scrollTop = 0;
         closeBtn?.focus();
 
         return new Promise((resolve) => {
@@ -318,18 +376,17 @@ export function createDeckSelectionPickerModal() {
         if (!deckId) return;
 
         if (action === "preview") {
-            openDeckPreview(deckId).catch((err) => {
-                showAlert(`预览失败：${err.message}`);
-            });
+            requestPreview(deckId, actionButton);
             return;
         }
 
-        if (action === "select") {
+        if (action === "select" && !profileMode) {
             close(deckId);
         }
     });
 
     closeBtn?.addEventListener("click", () => close(null));
+    previewSwitcher.addEventListener("change", () => requestPreview(previewSwitcher.value));
 
     document.addEventListener("keydown", (event) => {
         if (!root.classList.contains("open")) return;

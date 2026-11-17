@@ -58,7 +58,7 @@ import {
 } from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
 import { initDevConsole } from './devConsole.js'; // 开发者控制台
 import { ensureEnumLocalizations } from './enumLocalizationCache.js';
-import { getRouteNameFromHash, shouldReuseCachedHandshake } from './handshakePolicy.js';
+import { getRouteNameFromHash, isClassicRoomHandshake, shouldReuseCachedHandshake } from './handshakePolicy.js';
 import {
     canShowRematchRoomButton,
     isNonAiMultiplayerHandshake,
@@ -68,7 +68,7 @@ import {
 } from './roomExitDecisionPolicy.js';
 import { getStoredValue, removeStoredValue, setStoredValue } from './storageFallback.js';
 import { buildDebugLogLine, getConnectionDebugId } from './debugDiagnostics.js';
-import { createDeckSelectionPickerModal } from './components/deckSelectionPickerModal.js';
+import { closeDeckSelectionPicker, openDeckSelectionPicker } from './components/deckSelectionPickerModal.js';
 import { registerPwaServiceWorker, setupPwaInstallUI } from './pwaInstall.js';
 import { setupMobileViewport } from './mobileViewport.js';
 import {
@@ -332,7 +332,6 @@ const DEFAULT_MULTIPLAYER_DECK_FORMAT = Object.freeze({
     rule: 'standard'
 });
 
-let deckSelectionPickerModal = null;
 
 function normalizeDeckId(value) {
     const text = String(value ?? '').trim();
@@ -558,19 +557,13 @@ function ensureSelectedDeckId(key, decks = getDecksForKey(key)) {
     return resolved;
 }
 
-function ensureDeckPickerModal() {
-    if (!deckSelectionPickerModal) {
-        deckSelectionPickerModal = createDeckSelectionPickerModal();
-    }
-    return deckSelectionPickerModal;
-}
-
-async function pickDeckFromModal({ key, title, skipRefresh = false }) {
+async function pickDeckFromModal({ key, title, skipRefresh = false, acceptsDeck = null }) {
     if (!skipRefresh) {
         await refreshSelectableDecks();
     }
-    const decks = getDecksForKey(key);
-    const selectedDeckId = ensureSelectedDeckId(key, decks);
+    const available = getDecksForKey(key);
+    const selectedDeckId = ensureSelectedDeckId(key, available);
+    const decks = acceptsDeck ? available.filter(acceptsDeck) : available;
     const pickerDecks = decks.map(deck => {
         const presentation = buildDeckPresentation(deck);
         return ({
@@ -589,7 +582,7 @@ async function pickDeckFromModal({ key, title, skipRefresh = false }) {
         goingSecondWins: Number(deck?.goingSecondWins ?? deck?.GoingSecondWins ?? 0)
     });
     });
-    const pickedDeckId = await ensureDeckPickerModal().open({
+    const pickedDeckId = await openDeckSelectionPicker({
         title,
         decks: pickerDecks,
         selectedDeckId
@@ -1157,7 +1150,7 @@ async function leaveMatch(gameId, playerId, token) {
 
 async function leaveCurrentPvpRoom(reasonForLog) {
     const handshake = pendingHandshake || lobbyHandshake || loadCachedHandshake();
-    if (!handshake || handshake.useAiFallback === true || isSpectatorBattle(gameState, handshake)) {
+    if (!handshake || handshake.kind === 'tournament-match' || handshake.useAiFallback === true || isSpectatorBattle(gameState, handshake)) {
         clearCachedHandshake();
         return;
     }
@@ -1828,6 +1821,12 @@ function probeHandshakeRematchCapability(handshake) {
 function syncRematchRoomButtonVisibility() {
     const rematchBtn = document.getElementById('rematch-room-button');
     if (!rematchBtn) return;
+    if (getReconnectHandshake()?.kind === 'tournament-match') {
+        rematchBtn.textContent = '返回赛事房间';
+        rematchBtn.style.display = gameState.gameOver ? 'inline-flex' : 'none';
+        return;
+    }
+    rematchBtn.textContent = '返回房间再战';
     const handshake = getActiveNonAiRoomHandshake();
     if (
         gameState.gameOver === true &&
@@ -1850,6 +1849,88 @@ function formatHandshakeOutput(handshake) {
 function setPendingHandshake(handshake) {
     pendingHandshake = handshake;
     cacheHandshake(handshake);
+}
+
+async function openClassicPreparation(handshake) {
+    setPendingHandshake(handshake);
+    suppressMultiplayerLeaveOnce = true;
+    try {
+        return await router.navigateTo('match-room');
+    } finally {
+        if (router.getCurrentRoute() === 'multiplayer') suppressMultiplayerLeaveOnce = false;
+    }
+}
+
+async function initializeClassicRoomPage() {
+    const { initializeMatchRoom } = await import('./matchRoom.js');
+    const cached = getReconnectHandshake();
+    const handshake = isClassicRoomHandshake(cached) ? cached : null;
+    const ownsHandshake = () => getReconnectHandshake() === handshake;
+    const acceptsRoomDeck = (room, deck) => handshake.role !== 'guest' || !room.requiredEnvironment
+        || matchesDeckFormat(deck, { environment: room.requiredEnvironment, rule: room.requiredRule });
+    initializeMatchRoom({
+        handshake,
+        getRoom: async ({ includeProfiles, signal }) => readApiJsonResponse(await fetch(
+            '/api/match/' + encodeURIComponent(handshake.gameId) + '/preparation?includeProfiles=' + includeProfiles,
+            {
+                cache: 'no-store', signal,
+                headers: { 'X-Room-PlayerId': handshake.playerId, 'X-Room-Token': handshake.token }
+            })),
+        preferredDeck: room => {
+            const selected = getDeckById(deckSelectionState.selected.multiplayer);
+            return selected?.isBattleReady && acceptsRoomDeck(room, selected) ? resolveDeckId(selected) : null;
+        },
+        pickDeck: async room => {
+            await ensureDecksLoaded();
+            await refreshSelectableDecks();
+            if (router.getCurrentRoute() !== 'match-room' || !ownsHandshake()) return null;
+            return pickDeckFromModal({
+                key: 'multiplayer', title: '选择房间卡组', skipRefresh: true,
+                acceptsDeck: deck => acceptsRoomDeck(room, deck)
+            });
+        },
+        closeDeckPicker: closeDeckSelectionPicker,
+        setDeck: async deckId => {
+            const result = await submitDeckSelection(handshake, { deckId });
+            if (!result.ok) throw new Error(result.message);
+            if (ownsHandshake()) deckSelectionState.selected.multiplayer = deckId;
+        },
+        setReady: ready => markReady(handshake.gameId, handshake.playerId, handshake.token, ready),
+        start: () => startMatch(handshake.gameId, handshake.playerId, handshake.token),
+        kick: playerId => kickGuestFromMatch(handshake.gameId, handshake.playerId, handshake.token, playerId),
+        getStartDecision: room => resolveRematchPollStartedAction(room, rematchExitedActiveGameId),
+        enterGame: room => {
+            if (!ownsHandshake() || router.getCurrentRoute() !== 'match-room') return false;
+            syncHandshakeRematchCapabilityFromRoom(handshake, room);
+            rematchExitedActiveGameId = null;
+            return router.navigateTo('game');
+        },
+        guestJoined: () => mpNotificationSoundPlayer.playGuestJoined(),
+        releaseHandshake: () => { if (ownsHandshake()) clearCachedHandshake(); }
+    });
+}
+
+async function cleanupClassicRoomPage() {
+    const { cleanupMatchRoom } = await import('./matchRoom.js');
+    cleanupMatchRoom();
+    const handshake = getReconnectHandshake();
+    if (pendingRouteTransition?.fromRoute === 'match-room' && pendingRouteTransition.toRoute !== 'game'
+        && isClassicRoomHandshake(handshake)) {
+        await leaveCurrentPvpRoom('leave-match-room-page');
+    }
+}
+
+async function initializeTournamentMatchPage() {
+    const { initializeTournamentMatchRoom } = await import('./tournamentMatchRoom.js');
+    initializeTournamentMatchRoom(seat => {
+        setPendingHandshake({ ...seat, kind: 'tournament-match', canRematch: false });
+        return router.navigateTo('game');
+    });
+}
+
+async function cleanupTournamentMatchPage() {
+    const { cleanupTournamentMatchRoom } = await import('./tournamentMatchRoom.js');
+    cleanupTournamentMatchRoom();
 }
 
 function bindButton(button, handler) {
@@ -2308,8 +2389,9 @@ function setupMultiplayerUI() {
 
         let seatsHtml = '';
         if (room) {
-            const hostClass = !isMirage && room.hostDeckClass ? ` [${getDeckClassLabel(room.hostDeckClass)}]` : '';
-            const guestClass = !isMirage && room.guestDeckClass ? ` [${getDeckClassLabel(room.guestDeckClass)}]` : '';
+            const showAiDecks = room.useAiFallback || handshake.useAiFallback;
+            const hostClass = !isMirage && (isHost || showAiDecks) && room.hostDeckClass ? ` [${getDeckClassLabel(room.hostDeckClass)}]` : '';
+            const guestClass = !isMirage && (!isHost || showAiDecks) && room.guestDeckClass ? ` [${getDeckClassLabel(room.guestDeckClass)}]` : '';
             const hostStatus = room.hostReady ? '已准备' : '未准备';
             const guestStatus = room.guestPlayerId
                 ? (room.guestReady ? '已准备' : '未准备')
@@ -2436,6 +2518,10 @@ function setupMultiplayerUI() {
         const handshake = getActiveNonAiRoomHandshake();
         if (!handshake || handshake.dualControl) return;
         const targetOutput = handshake.role === 'guest' ? outJoin : outCreate;
+        if (isClassicRoomHandshake(handshake)) {
+            setOutput(targetOutput, '房间已保留，可返回房间。');
+            return;
+        }
         if (targetOutput) {
             startRoomLobbyPolling(handshake, targetOutput, handshake.role === 'guest' ? 1200 : 1500);
         }
@@ -2543,26 +2629,11 @@ function setupMultiplayerUI() {
                 return;
             }
 
-            const deckId = await getSelectedMultiplayerDeckId();
-            if (!deckId) {
-                setDeckOutput('请先选择卡组。', true);
-                return;
-            }
             setOutput(outCreate, '创建房间中...');
             await prepareRoomEntry();
             const handshake = await createMatch(false, { isPublic, mode: roomMode });
-            // Save handshake immediately so user can still retry or leave if deck submission fails
-            setPendingHandshake(handshake);
-
-            const selection = await submitDeckSelection(handshake, { deckId });
-            if (!selection.ok) {
-                setOutput(outCreate, buildLobbyStatusHtml(handshake, null, `房间已创建，但卡组选择失败：${selection.message}`), true);
-                return;
-            }
-            markRoomDeckSynced(handshake, deckId);
-            const readyRoom = await markReady(handshake.gameId, handshake.playerId, handshake.token, true);
-            setOutput(outCreate, buildLobbyStatusHtml(handshake, readyRoom, '房间已创建，等待对手加入。'));
-            startRoomLobbyPolling(handshake, outCreate, 1500);
+            setOutput(outCreate, '');
+            await openClassicPreparation(handshake);
         } catch (err) {
             setOutput(outCreate, `创建失败：${err.message}`, true);
         }
@@ -2631,31 +2702,6 @@ function setupMultiplayerUI() {
                 if (environment && rule) requiredFormat = { environment, rule };
             }
 
-            let selectedDeckId = null;
-            if (!knownIsMirage) {
-                await ensureDecksLoaded();
-                selectedDeckId = await getSelectedMultiplayerDeckId();
-                if (!selectedDeckId) {
-                    setDeckOutput('请先在多人对战中选择卡组。', true);
-                    return;
-                }
-                const selectedDeck = getDeckById(selectedDeckId, deckSelectionState.decks);
-                if (!selectedDeck) {
-                    setDeckOutput('当前已选卡组不存在，请重新选择后再加入。', true);
-                    return;
-                }
-                if (!await validateDeckForSelection(selectedDeck)) {
-                    setDeckOutput('当前选择卡组未通过校验，无法加入房间。', true);
-                    return;
-                }
-                if (requiredFormat && !matchesDeckFormat(selectedDeck, requiredFormat)) {
-                    setDeckOutput(`当前选择卡组与房主卡组不匹配（需要 ${getDeckEnvironmentLabel(requiredFormat.environment)} | ${getDeckRuleLabel(requiredFormat.rule)}），无法加入。`, true);
-                    return;
-                }
-                await refreshSelectableDecks();
-                setDeckOutput('');
-            }
-
             setOutput(outJoin, '加入房间中...');
             const existingHandshake = await prepareRoomEntry(targetRoomId, joinCode);
             if (requiredFormat) setMultiplayerDeckFormat(requiredFormat, 'multiplayer');
@@ -2663,17 +2709,12 @@ function setupMultiplayerUI() {
             const handshake = existingHandshake || await joinMatch(targetRoomId, joinCode);
             handshake.isMirage = knownIsMirage;
 
-            // Save handshake immediately so user keeps seat ownership even if deck sync fails
-            setPendingHandshake(handshake);
-
             if (!handshake.isMirage) {
-                const selection = await submitDeckSelection(handshake, { deckId: selectedDeckId });
-                if (!selection.ok) {
-                    setOutput(outJoin, buildLobbyStatusHtml(handshake, null, `已进入房间，但卡组同步失败：${selection.message}`), true);
-                    return;
-                }
-                markRoomDeckSynced(handshake, selectedDeckId);
+                setOutput(outJoin, '');
+                await openClassicPreparation(handshake);
+                return;
             }
+            setPendingHandshake(handshake);
             const readyRoom = await markReady(handshake.gameId, handshake.playerId, handshake.token, true);
             try {
                 await startMatch(handshake.gameId, handshake.playerId, handshake.token);
@@ -2701,6 +2742,10 @@ function setupMultiplayerUI() {
         }
         if (handshake.useAiFallback) {
             router.navigateTo('game');
+            return;
+        }
+        if (isClassicRoomHandshake(handshake)) {
+            await openClassicPreparation(handshake);
             return;
         }
 
@@ -3603,6 +3648,8 @@ async function cleanupMultiplayerPage() {
 // 入口拥有连接与页面业务；路由等待这些生命周期，DOM 事件仅通知视图清理。
 router.setRouteLifecycle('game', { init: initializeGamePage, cleanup: cleanupGamePage });
 router.setRouteLifecycle('multiplayer', { cleanup: cleanupMultiplayerPage });
+router.setRouteLifecycle('match-room', { init: initializeClassicRoomPage, cleanup: cleanupClassicRoomPage });
+router.setRouteLifecycle('tournament-match', { init: initializeTournamentMatchPage, cleanup: cleanupTournamentMatchPage });
 registerRoomExitDecisionRouteHooks();
 registerBeforeUnloadGuard();
 
@@ -3678,9 +3725,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const rematchBtn = document.getElementById('rematch-room-button');
     rematchBtn?.addEventListener('click', () => {
+        if (getReconnectHandshake()?.kind === 'tournament-match') {
+            void router.navigateTo('tournament-match');
+            return;
+        }
         rematchExitedActiveGameId = gameState.gameId || null;
         returningToLobbyForRematch = true;
-        void router.navigateTo('multiplayer');
+        void router.navigateTo(isClassicRoomHandshake(getReconnectHandshake()) ? 'match-room' : 'multiplayer');
     });
 
     try {

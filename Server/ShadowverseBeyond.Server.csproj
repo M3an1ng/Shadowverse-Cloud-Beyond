@@ -72,6 +72,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Services\TournamentReportFormats.json" LogicalName="TournamentReportFormats.json" />
     <Content Remove="publish\**" />
     <None Remove="publish\**" />
     <Content Remove="artifacts\**" />

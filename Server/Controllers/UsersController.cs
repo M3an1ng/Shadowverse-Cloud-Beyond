@@ -1,8 +1,10 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Infrastructure.Data;
+using ShadowverseBeyond.Server.Infrastructure.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using System.IO;
 
@@ -100,6 +102,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPut("{userId:guid}/role")]
+    [Authorize(Policy = AccountSession.AdminPolicy)]
     [ProducesResponseType(typeof(UserSummaryResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
@@ -119,12 +122,9 @@ public class UsersController : ControllerBase
             return BadRequest("actorUserId is required.");
         }
 
-        var actor = await _db.Users
-            .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == request.ActorUserId, cancellationToken);
-        if (!CanManageUsers(actor))
+        if (AccountSession.GetUserId(User) != request.ActorUserId)
         {
-            return StatusCode(StatusCodes.Status403Forbidden, "Only admin can update user roles.");
+            return Forbid(AccountSession.Scheme);
         }
 
         if (!TryParseManageableRole(request.Role, out var nextRole, out var errorMessage))
@@ -230,6 +230,7 @@ public class UsersController : ControllerBase
     }
 
     [HttpPut("{userId:guid}/password")]
+    [Authorize(Policy = AccountSession.AdminPolicy)]
     [ProducesResponseType(typeof(PasswordResetResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
@@ -254,12 +255,9 @@ public class UsersController : ControllerBase
             return BadRequest($"Password length must be at least {MinPasswordLength}.");
         }
 
-        var actor = await _db.Users
-            .AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == request.ActorUserId, cancellationToken);
-        if (!CanManageUsers(actor))
+        if (AccountSession.GetUserId(User) != request.ActorUserId)
         {
-            return StatusCode(StatusCodes.Status403Forbidden, "Only admin can reset passwords.");
+            return Forbid(AccountSession.Scheme);
         }
 
         var target = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
