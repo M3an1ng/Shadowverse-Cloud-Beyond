@@ -52,7 +52,7 @@ import {
     updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi,
     refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, hidePlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast,
     replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard,
-    appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual,
+    appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual, clearSelfReturnVisuals,
     prepareCardMoveVisual, commitCardMoveVisual, notifyCardPlayed, playAttackLunge, playUnitEvolutionEffect, notifyShieldRemoved, cancelAllBattleMotions,
     startMirageCombatPlaybackUi, renderMirageCombatStep, renderMirageCombatOutcome, hideMirageCombatPlaybackOverlay, showMirageReconnectLockOverlay
 } from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
@@ -100,7 +100,7 @@ import menuBg5Url from './background/background_5.jpg';
 // 在页面初始化前接入真实 console；面板首次打开时才创建 DOM。
 bindGameView({
     renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, hidePlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual,
-    prepareCardMoveVisual, commitCardMoveVisual, notifyCardPlayed, playAttackLunge, playUnitEvolutionEffect, notifyShieldRemoved, cancelAllBattleMotions,
+    clearSelfReturnVisuals, prepareCardMoveVisual, commitCardMoveVisual, notifyCardPlayed, playAttackLunge, playUnitEvolutionEffect, notifyShieldRemoved, cancelAllBattleMotions,
     startMirageCombatPlaybackUi, renderMirageCombatStep, renderMirageCombatOutcome, hideMirageCombatPlaybackOverlay, showMirageReconnectLockOverlay
 });
 initDevConsole();

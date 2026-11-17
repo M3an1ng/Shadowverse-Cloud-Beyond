@@ -35,7 +35,13 @@ export function createRevealPresentationGate(isCurrent = () => true) {
 
   const execute = (work) => {
     const startedIn = generation;
-    const completion = work();
+    let completion;
+    try {
+      completion = work();
+    } catch (error) {
+      console.error("处理对局事件失败", error);
+      return;
+    }
     if (completion && typeof completion.then === "function") {
       waiting++;
       Promise.resolve(completion)

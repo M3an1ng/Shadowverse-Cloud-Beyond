@@ -97,3 +97,24 @@ test('a full state discards old animation work without unblocking newer effects'
     await setImmediate();
     assert.deepEqual(events, ['snapshot', 'new effect', 'new move']);
 });
+
+test('a queued event failure does not strand card moves or the next turn', async t => {
+    const gate = createRevealPresentationGate();
+    const spellAnimation = deferred();
+    const visualError = new TypeError('self-return visual failed');
+    const logged = t.mock.method(console, 'error', () => {});
+    const events = [];
+
+    gate.dispatch('CardMoved', () => spellAnimation.promise);
+    gate.dispatch('CardReturned', () => { throw visualError; });
+    gate.dispatch('CardMoved', () => events.push('returned to hand'));
+    gate.dispatch('TurnStarted', () => events.push('next turn'));
+    assert.deepEqual(events, []);
+
+    spellAnimation.resolve();
+    await setImmediate();
+
+    assert.deepEqual(events, ['returned to hand', 'next turn']);
+    assert.equal(logged.mock.callCount(), 1);
+    assert.equal(logged.mock.calls[0].arguments[1], visualError);
+});
