@@ -57,34 +57,55 @@
 
 .bui-alternate-cast-effect {
     position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
     z-index: 9681;
     pointer-events: none;
 }
 
 .bui-alternate-cast-label {
-    --cast-accent: #9eeaff;
+    --cast-accent: #a5fbff;
+    --cast-rim: #428b9f;
     position: absolute;
-    top: calc(100% + 9px);
-    left: 50%;
+    z-index: 9682;
+    display: flex;
+    align-items: center;
+    gap: 7px;
     transform: translateX(-50%);
-    padding: 3px 13px 3px 15px;
-    border-block: 1px solid var(--cast-accent);
-    clip-path: polygon(8% 0, 92% 0, 100% 50%, 92% 100%, 8% 100%, 0 50%);
-    background: #101823;
+    padding: 4px 11px;
+    border-block: 1px solid var(--cast-rim);
+    clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
+    background: linear-gradient(105deg, #122735f2, #09121bf5 65%, #193245f2);
     color: var(--cast-accent);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 700;
-    letter-spacing: 0.14em;
-    text-shadow: 0 0 8px var(--cast-accent);
+    line-height: 1.12;
+    letter-spacing: 0.12em;
+    opacity: 0;
     white-space: nowrap;
     pointer-events: none;
 }
 
+.bui-alternate-cast-label::before {
+    content: '';
+    width: 7px;
+    height: 8px;
+    border-inline: 2px solid currentColor;
+    transform: skewX(-26deg);
+    box-sizing: border-box;
+}
+
 .bui-alternate-cast-label.is-crystalize {
-    --cast-accent: #f5d896;
+    --cast-accent: #ffe3aa;
+    --cast-rim: #a27a59;
+    clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 50%, calc(100% - 7px) 100%, 7px 100%, 0 50%);
+    background: linear-gradient(105deg, #3a2632f2, #1c1924f5 65%, #362737f2);
+}
+
+.bui-alternate-cast-label.is-crystalize::before {
+    width: 6px;
+    height: 8px;
+    border: 1px solid currentColor;
+    background: linear-gradient(65deg, #d88c94 48%, #ffdf9c 50%);
+    transform: rotate(35deg) skewY(16deg);
 }
 
 #game-container .bui-motion-carrier.is-self-cast > .card:not(.amulet) {

@@ -1218,49 +1218,74 @@ export function createBattleMotionController({
 
         const timing = alternateCastTimings[mode];
         const speed = fastForward ? 0.55 : 1;
-        const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5, 1440 / width, 900 / height);
-        canvas.width = Math.max(1, Math.round(width * pixelRatio));
-        canvas.height = Math.max(1, Math.round(height * pixelRatio));
         canvas.className = 'bui-alternate-cast-effect';
         canvas.setAttribute('aria-hidden', 'true');
-        ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
 
         const label = document.createElement('div');
         label.className = `bui-alternate-cast-label is-${mode}`;
         label.textContent = timing.label;
-        carrier.append(label);
-        layer.append(canvas);
+        label.setAttribute('aria-hidden', 'true');
+        label.style.left = `${geometry.hover.x}px`;
+        label.style.top = `${geometry.hover.y + geometry.height * 0.64}px`;
+        layer.append(canvas, label);
 
         const targetEl = queryBoardEntityElement(targetUid);
         if (targetUid) hideRealElement(targetEl, targetUid);
-        const updateTarget = () => {
+        geometry.target = geometry.hover;
+        let bounds;
+        function fitCanvas() {
+            const { hover, target, width: w, height: h } = geometry;
+            const side = w * (mode === 'accelerate' ? 2.25 : 1.04);
+            const left = Math.max(0, Math.floor(Math.min(hover.x - side, target.x - w * 0.8)));
+            const right = Math.min(Math.ceil(width), Math.ceil(Math.max(hover.x + side, target.x + w * 0.8)));
+            const top = Math.max(0, Math.floor(Math.min(hover.y - h, target.y - h * 0.69)));
+            const bottom = Math.min(Math.ceil(height), Math.ceil(Math.max(hover.y + h, target.y + h * 0.69)));
+            if (bounds && left >= bounds.left && right <= bounds.right && top >= bounds.top && bottom <= bounds.bottom) return;
+            // Leave room for small shifts as field cards settle, without reallocating the bitmap.
+            bounds = { left: Math.max(0, left - 12), right: Math.min(Math.ceil(width), right + 12),
+                top: Math.max(0, top - 12), bottom: Math.min(Math.ceil(height), bottom + 12) };
+            const cssWidth = Math.max(1, bounds.right - bounds.left);
+            const cssHeight = Math.max(1, bounds.bottom - bounds.top);
+            const ratio = Math.min(window.devicePixelRatio || 1, 2, 1440 / cssWidth, 900 / cssHeight);
+            canvas.width = Math.max(1, Math.round(cssWidth * ratio));
+            canvas.height = Math.max(1, Math.round(cssHeight * ratio));
+            Object.assign(canvas.style, { left: `${bounds.left}px`, top: `${bounds.top}px`,
+                width: `${cssWidth}px`, height: `${cssHeight}px` });
+            const sx = canvas.width / cssWidth, sy = canvas.height / cssHeight;
+            ctx.setTransform(sx, 0, 0, sy, -bounds.left * sx, -bounds.top * sy);
+        }
+        function updateTarget() {
             const current = queryBoardEntityElement(targetUid);
             const rect = current && toStageRect(current.getBoundingClientRect(), stageEl.getBoundingClientRect());
-            geometry.target = rect ? { x: rect.cx, y: rect.cy } : geometry.hover;
-        };
+            if (rect?.width && rect.height && (rect.cx !== geometry.target.x || rect.cy !== geometry.target.y)) {
+                geometry.target = { x: rect.cx, y: rect.cy };
+                fitCanvas();
+            }
+        }
         updateTarget();
+        if (!bounds) fitCanvas();
 
         let resolveSequence;
         const sequence = new Promise(resolve => { resolveSequence = resolve; });
         const startedAt = performance.now();
         let frameId;
         let impacted = false;
-        let flightStarted = false;
 
         function resolveImpact() {
             if (impacted) return;
             impacted = true;
-            if (targetUid) restoreRealElement(targetEl, targetUid);
+            if (targetUid) {
+                updateTarget();
+                restoreRealElement(targetEl, targetUid);
+            }
             carrier.remove();
+            label.remove();
             resolveSequence();
             onResolveImpact?.();
         }
 
         function draw(ms) {
-            if (!flightStarted && ms >= timing.resolve) {
-                flightStarted = true;
-                updateTarget();
-            }
+            if (targetUid && !impacted && ms >= timing.resolve) updateTarget();
             if (!impacted) {
                 const pose = castCardPose(mode, ms, geometry);
                 carrier.style.translate = `${pose.x - geometry.hover.x}px ${pose.y - geometry.hover.y}px`;
@@ -1269,7 +1294,7 @@ export function createBattleMotionController({
                 carrier.style.opacity = pose.opacity;
                 label.style.opacity = pose.labelOpacity;
             }
-            ctx.clearRect(0, 0, width, height);
+            ctx.clearRect(bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top);
             paintAlternateCastEffect(ctx, mode, ms, geometry);
         }
 
@@ -1286,6 +1311,7 @@ export function createBattleMotionController({
             window.clearTimeout(cleanupTimer);
             canvas.remove();
             carrier.remove();
+            label.remove();
             if (!impacted && targetUid) restoreRealElement(targetEl, targetUid);
             resolveSequence();
         }
@@ -1355,7 +1381,7 @@ export function createBattleMotionController({
                 geometry: {
                     source: { x: startCx, y: startCy, scale: startScale },
                     hover: { x: hoverCx, y: hoverCy },
-                    width: w, height: h, drag: isFromDrag
+                    width: w, height: h, drag: isFromDrag, opponent: isOpponent
                 }
             });
             if (sequence) return sequence;
