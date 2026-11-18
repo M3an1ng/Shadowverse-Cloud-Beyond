@@ -130,6 +130,7 @@ coverage/
 !/tests/DiscoverInstances/
 !/tests/modeChoiceDialog.test.mjs
 !/tests/battleConnection.test.mjs
+!/tests/handPlayCancellation.test.mjs
 !/tests/liveEffectSummary.test.mjs
 
 # Small native Mini presentation assets, separate from the downloaded card library.

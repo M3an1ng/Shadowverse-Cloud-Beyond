@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Abilities.Targets;
+using ShadowverseBeyond.Server.Domain.Events.ActionRequests;
 using ShadowverseBeyond.Server.Dtos.SignalR.Actions;
 using ShadowverseBeyond.Server.Hubs;
 using ShadowverseBeyond.Server.Hubs.ClientInterfaces;
@@ -46,6 +47,12 @@ namespace ShadowverseBeyond.Server.Services
         public async Task<PlayerChoiceResult> WaitForPlayerChoiceAsync(string gameId, PlayerChoiceRequest request, CancellationToken cancellationToken)
         {
             request.GameId = gameId;
+            if (request.IsCancellable
+                && _serviceProvider.GetService<IGameContextAccessor>()?.GameContext is { TriggeringEvent: PlayCardRequestedEvent play } action
+                && action.CurrentGameState.GameId == gameId && play.PlayerId == request.RequestingPlayerId)
+            {
+                request.PendingPlayCardUid = play.ActionDto.CardUid;
+            }
             var tcs = new TaskCompletionSource<PlayerChoiceResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             var context = new PendingChoiceContext(request, tcs, cancellationToken);
 

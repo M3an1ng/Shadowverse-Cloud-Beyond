@@ -793,6 +793,335 @@ body:has(.duel-room-page.active) #battle-portrait-rotate-overlay,
     cursor: default;
 }
 
+/* Classic room finishes. The shared grid and its responsive rules own all sizing. */
+#match-room-page {
+    --room-gold: #e1c895;
+}
+
+#match-room-page .duel-room-header {
+    border-bottom-color: transparent;
+    background: linear-gradient(90deg, #9fb8cd77, #76889e40 45%, #a5b0bc17) left bottom / 100% 1px no-repeat;
+}
+#match-room-page .duel-room-header h1 { color: #edf2f6; text-shadow: 0 2px 6px #060d17; }
+
+#match-room-seats .duel-room-seat {
+    --seat-enamel: #3b202d;
+    --chart-origin: 5%;
+    --long-cut: clamp(17px, 2.35vw, 34px);
+    --short-cut: clamp(5px, 0.65vw, 9px);
+    --action-cut: clamp(6px, 0.78vw, 12px);
+    --cut-left: var(--long-cut);
+    --cut-right: var(--short-cut);
+    --foot-left: var(--short-cut);
+    --foot-right: var(--action-cut);
+    --inner-side: left;
+    --outer-side: right;
+    --facet-angle: 135deg;
+    --rim-angle: 236deg;
+    position: relative;
+    isolation: isolate;
+    border-color: transparent;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    filter: drop-shadow(0 7px 10px #02081370);
+}
+#match-room-seats .duel-room-seat[data-self="true"] {
+    --seat-enamel: #193650;
+    --chart-origin: 95%;
+    --cut-left: var(--short-cut);
+    --cut-right: var(--long-cut);
+    --foot-left: var(--action-cut);
+    --foot-right: var(--short-cut);
+    --inner-side: right;
+    --outer-side: left;
+    --facet-angle: 45deg;
+    --rim-angle: 124deg;
+}
+/* Two nested cuts give the diagonal a metal edge, like the battle amulet frame.
+   Only the painted layers are clipped, so the controls keep their full focus rings. */
+#match-room-seats .duel-room-seat::before, #match-room-seats .duel-room-seat::after {
+    --trim: 0px;
+    --top-left: calc(var(--cut-left) - var(--trim));
+    --top-right: calc(var(--cut-right) - var(--trim));
+    --bottom-left: calc(var(--foot-left) - var(--trim));
+    --bottom-right: calc(var(--foot-right) - var(--trim));
+    content: "";
+    position: absolute;
+    clip-path: polygon(var(--top-left) 0, calc(100% - var(--top-right)) 0, 100% var(--top-right), 100% calc(100% - var(--bottom-right)),
+        calc(100% - var(--bottom-right)) 100%, var(--bottom-left) 100%, 0 calc(100% - var(--bottom-left)), 0 var(--top-left));
+    pointer-events: none;
+}
+#match-room-seats .duel-room-seat::before {
+    inset: -1px;
+    z-index: -2;
+    background: linear-gradient(var(--rim-angle),
+        color-mix(in srgb, var(--seat-color) 68%, #f3f5ef), var(--seat-color) 11%, #3d4b5a 28%,
+        #263240 49%, color-mix(in srgb, var(--seat-color) 69%, #6c7884) 72%, #344452 91%);
+}
+#match-room-seats .duel-room-seat::after {
+    --trim: 1px;
+    --cut-etch: linear-gradient(var(--facet-angle), transparent calc(50% - 1px),
+        color-mix(in srgb, var(--seat-color) 67%, transparent) 50%, transparent calc(50% + 1px));
+    inset: 0.75px;
+    z-index: -1;
+    background:
+        var(--cut-etch) var(--inner-side) 5px top 4px / var(--long-cut) var(--long-cut) no-repeat,
+        linear-gradient(var(--deck-direction), transparent, color-mix(in srgb, var(--seat-color) 48%, transparent), transparent) var(--inner-side) 6% bottom 3px / 18% 1px no-repeat,
+        linear-gradient(var(--deck-direction), transparent, var(--seat-color) 25%, transparent) var(--outer-side) 3% top 3px / 34% 1px no-repeat,
+        radial-gradient(circle at var(--chart-origin) -3rem, transparent 6.1rem, #d8e2ef12 6.14rem, transparent 6.2rem 6.55rem, #d8e2ef12 6.59rem, transparent 6.65rem),
+        linear-gradient(170deg, var(--seat-enamel), #121d2d 58%, #0a1420);
+}
+#match-room-seats .duel-room-person {
+    border-bottom-color: transparent;
+    background: linear-gradient(var(--deck-direction), color-mix(in srgb, var(--seat-color) 53%, transparent), transparent 94%) bottom / 100% 1px no-repeat;
+}
+#match-room-seats .duel-room-avatar {
+    border-color: color-mix(in srgb, var(--seat-color) 75%, #e2ecf4);
+    box-shadow: 0 0 0 2px #0a1624, 0 0 0 3px color-mix(in srgb, var(--seat-color) 44%, transparent);
+}
+#match-room-seats .duel-room-avatar::after {
+    content: "";
+    position: absolute;
+    inset: 1px;
+    border-radius: inherit;
+    box-shadow: inset 0 1px 0 #f5faff47, inset 0 -3px 5px #06101a52;
+    pointer-events: none;
+}
+#match-room-seats .duel-room-seat[data-state="empty"] .duel-room-avatar { border-color: #9e7887; }
+#match-room-seats [data-state="empty"] .duel-room-avatar::before {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    border-color: #c297a5;
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+#match-room-seats .duel-room-self {
+    color: #d2edff;
+    background: #5ca4dc19;
+}
+#match-room-seats [data-state="waiting"] .duel-room-seat-state::before { border: 1px solid #a3b3c1; background: transparent; }
+#match-room-seats [data-state="ready"] .duel-room-seat-state::before { box-shadow: 0 0 0 2px #7ae7b824, 0 0 7px #80efc47a; }
+
+#match-room-seats .duel-room-deck[data-deck-class]::before {
+    mask-image: linear-gradient(var(--deck-direction), transparent, #000b 27%, #000 62%);
+}
+#match-room-seats .duel-room-deck::after {
+    background:
+        linear-gradient(180deg, #dbe9f615, transparent 23%, transparent 66%, #070f1d85),
+        linear-gradient(var(--deck-direction), #0a1425ed, #101a2ca1 37%, #0c152214 85%);
+}
+#match-room-seats .duel-room-deck[data-state="empty"] {
+    --deck-tone: var(--seat-color);
+    border-color: color-mix(in srgb, var(--seat-color) 30%, #263347);
+    background: linear-gradient(var(--deck-direction), #121e2c, color-mix(in srgb, var(--seat-color) 13%, #152034));
+}
+#match-room-seats .duel-room-deck[data-state="empty"]::before {
+    border-color: color-mix(in srgb, var(--seat-color) 58%, #253545);
+    background:
+        repeating-conic-gradient(from 45deg, var(--seat-color) 0deg 90deg, transparent 90deg 180deg) center / 6px 6px no-repeat,
+        repeating-linear-gradient(45deg, #b3c3d615 0 1px, transparent 1px 4px), #243143;
+    box-shadow: inset 0 0 0 2px #172336, inset 0 0 0 3px #bbc8d23b, 4px -4px #29364a, 5px -5px color-mix(in srgb, var(--seat-color) 42%, #243143);
+}
+
+#match-room-layout .duel-room-joincard {
+    border-color: #8a795e;
+    background:
+        linear-gradient(90deg, transparent, #e5c998b8, transparent) center top / 80% 1px no-repeat,
+        radial-gradient(ellipse at 30% -30%, #b79b6736, transparent 74%),
+        linear-gradient(145deg, #1b293a, #0b1726 85%);
+    box-shadow: inset 0 0 0 3px #101a26, inset 0 0 0 4px #ccb38529, 0 8px 20px #040a146b;
+}
+#match-room-code { color: #fff0d2; text-shadow: 0 1px 6px #060e1ce6; }
+#match-room-layout .duel-room-format { color: #d0dbe6; border-top-color: #baa58240; }
+#match-room-copy-toast:not(:empty):not([data-error="true"]) { color: #f3e6ca; border-color: #8a795e; background: #182435; }
+
+#match-room-page .duel-room-button {
+    --control-tone: #a2c2d9;
+    color: color-mix(in srgb, var(--control-tone) 46%, white);
+    border-color: color-mix(in srgb, var(--control-tone) 49%, #172537);
+    background: linear-gradient(155deg, color-mix(in srgb, var(--control-tone) 21%, #172337), #111e2f);
+    box-shadow: inset 0 1px 0 #e0edff24, 0 2px 5px #02071066;
+}
+#match-room-seats .duel-room-actions { min-inline-size: 0; }
+#match-room-seats .duel-room-actions .duel-room-button {
+    --control-tone: var(--seat-color);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+#match-room-seats .duel-room-actions .duel-room-button:focus-visible { outline-offset: 2px; }
+#match-room-page #match-room-copy { --control-tone: var(--room-gold); }
+#match-room-page .duel-room-button:focus-visible { outline-color: var(--control-tone); }
+@media (hover: hover) {
+    #match-room-page .duel-room-button:enabled:hover {
+        border-color: var(--control-tone);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--control-tone) 23%, transparent), 0 2px 5px #02071066;
+    }
+}
+#match-room-page .duel-room-button:enabled:active { box-shadow: inset 0 2px 4px #030b1485; }
+@media (prefers-reduced-motion: no-preference) {
+    #match-room-page .duel-room-button { transition: border-color 160ms ease, box-shadow 160ms ease; }
+}
+
+/* The preparation seal occupies the same circular slot as the original control. */
+#match-room-ready {
+    --seal-edge: #d9c6a0;
+    --seal-tick: #c1d8e6a6;
+    --seal-turn: 0deg;
+    --seal-ease: cubic-bezier(.2, .72, .22, 1);
+    gap: clamp(0.22rem, 0.7vw, 0.5rem);
+    border: 1px solid #9ba8af;
+    color: #f4f5ef;
+    background: conic-gradient(from -38deg, #526070, #e8e1cb 36deg, #909caa 58deg, #364653 96deg,
+        #aabac0 146deg, #e2cfaa 176deg, #677483 209deg, #334451 253deg, #bfced0 316deg, #526070);
+    box-shadow: 0 0 0 2px #0a1726, 0 0 0 3px #9eb2bc59, 0 6px 16px #020812bd, inset 0 0 0 1px #f7f3db38;
+    transform: none;
+    transition: none;
+}
+
+#match-room-ready::before {
+    inset: -5px;
+    z-index: 0;
+    background: conic-gradient(from 34deg, var(--seal-edge) 0deg 30deg, transparent 30deg 87deg,
+        var(--seal-edge) 87deg 93deg, transparent 93deg 180deg, var(--seal-edge) 180deg 210deg,
+        transparent 210deg 267deg, var(--seal-edge) 267deg 273deg, transparent 273deg);
+    transform: rotate(var(--seal-turn));
+}
+
+.duel-ready-crystal, .duel-ready-dial, #match-room-ready::after {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+}
+
+.duel-ready-crystal {
+    inset: 3.5%;
+    overflow: hidden;
+    border: 1px solid #102033;
+    background:
+        radial-gradient(ellipse at 32% 0, #c8eeff55, transparent 53%),
+        linear-gradient(145deg, #b5e5ff25 27%, transparent 27.7%),
+        linear-gradient(34deg, #8ababf15 21%, transparent 21.7%),
+        radial-gradient(ellipse at 50% 110%, #3e6f8c, #1c344c 48%, #102239 86%);
+    box-shadow: inset 0 1px 2px #e5f9ff80, inset 0 -3px 6px #050f20a6;
+}
+
+.duel-ready-crystal::before, .duel-ready-crystal::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+}
+
+.duel-ready-crystal::before {
+    border-radius: inherit;
+    background:
+        radial-gradient(ellipse at 32% 0, #d3ffe04f, transparent 53%),
+        linear-gradient(145deg, #c9ffda20 27%, transparent 27.7%),
+        radial-gradient(ellipse at 50% 110%, #438778, #214e4f 48%, #102c37 86%);
+    box-shadow: inherit;
+    opacity: 0;
+}
+
+.duel-ready-crystal::after {
+    background: linear-gradient(110deg, transparent 32%, #dcf8ff24 45%, #f1faff52 49%, transparent 58%);
+    transform: translateX(-110%);
+}
+
+.duel-ready-dial {
+    inset: 7%;
+    border: 1px solid #c6dfe133;
+    background: repeating-conic-gradient(from -0.7deg, var(--seal-tick) 0deg 1.4deg, transparent 1.4deg 15deg);
+    mask-image: radial-gradient(farthest-side, transparent calc(100% - 3.5px), #000 calc(100% - 3px));
+}
+
+.duel-ready-mark {
+    position: relative;
+    width: clamp(1.65rem, 2.8vw, 2.55rem);
+    aspect-ratio: 1;
+    color: #d7ffea;
+    filter: drop-shadow(0 2px 2px #07121e);
+}
+
+.duel-ready-mark::before, .duel-ready-mark::after {
+    content: "";
+    position: absolute;
+}
+
+.duel-ready-mark::before {
+    inset: 0;
+    clip-path: polygon(50% 0, 57% 34%, 76% 22%, 66% 43%, 100% 50%, 66% 57%, 76% 78%, 57% 66%,
+        50% 100%, 43% 66%, 24% 78%, 34% 57%, 0 50%, 34% 43%, 24% 22%, 43% 34%);
+    background: repeating-conic-gradient(from 0deg, #fff3cb 0deg 45deg, #c8a678 45deg 90deg);
+}
+
+.duel-ready-mark::after {
+    top: 21%;
+    left: 16%;
+    width: 70%;
+    height: 39%;
+    border-left: 3px solid;
+    border-bottom: 3px solid;
+    opacity: 0;
+    transform: rotate(-45deg) scale(0.55);
+}
+
+#match-room-ready .duel-room-ready-label {
+    position: relative;
+    font: 700 clamp(0.9rem, 1.35vw, 1.12rem) / 1.25 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+    letter-spacing: 0.08em;
+    text-indent: 0.08em;
+    white-space: nowrap;
+    text-shadow: 0 1px 4px #07121e;
+}
+
+#match-room-ready[data-ready="true"] { --seal-turn: 36deg; --seal-edge: #b1e9d3; }
+#match-room-ready[data-ready="true"] .duel-ready-crystal::before { opacity: 1; }
+#match-room-ready[data-ready="true"] .duel-ready-mark::before { opacity: 0; transform: rotate(36deg) scale(0.55); }
+#match-room-ready[data-ready="true"] .duel-ready-mark::after { opacity: 1; transform: rotate(-45deg) scale(1); }
+#match-room-ready:disabled:not([aria-busy="true"]):not([data-ready="true"]) {
+    --seal-edge: #8a9ba8;
+    color: #c6d0d9;
+    filter: saturate(0.2);
+}
+#match-room-ready:disabled:not([aria-busy="true"]):not([data-ready="true"]) .duel-ready-mark { opacity: 0.55; }
+#match-room-ready[aria-busy="true"] { cursor: progress; }
+#match-room-ready[aria-busy="true"]::before {
+    background: conic-gradient(transparent 10%, var(--seal-edge) 83%, transparent 86%);
+}
+#match-room-ready:focus-visible { outline: 2px solid #fae2af; outline-offset: 6px; }
+#match-room-ready::after {
+    content: "";
+    inset: -3px;
+    border: 1px solid var(--seal-edge);
+    opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    #match-room-ready { transition: transform 200ms var(--seal-ease); }
+    #match-room-ready::before { transition: transform 480ms var(--seal-ease); }
+    .duel-ready-crystal::before { transition: opacity 320ms ease; }
+    .duel-ready-mark::before, .duel-ready-mark::after {
+        transition: transform 320ms var(--seal-ease), opacity 190ms ease;
+    }
+    #match-room-ready[data-ready="true"]::after { animation: duel-ready-confirm 550ms ease-out; }
+    #match-room-ready[aria-busy="true"]::before { animation: duel-ready-turn 1.1s linear infinite; }
+    #match-room-ready:enabled:focus-visible .duel-ready-crystal::after { animation: duel-ready-glint 640ms var(--seal-ease); }
+    @media (hover: hover) and (pointer: fine) {
+        #match-room-ready:enabled:hover { transform: translateY(-2px); }
+        #match-room-ready:enabled:hover::before { transform: rotate(calc(var(--seal-turn) + 18deg)); }
+        #match-room-ready:enabled:hover .duel-ready-crystal::after { animation: duel-ready-glint 640ms var(--seal-ease); }
+    }
+    #match-room-ready:enabled:active { transform: scale(0.965); transition-duration: 85ms; }
+}
+@keyframes duel-ready-glint { to { transform: translateX(110%); } }
+@keyframes duel-ready-turn { to { transform: rotate(calc(var(--seal-turn) + 360deg)); } }
+@keyframes duel-ready-confirm {
+    from { opacity: 0.65; transform: scale(0.98); }
+    to { opacity: 0; transform: scale(1.13); }
+}
+
 .duel-room-copy-input {
     position: fixed;
     opacity: 0;

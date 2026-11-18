@@ -905,6 +905,24 @@ Test("mulligan can draw a returned card again",()=>{
  var card=factory.CreateAndRegisterNewCard(match,2,a.PlayerId,CardZone.Hand);
  Check(a.PerformMulligan(new(){card.InstanceId},match).Success&&a.Hand.Single()==card,"returned card was excluded");
 });
+foreach (var shuffle in new[] { false, true })
+{
+    Test(shuffle ? "shuffling into deck reports committed counts" : "adding to deck reports committed counts", () =>
+    {
+        var owner = new PlayerState(Guid.NewGuid());
+        var match = new GameState("deck-count-test", owner, new PlayerState(Guid.NewGuid()), owner.PlayerId)
+            { AbilityManager = abilityManager, BuffManager = buffs };
+        using var moveContext = new GameContext(services, context.Mapper, accessor, match, owner.PlayerId);
+        factory.CreateAndRegisterNewCard(match, 2, owner.PlayerId, CardZone.Deck);
+        var sourceZone = shuffle ? CardZone.Hand : CardZone.Staging;
+        var cards = Enumerable.Range(0, 2).Select(_ => factory.CreateAndRegisterNewCard(match, 3, owner.PlayerId, sourceZone)).ToList();
+        var planned = shuffle ? owner.ShuffleCardsIntoDeck(cards) : owner.AddCardsToDeck(cards);
+        Check(!planned.GeneratedEvents.OfType<DeckCountChangedEvent>().Any(), "queued a deck count before moving the cards");
+        var counts = planned.GeneratedEvents.OfType<CardMovedEvent>().Select(move =>
+            move.Commit(moveContext).GeneratedEvents.OfType<DeckCountChangedEvent>().Single().NewDeckCount).ToList();
+        Check(counts.SequenceEqual(new[] { 2, 3 }) && owner.Deck.Count == 3, "deck notifications differ from the committed moves");
+    });
+}
 Test("reanimate modifier applies only to selected player",()=>{p1.Graveyard.Clear();Destroyed(5);Check(buffService.GetEffectiveAbilityKeywordValue(p2.Leader,AbilityKeyword.Reanimate,3,context)==3,"opponent polluted");});
 foreach(var mode in new[]{AbilityKeyword.Accelerate,AbilityKeyword.Crystalize}) {
  Test($"zero-cost {mode} is playable",()=>{

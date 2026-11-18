@@ -70,15 +70,21 @@ export function initializeMatchRoom(options) {
         seats.replaceChildren();
     };
 
-    function setControls() {
+    function setControls(requestedReady = null) {
         const roomWaiting = room && (room.status === 'Waiting' || room.status === 'Ready');
         const ownReady = ownHost ? room?.hostReady : room?.guestReady;
         const locked = busy || entering || released;
         pick.disabled = locked || !roomWaiting || ownReady;
         ready.disabled = locked || !roomWaiting
             || (!ownReady && (!room.selectedDeckId || room.selectedDeckMatchesRoom === false));
-        const label = ownReady ? '取消准备' : '准备就绪';
+        const submitting = requestedReady !== null;
+        const label = submitting
+            ? (requestedReady ? '准备中…' : '取消中…')
+            : (ownReady ? '取消准备' : '准备就绪');
         if (readyLabel.textContent !== label) readyLabel.textContent = label;
+        if (ready.getAttribute('aria-busy') !== String(submitting)) {
+            ready.setAttribute('aria-busy', String(submitting));
+        }
         ready.dataset.ready = String(Boolean(ownReady));
         kick.hidden = !roomWaiting || !room?.guestPlayerId;
         kick.disabled = locked;
@@ -199,7 +205,7 @@ export function initializeMatchRoom(options) {
                         await options.setDeck(preferred);
                     } finally {
                         busy = false;
-                        setControls();
+                        if (!signal.aborted) setControls();
                     }
                     return;
                 }
@@ -218,11 +224,12 @@ export function initializeMatchRoom(options) {
         }
     }
 
-    async function act(action) {
+    async function act(action, requestedReady = null) {
         if (!room || busy || entering || released) return;
+        const restoreFocus = requestedReady !== null && ready.matches(':focus-visible');
         requestVersion++;
         busy = true;
-        setControls();
+        setControls(requestedReady);
         let completed = false;
         try {
             await action();
@@ -231,9 +238,13 @@ export function initializeMatchRoom(options) {
             if (!signal.aborted) showMessage(error.message, true);
         } finally {
             busy = false;
-            setControls();
-            if (completed) schedule(0);
-            else schedule();
+            if (!signal.aborted) {
+                setControls();
+                if (restoreFocus && !ready.disabled && document.activeElement === document.body) {
+                    ready.focus({ preventScroll: true });
+                }
+                schedule(completed ? 0 : undefined);
+            }
         }
     }
 
@@ -241,10 +252,19 @@ export function initializeMatchRoom(options) {
         const id = await options.pickDeck(room);
         if (id && !signal.aborted) await options.setDeck(id);
     }), { signal });
-    ready.addEventListener('click', () => act(async () => {
-        const updated = await options.setReady(!(ownHost ? room.hostReady : room.guestReady));
-        if (!signal.aborted) await startIfReady(updated);
-    }), { signal });
+    ready.addEventListener('click', () => {
+        const nextReady = !(ownHost ? room?.hostReady : room?.guestReady);
+        void act(async () => {
+            const updated = await options.setReady(nextReady);
+            if (signal.aborted) return;
+            // The ready response omits the private deck and invite details.
+            room.hostReady = updated.hostReady;
+            room.guestReady = updated.guestReady;
+            room.status = updated.status;
+            render();
+            await startIfReady(updated);
+        }, nextReady);
+    }, { signal });
     kick.addEventListener('click', () => act(() => options.kick(room.guestPlayerId)), { signal });
     copy.addEventListener('click', async () => {
         if (!room?.joinCode) return;

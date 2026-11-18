@@ -149,7 +149,6 @@ function createInitialGameState() {
         player1MulliganComplete: false, // Player 1 mulligan status
         player2MulliganComplete: false, // Player 2 mulligan status
         // 稍后可能添加: eventLog, effectQueue 等
-        lastPlayedCardInstanceId: null, // BUG-016: Temp state for card played
         playabilityCache: {}, // Cache for hand playability { [playerId]: { [cardUid]: PlayabilityResultDto } }
         actPlayabilityCache: {}, // Cache for Act playability results { [playerId]: { [cardUid]: ActPlayabilityResultDto } }
         playabilityUpdateClock: {
@@ -1387,8 +1386,6 @@ export async function playCard(cardUid, targetUid = null) {
             }
         }
         // Invoke with the single DTO object
-        // BUG-016: Store UID before invoking, so PpUpdate can remove it from hand
-        gameState.lastPlayedCardInstanceId = cardUid;
         await connection.invoke("PlayCard", actionDto); // Pass the DTO object
 
         // If invoke succeeds, DO NOT modify local state directly.
@@ -3204,28 +3201,11 @@ export function handlePpUpdate(eventData) {
     }
     const playerToUpdate = getPlayerState(eventData.SourcePlayerId); // PascalCase
 
-    let handChanged = false; // BUG-016 Flag to track if hand was modified
-
     if (playerToUpdate) {
         playerToUpdate.pp = eventData.CurrentPp; // PascalCase
         playerToUpdate.maxPP = eventData.MaxPp; // PascalCase
 
-        // BUG-016: Remove the card that was just played (cost deducted) from hand
-        const cardToRemoveUid = gameState.lastPlayedCardInstanceId;
-        if (cardToRemoveUid) {
-            const cardIndex = playerToUpdate.hand.findIndex(c => c && c.uid === cardToRemoveUid);
-            if (cardIndex > -1) {
-                playerToUpdate.hand.splice(cardIndex, 1)[0];
-                handChanged = true;
-            }
-            // Clear the temporary state regardless of whether the card was found in hand
-            gameState.lastPlayedCardInstanceId = null;
-        }
-
-        // Render only if PP changed OR hand changed
         gameView.updatePpDisplay(playerToUpdate.id, playerToUpdate.pp, playerToUpdate.maxPP, playerToUpdate.ppBoostArmed === true); // Use specific UI update
-        // BUG-022 FIX: Update hand display if it was changed
-        // Hand update is now handled by handleCardPlayed
     } else {
         console.warn(`GM: PpUpdate event received for invalid player: ${eventData.SourcePlayerId}`); // PascalCase
     }
@@ -5133,6 +5113,8 @@ export async function submitPlayerChoice(request, chosenTargetIds, wasCancelled 
         return false;
     }
 
+    const cancelledCardKey = wasCancelled ? normalizeCardUid(request.PendingPlayCardUid) : null;
+    const cancelledLock = playCardRequestLocks.get(cancelledCardKey);
     try {
         const accepted = await connection.invoke("SubmitTargetChoice", {
             PendingChoiceId: request.PendingChoiceId,
@@ -5141,6 +5123,9 @@ export async function submitPlayerChoice(request, chosenTargetIds, wasCancelled 
             ChosenTargetIds: chosenTargetIds,
             WasCancelled: wasCancelled
         });
+        if (accepted === true && cancelledLock !== undefined && playCardRequestLocks.get(cancelledCardKey) === cancelledLock) {
+            unlockPlayCardRequest(cancelledCardKey);
+        }
         // The server either accepted this choice or reports that it has already ended.
         if (typeof accepted === 'boolean') handlePlayerChoiceResolved(request.PendingChoiceId);
         return accepted !== false;

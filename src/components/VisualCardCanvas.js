@@ -1,6 +1,7 @@
 // src/components/VisualCardCanvas.js
 // 可视化卡面直编组件（基于 MSE Beyond 渲染内核，适配星云沉浸式无痕原位交互）
 import { openCardSetManagerModal } from '../devToolsCardSetEnvironmentMembership.js';
+import { generateGuid } from '../userSession.js';
 import { openMseArtCropModal } from './MseArtCropModal.js';
 import {
     detectChineseVariant,
@@ -717,7 +718,7 @@ export class VisualCardCanvas {
 
         const draftKey = editorCard.id != null
             ? String(editorCard.id)
-            : (editorCard._draftKey ??= `draft:${crypto.randomUUID()}`);
+            : (editorCard._draftKey ??= `draft:${generateGuid()}`);
 
         const pendingArt = this.mseCard?.editorId === draftKey && this.hasPendingArtChanges()
             ? this.mseCard.presentation.art

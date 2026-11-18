@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using ShadowverseBeyond.Server.Domain.Abilities.Runtime;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Domain.Entities;
@@ -72,5 +73,8 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
         /// Indicates whether this choice can be cancelled by the player.
         /// </summary>
         public bool IsCancellable { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public Guid? PendingPlayCardUid { get; set; }
     }
 }
