@@ -2140,6 +2140,12 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
 .hud-line.top { top: 12%; left: 0; width: 100%; height: 1px; }
 .hud-line.bottom { bottom: 12%; left: 0; width: 100%; height: 1px; } */
 
+#navigation-page .title-container,
+#navigation-page .nav-menu {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
 /* --- Main Title --- */
 .title-container {
     position: absolute;
