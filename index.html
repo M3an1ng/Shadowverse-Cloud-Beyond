@@ -303,16 +303,41 @@
             </div>
         </div>
 
-        <button id="dev-console-toggle" class="icon-btn" type="button" aria-label="前端控制台"
-            onclick="window.devConsole?.toggle()">
-            <svg viewBox="0 0 24 24" class="icon-svg">
-                <path
-                    d="M20 19V7H4v12h16zm0-16c1.1 0 2 .9 2 2v14c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2h16zm-7 14v-2h5v2h-5zM6 12l3.5-3.5 1.42 1.42L8.83 12l2.09 2.08L9.5 15.5 6 12z" />
+        <button id="replay-toggle" class="icon-btn" type="button" aria-label="对局回放" title="对局回放" aria-haspopup="dialog">
+            <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+                <path d="M12 3a9 9 0 1 1-8.7 11.3l2.1-.6A6.8 6.8 0 1 0 7 7.4L9.5 10H3V3.5l2.5 2.4A8.9 8.9 0 0 1 12 3Zm-1.6 5.2 6 3.8-6 3.8V8.2Z" />
             </svg>
         </button>
     </div>
 
     <!-- 主应用容器 -->
+    <dialog id="replay-library" aria-labelledby="replay-title">
+        <header class="replay-header">
+            <h2 id="replay-title">对局回放</h2>
+            <button type="button" data-replay="perspective" hidden>切换视角</button>
+            <button type="button" data-replay="back" hidden>返回列表</button>
+            <button type="button" class="replay-close" data-replay="close" aria-label="关闭对局回放" autofocus>×</button>
+        </header>
+        <section class="replay-list-panel" aria-label="我的对局">
+            <div class="replay-list-heading"><h3>我的对局</h3><button type="button" data-replay="refresh">刷新</button></div>
+            <div class="replay-list"></div>
+            <button type="button" class="replay-more" data-replay="more" hidden>更早的对局</button>
+        </section>
+        <p class="replay-status" role="status"></p>
+        <section class="replay-player" aria-label="回放战场" hidden>
+            <div class="replay-stage"></div>
+            <div class="replay-controls">
+                <div class="replay-position"><strong data-replay="caption"></strong><span data-replay="progress"></span></div>
+                <div class="replay-transport">
+                    <button type="button" data-replay="prev">上一步</button>
+                    <button type="button" class="replay-play" data-replay="play">播放</button>
+                    <button type="button" data-replay="next">下一步</button>
+                </div>
+                <label class="replay-turn">跳转回合 <select data-replay="turn"></select></label>
+            </div>
+        </section>
+    </dialog>
+
     <div id="app-container">
         <!-- 导航页面 -->
         <div id="navigation-page" class="page active">
@@ -685,6 +710,7 @@
                         <div class="player-stats leader-rpg-inner" id="player2-stats">
                             <div class="leader-rpg-portrait">
                                 <div class="stats-avatar leader-rpg-portrait-inner" id="player2-avatar">OPP</div>
+                                <span class="leader-shield" role="img" aria-label="屏障"></span>
                                 <span class="target-hover-ring is-leader-ring" aria-hidden="true"></span>
                             </div>
                             <div class="leader-rpg-body">
@@ -787,6 +813,7 @@
                         <div class="player-stats leader-rpg-inner" id="player1-stats">
                             <div class="leader-rpg-portrait">
                                 <div class="stats-avatar leader-rpg-portrait-inner" id="player1-avatar">YOU</div>
+                                <span class="leader-shield" role="img" aria-label="屏障"></span>
                                 <span class="target-hover-ring is-leader-ring" aria-hidden="true"></span>
                             </div>
                             <div class="leader-rpg-body">

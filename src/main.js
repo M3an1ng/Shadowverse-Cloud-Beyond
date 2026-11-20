@@ -92,6 +92,9 @@ import { createLobbyNotificationSoundPlayer } from './lobbyNotificationSound.js'
 import { createGuestJoinSoundTracker } from './multiplayerRoomSoundPolicy.js';
 import { setupDailyQuestUI } from './dailyQuestMenu.js';
 import { setupUserInfoUI } from './userMenu.js';
+import { rememberReplaySeat } from './replayTickets.js';
+import { installReplayLibrary } from './replayLibrary.js';
+import { mountReplayBoard } from './replayBoard.js';
 import menuBg1Url from './background/background_1.jpg';
 import menuBg2Url from './background/background_2.jpg';
 import menuBg3Url from './background/background_3.jpg';
@@ -1273,6 +1276,7 @@ async function openBattleSeat(session, seat, timeoutMs) {
                     syncPendingChoice: true
                 });
                 if (applied === false) throw new Error('对局状态不完整');
+                rememberReplaySeat(state);
                 session.boardHydrated = true;
                 syncRematchRoomButtonVisibility();
             }
@@ -3113,7 +3117,7 @@ function setupAboutUI() {
     const card = document.getElementById('about-card');
     const userCard = document.getElementById('user-info-card');
     const dailyQuestCard = document.getElementById('daily-quest-card');
-    const devConsoleToggle = document.getElementById('dev-console-toggle');
+    const replayToggle = document.getElementById('replay-toggle');
     if (!toggle || !card) return;
 
     const setOpen = (open) => {
@@ -3138,7 +3142,7 @@ function setupAboutUI() {
         setOpen(!isOpen);
     });
 
-    devConsoleToggle?.addEventListener('click', () => {
+    replayToggle?.addEventListener('click', () => {
         setOpen(false);
     });
 
@@ -3647,6 +3651,7 @@ async function cleanupMultiplayerPage() {
 
 // 入口拥有连接与页面业务；路由等待这些生命周期，DOM 事件仅通知视图清理。
 router.setRouteLifecycle('game', { init: initializeGamePage, cleanup: cleanupGamePage });
+router.setRouteLifecycle('replay-board', { init: mountReplayBoard });
 router.setRouteLifecycle('multiplayer', { cleanup: cleanupMultiplayerPage });
 router.setRouteLifecycle('match-room', { init: initializeClassicRoomPage, cleanup: cleanupClassicRoomPage });
 router.setRouteLifecycle('tournament-match', { init: initializeTournamentMatchPage, cleanup: cleanupTournamentMatchPage });
@@ -3703,6 +3708,7 @@ document.addEventListener('svb:mirage-return-lobby', () => {
 // 初始化开发者控制台（如果需要）
 document.addEventListener('DOMContentLoaded', async () => {
 
+    installReplayLibrary(() => gameState.gameOver && !gameState.isSpectator ? gameState.gameId : null);
     ensureEnumLocalizations(['CardRarity', 'CardClass', 'CardType', 'DeckEnvironment'])
         .catch(error => {
             console.warn('MAIN: Failed to prefetch card enum labels.', error);

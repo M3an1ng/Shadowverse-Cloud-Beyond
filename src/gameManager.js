@@ -2608,15 +2608,15 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
     playerInstance.displayName = playerDto.DisplayName ?? playerDto.displayName ?? playerInstance.displayName ?? '';
     playerInstance.avatarUrl = playerDto.AvatarUrl ?? playerDto.avatarUrl ?? playerInstance.avatarUrl ?? '';
     playerInstance.deckClass = playerDto.DeckClass ?? playerDto.deckClass ?? playerInstance.deckClass ?? '';
-    playerInstance.pp = playerDto.CurrentPP ?? 0; // PascalCase
-    playerInstance.maxPP = playerDto.MaxPP ?? 0; // PascalCase
-    playerInstance.ppBoostUsesAvailable = playerDto.PpBoostUsesAvailable ?? 0;
+    playerInstance.pp = playerDto.CurrentPP ?? playerDto.currentPP ?? 0;
+    playerInstance.maxPP = playerDto.MaxPP ?? playerDto.maxPP ?? 0;
+    playerInstance.ppBoostUsesAvailable = playerDto.PpBoostUsesAvailable ?? playerDto.ppBoostUsesAvailable ?? 0;
     playerInstance.isIntromezzoActive = playerDto.IsIntromezzoActive ?? playerDto.isIntromezzoActive ?? false;
     playerInstance.ppBoostArmed = playerDto.IsPpBoostArmed ?? playerDto.isPpBoostArmed ?? false;
-    playerInstance.ep = playerDto.CurrentEP ?? 0; // PascalCase
-    playerInstance.maxEP = playerDto.MaxEP ?? 0; // PascalCase
-    playerInstance.sep = playerDto.CurrentSEP ?? 0;
-    playerInstance.maxSEP = playerDto.MaxSEP ?? 0;
+    playerInstance.ep = playerDto.CurrentEP ?? playerDto.currentEP ?? 0;
+    playerInstance.maxEP = playerDto.MaxEP ?? playerDto.maxEP ?? 0;
+    playerInstance.sep = playerDto.CurrentSEP ?? playerDto.currentSEP ?? 0;
+    playerInstance.maxSEP = playerDto.MaxSEP ?? playerDto.maxSEP ?? 0;
     const rawCounters = playerDto.Counters ?? playerDto.counters;
     playerInstance.counters = (rawCounters && typeof rawCounters === 'object') ? { ...rawCounters } : {};
     const rawCounterDisplayNames = playerDto.CounterDisplayNames ?? playerDto.counterDisplayNames;
@@ -2646,15 +2646,15 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
     playerInstance.combo = readCounter('combo', playerDto.Combo ?? playerDto.combo ?? 0);
     playerInstance.rally = readCounter('rally', playerDto.Rally ?? playerDto.rally ?? 0);
     // FIXED: Backend sends CanEvolve, not CanEvolveThisTurn
-      playerInstance.canEvolve = playerDto.CanEvolve ?? false; // PascalCase - Fixed property name
-      playerInstance.canSuperEvolve = playerDto.CanSuperEvolve ?? false;
+      playerInstance.canEvolve = playerDto.CanEvolve ?? playerDto.canEvolve ?? false;
+      playerInstance.canSuperEvolve = playerDto.CanSuperEvolve ?? playerDto.canSuperEvolve ?? false;
       playerInstance.hasUnlockedEvolution =
-          playerDto.IsEvolutionUnlocked ?? playerDto.HasUnlockedEvolution ?? false;
+          playerDto.IsEvolutionUnlocked ?? playerDto.isEvolutionUnlocked ?? playerDto.HasUnlockedEvolution ?? false;
       playerInstance.hasUnlockedSuperEvolution =
-          playerDto.IsSuperEvolutionUnlocked ?? playerDto.HasUnlockedSuperEvolution ?? false;
+          playerDto.IsSuperEvolutionUnlocked ?? playerDto.isSuperEvolutionUnlocked ?? playerDto.HasUnlockedSuperEvolution ?? false;
       playerInstance.turnNumber = playerDto.TurnNumber ?? playerDto.turnNumber ?? 0; // PascalCase/camelCase
       playerInstance.deckCount = playerDto.DeckCount ?? playerDto.deckCount ?? (Array.isArray(playerDto.Deck ?? playerDto.deck) ? (playerDto.Deck ?? playerDto.deck).length : 0); // PascalCase/camelCase
-      playerInstance.graveyardCount = readCounter('graveyard', playerDto.GraveyardCount ?? playerInstance.graveyardCount ?? 0);
+      playerInstance.graveyardCount = readCounter('graveyard', playerDto.GraveyardCount ?? playerDto.graveyardCount ?? playerInstance.graveyardCount ?? 0);
       // Keep deck as simple array of IDs/DTOs from server if no methods needed client-side
       playerInstance.deck = Array.isArray(playerDto.Deck ?? playerDto.deck) ? [...(playerDto.Deck ?? playerDto.deck)] : []; // PascalCase/camelCase
       // Mulligan
@@ -3694,10 +3694,12 @@ export function handleCardInstanceUpdated(eventData) {
 }
 
 export function handleCardMoved(eventData) {
-    const cardUid = eventData?.CardUid ?? eventData?.MovedCard?.InstanceId;
-    const ownerId = eventData?.PlayerId ?? eventData?.MovedCard?.OwnerPlayerId ?? eventData?.SourcePlayerId;
-    const fromZone = normalizeZoneName(eventData?.FromZone);
-    const toZone = normalizeZoneName(eventData?.ToZone);
+    const movedCard = eventData?.MovedCard ?? eventData?.movedCard;
+    const cardUid = eventData?.CardUid ?? eventData?.cardUid ?? movedCard?.InstanceId ?? movedCard?.instanceId;
+    const ownerId = eventData?.PlayerId ?? eventData?.playerId ?? movedCard?.OwnerPlayerId ?? movedCard?.ownerPlayerId
+        ?? eventData?.SourcePlayerId ?? eventData?.sourcePlayerId;
+    const fromZone = normalizeZoneName(eventData?.FromZone ?? eventData?.fromZone);
+    const toZone = normalizeZoneName(eventData?.ToZone ?? eventData?.toZone);
 
     if (!cardUid || !toZone) {
         console.error("GM Error: Invalid data in handleCardMoved:", eventData);
@@ -3715,7 +3717,7 @@ export function handleCardMoved(eventData) {
     const ownerPlayer = ownerId ? getPlayerState(ownerId) : null;
     const detached = detachCardFromAllZones(cardUid);
 
-    let movedInstance = eventData?.MovedCard ? createCardInstance(eventData.MovedCard) : null;
+    let movedInstance = movedCard ? createCardInstance(movedCard) : null;
     if (!movedInstance) {
         movedInstance = detached.card;
     }
@@ -3952,23 +3954,23 @@ export function handleEmblemUpdated(eventData) {
 // Removed handleSpellPlayed function
 
 export function handleUnitEvolved(eventData) {
-    // DTO: UnitEvolvedEventDto { string SourcePlayerId, CardInstanceDto EvolvedUnitState }
-    if (!eventData || !eventData.SourcePlayerId || !eventData.EvolvedUnitState) { // PascalCase - Fixed to match actual DTO
+    const evolvedCard = eventData?.EvolvedUnitState ?? eventData?.evolvedUnitState;
+    const unitUid = evolvedCard?.InstanceId ?? evolvedCard?.instanceId;
+    if (!unitUid || !(eventData.SourcePlayerId ?? eventData.sourcePlayerId)) {
         console.error("GM Error: Invalid data in handleUnitEvolved:", eventData);
         return;
     }
-    const unitUid = eventData.EvolvedUnitState.InstanceId; // Get UID from EvolvedUnitState
     const unit = findCardInstanceByUid(unitUid);
 
     let updated = false;
 
-    if (unit && eventData.EvolvedUnitState) {
+    if (unit) {
         const ownerPlayer = getPlayerState(unit.ownerId);
         if (ownerPlayer) {
             const unitIndex = ownerPlayer.field.findIndex(u => u && u.uid === unitUid);
             if (unitIndex !== -1) {
                 // Create a new, fully hydrated instance from the DTO
-                const evolvedUnitInstance = createCardInstance(eventData.EvolvedUnitState);
+                const evolvedUnitInstance = createCardInstance(evolvedCard);
                 evolvedUnitInstance.ownerId = ownerPlayer.id;
                 evolvedUnitInstance.zone = 'Field';
 
@@ -4000,10 +4002,10 @@ export function handleUnitEvolved(eventData) {
 
 export function handleStatChange(eventData) {
     // DTO: StatChangeEventDto { TargetEntityUid, NewAttack, NewCurrentHealth, NewMaxHealth, NewCost }
-    const targetUid = eventData?.UnitId ?? eventData?.TargetEntityUid;
-    const newAttack = eventData?.NewAttack;
-    const newCurrentHealth = eventData?.NewHealth ?? eventData?.NewCurrentHealth;
-    const newMaxHealth = eventData?.NewMaxHealth;
+    const targetUid = eventData?.UnitId ?? eventData?.unitId ?? eventData?.TargetEntityUid ?? eventData?.targetEntityUid;
+    const newAttack = eventData?.NewAttack ?? eventData?.newAttack;
+    const newCurrentHealth = eventData?.NewHealth ?? eventData?.newHealth ?? eventData?.NewCurrentHealth ?? eventData?.newCurrentHealth;
+    const newMaxHealth = eventData?.NewMaxHealth ?? eventData?.newMaxHealth;
     const newCost = eventData?.NewCost ?? eventData?.newCost;
 
     if (!targetUid) {
@@ -4257,27 +4259,18 @@ export function handleDamageDealt(eventData) {
     }
 }
 export function handleHealthChanged(eventData) {
-    // DTO: HealthChangedEventDto { string CardInstanceId, int NewHealth, int DamageTaken }
-    if (!eventData || !eventData.CardInstanceId || eventData.NewHealth === undefined) {
+    const cardUid = eventData?.CardInstanceId ?? eventData?.cardInstanceId;
+    const newHealth = eventData?.NewHealth ?? eventData?.newHealth;
+    if (!cardUid || newHealth == null) {
         console.error("GM Error: Invalid data in handleHealthChanged:", eventData);
         return;
     }
 
-    const cardUid = eventData.CardInstanceId;
     const unit = findCardInstanceByUid(cardUid);
 
     if (unit) {
-        const oldHealth = unit.currentHealth;
-        unit.currentHealth = eventData.NewHealth;
-
-
-        // 【重构】调用统一的UI更新函数
-        // 新的 updateHealthDisplay 函数能够智能处理主战者和场上单位
+        unit.currentHealth = newHealth;
         gameView.updateHealthDisplay(unit);
-
-        // Log if health drops to 0, but let the server's UnitDestroyed event handle the actual removal
-        if (unit.currentHealth <= 0) {
-        }
     } else {
         console.warn(`GM: HealthChanged event received for invalid unit UID: ${cardUid}`);
     }

@@ -41,6 +41,9 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public int? ViewEpoch { get; set; }
         public long? RoomVersion { get; set; }
 
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReplayTicket { get; init; }
+
         // Set only on a full sync sent directly to the authenticated player who can answer.
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public PlayerChoiceRequestedEventDto? PendingChoice { get; set; }

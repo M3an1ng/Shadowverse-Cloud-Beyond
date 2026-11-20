@@ -499,6 +499,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     builder.Services.AddScoped<SqliteReplayHistory>();
     builder.Services.AddScoped<ReplayContinuation>();
     builder.Services.AddSingleton<ReplayRecorder>();
+    builder.Services.AddSingleton<ReplaySeatTicket>();
     Log.Information("Configured ReplayOptions (Replay section).");
 
     builder.Services.AddScoped<ICommittedEventJournal, SqliteReplayJournal>();

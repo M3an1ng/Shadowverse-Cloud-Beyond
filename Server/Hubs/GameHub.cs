@@ -1114,9 +1114,13 @@ namespace ShadowverseBeyond.Server.Hubs
         {
             var caller = Clients.Caller;
             var authenticatedPlayer = GetAuthenticatedChoicePlayer(gameId);
+            var ticket = authenticatedPlayer == viewingPlayerId && Guid.TryParse(gameId, out var replayId)
+                ? Context.GetHttpContext()?.RequestServices.GetRequiredService<ReplaySeatTicket>().Issue(replayId, viewingPlayerId)
+                : null;
             var synced = await _gameService.ReadSyncStateAsync(gameId, viewingPlayerId, Context.ConnectionAborted,
                 state => caller.ReceiveGameState(state with
                 {
+                    ReplayTicket = ticket,
                     PendingChoice = !state.IsGameOver && state.PendingChoice?.ChoiceRequest.RequestingPlayerId == authenticatedPlayer
                         ? state.PendingChoice : null,
                     ViewingPlayerId = viewEpoch.HasValue ? viewingPlayerId : state.ViewingPlayerId,

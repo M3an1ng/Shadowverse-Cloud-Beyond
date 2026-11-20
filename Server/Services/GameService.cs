@@ -83,6 +83,7 @@ namespace ShadowverseBeyond.Server.Services
 
         // Central Game State Storage - Stores GameState domain objects
         private readonly ConcurrentDictionary<string, GameState> _gameStates = new(); // Use Domain Entity
+        private readonly System.Runtime.CompilerServices.ConditionalWeakTable<GameState, TaskCompletionSource> _openingReplays = new();
         // --- Queue and Processing Loop Management ---
         private readonly ConcurrentDictionary<string, ConcurrentQueue<PlayerActionWrapper>> _playerActionQueues = new();
         // 【架构重构】移除传统事件队列，改为立即事件广播
@@ -330,8 +331,9 @@ namespace ShadowverseBeyond.Server.Services
                     {
                         processedItem = true;
                         using var observedAction = MatchCommandObservation.Begin(gameId, actionWrapper);
-                        using var replayAction = _gameStates.TryGetValue(gameId, out var recordingGame)
-                            ? _replayRecorder?.Begin(recordingGame, actionWrapper) : null;
+                        _gameStates.TryGetValue(gameId, out var recordingGame);
+                        if (recordingGame != null) await WaitForReplayOpeningAsync(recordingGame);
+                        using var replayAction = recordingGame == null ? null : _replayRecorder?.Begin(recordingGame, actionWrapper);
                         try
                         {
                             cancellationToken.ThrowIfCancellationRequested();
@@ -1663,6 +1665,27 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
+        private Task WaitForReplayOpeningAsync(GameState game) =>
+            _openingReplays.TryGetValue(game, out var opening) ? opening.Task : Task.CompletedTask;
+
+        private async Task<bool> PublishGameStateAsync(GameState game, Action? prepare = null)
+        {
+            var opening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _openingReplays.Add(game, opening);
+            try
+            {
+                if (!_gameStates.TryAdd(game.GameId, game)) return false;
+                prepare?.Invoke();
+                if (_replayRecorder != null) await _replayRecorder.StartAsync(game);
+                return true;
+            }
+            finally
+            {
+                opening.TrySetResult();
+                _openingReplays.Remove(game);
+            }
+        }
+
         // --- Refactored to GetOrCreateGameStateAsync ---
         /// <summary>
         /// Gets the current game state domain entity for the given game ID, or creates a new one if it doesn't exist.
@@ -1674,6 +1697,7 @@ namespace ShadowverseBeyond.Server.Services
         {
             if (_gameStates.TryGetValue(gameId, out var existingState))
             {
+                await WaitForReplayOpeningAsync(existingState);
                 await ApplyPlayerIdentityAsync(scopeServiceProvider, existingState.Player1, existingState.Player2);
                 return existingState;
             }
@@ -2054,9 +2078,8 @@ namespace ShadowverseBeyond.Server.Services
                     player2State.Leader.Damage = Math.Max(0, maxLeaderHp - desiredHp);
                 }
 
-                if (_gameStates.TryAdd(gameId, newGameState))
+                if (await PublishGameStateAsync(newGameState))
                 {
-                    if (_replayRecorder != null) await _replayRecorder.StartAsync(newGameState);
                     // Obsolete scope management and GameServiceProvider initialization removed.
                     // Scopes are now created on-demand in the processing loops.
 
@@ -2083,7 +2106,9 @@ namespace ShadowverseBeyond.Server.Services
 
                 // If TryAdd fails, it means another thread created the game state.
                 // Return the state created by the other thread.
-                return _gameStates.TryGetValue(gameId, out var racingState) ? racingState : null;
+                if (!_gameStates.TryGetValue(gameId, out var racingState)) return null;
+                await WaitForReplayOpeningAsync(racingState);
+                return racingState;
             }
             catch (Exception ex)
             {
@@ -3208,10 +3233,17 @@ namespace ShadowverseBeyond.Server.Services
                 var state=entry.Value;
                 if(state.Player1.PlayerId!=ownerPlayerId && state.Player2.PlayerId!=ownerPlayerId) continue;
                 using var context=new GameContext(sp,sp.GetRequiredService<IMapper>(),sp.GetRequiredService<IGameContextAccessor>(),state,ownerPlayerId);
-                var field=state.AllCards.Where(c=>c.OwnerPlayerId==ownerPlayerId && c.CurrentZone==CardZone.Field).Select(c=>CardInstanceProjection.Create(c,context)).ToList();
-                if(field.Count>0) await BroadcastEventsAsync(entry.Key,new List<GameEventDto>{new CardInstanceUpdatedEventDto(Guid.Empty,field)});
-                var hand=state.AllCards.Where(c=>c.OwnerPlayerId==ownerPlayerId && c.CurrentZone==CardZone.Hand).Select(c=>CardInstanceProjection.Create(c,context)).ToList();
-                if(hand.Count>0) await BroadcastEventToPlayerAsync(entry.Key,ownerPlayerId,new CardInstanceUpdatedEventDto(Guid.Empty,hand));
+                var updated = state.AllCards
+                    .Where(card => card.CurrentZone is CardZone.Field or CardZone.Emblem or CardZone.Hand)
+                    .Select(card => CardInstanceProjection.Create(card, context))
+                    .Where(card => card.OwnerPlayerId == ownerPlayerId ||
+                        card.BuffSummaries.Any(buff => buff.SourceCardOwnerPlayerId == ownerPlayerId))
+                    .ToList();
+                var publicCards = updated.Where(card => card.Zone != CardZone.Hand).ToList();
+                if (publicCards.Count > 0)
+                    await BroadcastEventsAsync(entry.Key, [new CardInstanceUpdatedEventDto(Guid.Empty, publicCards)]);
+                foreach (var hand in updated.Where(card => card.Zone == CardZone.Hand).GroupBy(card => card.OwnerPlayerId))
+                    await BroadcastEventToPlayerAsync(entry.Key, hand.Key, new CardInstanceUpdatedEventDto(Guid.Empty, hand.ToList()));
             }
         }
 

@@ -9,6 +9,8 @@ namespace ShadowverseBeyond.Server.Dtos.SignalR.Events // Corrected namespace
     /// </summary>
     public abstract class GameEventDto // Abstract base class
     {
+        internal Guid? ReplaySourceEventId { get; set; }
+
         /// <summary>
         /// A string identifier for the type of event (e.g., "UnitPlayed", "TurnEnded").
         /// Used by the client to determine how to process the event data.

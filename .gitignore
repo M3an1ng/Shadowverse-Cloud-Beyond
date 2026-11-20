@@ -84,7 +84,8 @@ coverage/
 /data/scrape/
 /data/scrape-playwright/
 /scripts/check-docs.py
-/scripts/tests/
+/scripts/tests/*
+!/scripts/tests/mini-merge.test.mjs
 /scripts/migrate-card-detail-to-webp.ps1
 /analyze.js
 /dotnet-install.ps1

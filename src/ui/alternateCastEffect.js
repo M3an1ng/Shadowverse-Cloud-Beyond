@@ -12,20 +12,31 @@ export const alternateCastTimings = {
     crystalize: { enter: 165, resolve: 480, impact: 820, done: 1090, label: '结晶' }
 };
 
+// Plant the lower edge of the revealed amulet; let board layout keep control of its position.
+export const crystalLandingKeyframes = [
+    { offset: 0, scale: '1.04 0.90', transformOrigin: '50% 100%', easing: 'ease-out' },
+    { offset: 0.12, scale: '1.12 0.81', easing: 'ease-out' },
+    { offset: 0.51, scale: '0.97 1.055', easing: 'ease-in-out' },
+    { offset: 1, scale: '1', transformOrigin: '50% 100%' }
+];
+
 export function castCardPose(mode, ms, { source, hover, drag, opponent }) {
     const timing = alternateCastTimings[mode];
     const crystal = mode === 'crystalize';
     const facing = opponent ? -1 : 1;
     const enter = easeOut(ms / (drag ? timing.enter * 0.65 : timing.enter));
-    const gather = envelope(ms, timing.enter, timing.resolve - 22, timing.resolve + 42);
-    const release = smooth(windowAt(ms, timing.resolve, timing.resolve + (crystal ? 105 : 135)));
+    const gather = crystal ? envelope(ms, timing.enter, timing.resolve - 22, timing.resolve + 42)
+        : smooth(windowAt(ms, timing.resolve - 104, timing.resolve - 24))
+            * (1 - easeOut(windowAt(ms, timing.resolve + 8, timing.resolve + 68)));
+    const release = crystal ? smooth(windowAt(ms, timing.resolve, timing.resolve + 105))
+        : easeOut(windowAt(ms, timing.resolve + 8, timing.resolve + 125));
     const scale = mix(source.scale ?? 0.68, 1.06, enter);
     return {
-        x: mix(source.x, hover.x, enter) + (crystal ? 0 : facing * (56 * release - 5 * gather)),
-        y: mix(source.y, hover.y, enter) - (crystal ? 3 * gather : facing * (24 * release - 2 * gather)),
-        scaleX: scale * (1 - 0.035 * gather + (crystal ? -0.84 : 0.20) * release),
-        scaleY: scale * (1 + 0.025 * gather - (crystal ? 0.65 : 0.77) * release),
-        rotate: mix(facing * -8, 0, enter) + (crystal ? 0 : -4 * gather - 17 * release),
+        x: mix(source.x, hover.x, enter) + (crystal ? 0 : facing * (56 * release - 15 * gather)),
+        y: mix(source.y, hover.y, enter) - (crystal ? 3 * gather : facing * (24 * release - 6 * gather)),
+        scaleX: scale * (1 - (crystal ? 0.035 : 0.11) * gather + (crystal ? -0.84 : 0.24) * release),
+        scaleY: scale * (1 + (crystal ? 0.025 : 0.065) * gather - (crystal ? 0.65 : 0.77) * release),
+        rotate: mix(facing * -8, 0, enter) + (crystal ? 0 : 6 * gather - 17 * release),
         opacity: (0.2 + 0.8 * windowAt(ms, 0, 75)) * (1 - release),
         labelOpacity: smooth(windowAt(ms, 90, timing.enter + 25))
             * (1 - smooth(windowAt(ms, timing.resolve + 18, timing.resolve + 105)))
@@ -138,10 +149,20 @@ function ribbon(ctx, tip, lane, length, bend, thickness, paint) {
     ctx.fill();
 }
 
+const bladeContactX = 109;
+
 function spellSweep(ms) {
     const { resolve, impact } = alternateCastTimings.accelerate;
-    const progress = windowAt(ms, resolve - 60, impact + 103);
-    return { progress, tip: mix(-45, 156, smooth(progress)) };
+    if (ms < resolve) {
+        return { progress: 0, tip: mix(-30, -52, smooth(windowAt(ms, resolve - 89, resolve - 20))) };
+    }
+    if (ms < impact) {
+        const cut = windowAt(ms, resolve + 8, impact) ** 1.65;
+        return { progress: 0.8 * cut, tip: mix(-52, bladeContactX, cut) };
+    }
+    // The blade catches at the contact point. Its wake can keep moving during the hold.
+    const follow = easeOut(windowAt(ms, impact + 37, impact + 136));
+    return { progress: 0.8 + 0.2 * follow, tip: mix(bladeContactX, 154, follow) };
 }
 
 const sparkCell = 48;
@@ -227,7 +248,7 @@ const wakeSparks = Array.from({ length: 42 }, (_, i) => {
     const side = i % 2 ? 1 : -1;
     const spread = variation(i, 19);
     const late = i >= 35;
-    const birth = late ? impact - 8 + 47 * spread : resolve - 27 + band * 48 + 40 * spread;
+    const birth = late ? impact + 34 * spread : resolve - 27 + band * 48 + 40 * spread;
     const a = { x: spellSweep(birth).tip - 13 * variation(i, 31), y: side * (1 + band * 3) };
     const backscatter = !late && i % 7 === 0;
     const dx = backscatter ? -22 - 40 * spread : (late ? 31 : 53) + (late ? 40 : 63) * variation(i, 13);
@@ -334,7 +355,8 @@ function paintSpellBlade(ctx, ms) {
     ctx.save();
     ctx.globalAlpha = light;
     const { progress: sweep, tip } = spellSweep(ms);
-    const length = 46 + 106 * Math.sin(sweep * Math.PI * 0.81);
+    const collapse = smooth(windowAt(ms, impact + 15, impact + 105));
+    const length = (46 + 112 * Math.sin(sweep * Math.PI * 0.81)) * (1 - collapse * 0.48);
     const ink = ctx.createLinearGradient(tip - length, 0, tip, 0);
     ink.addColorStop(0, 'rgba(56,101,244,0)');
     ink.addColorStop(0.30, '#417ce9');
@@ -356,10 +378,59 @@ function paintSpellBlade(ctx, ms) {
         ctx.restore();
     }
     ribbon(ctx, tip - 13, -6, length * 1.05, -18, 4.2, ink);
-    ribbon(ctx, tip, 0, length, 12, 8, ink);
+    ribbon(ctx, tip, 0, length, 12, 7.5 + sweep * 4 - collapse * 5, ink);
     ribbon(ctx, tip - 23, 8, length * 0.82, 25, 3, ink);
     ribbon(ctx, tip, 0, length * 0.64, 3.1, 1.9, '#edffff');
-    glint(ctx, tip, 0, 4 + 10 * Math.sin(sweep * Math.PI), '#e3ffff', Math.PI / 2);
+    const tipLight = 1 - 0.74 * envelope(ms, impact - 14, impact, impact + 99);
+    glint(ctx, tip, 0, (4 + 10 * Math.sin(sweep * Math.PI)) * tipLight, '#e3ffff', Math.PI / 2);
+    ctx.restore();
+}
+
+// Tapered splashes in blade space: the long streaks glance backwards off the leading edge.
+const bladeSplashes = [[-0.82,-0.57,52],[-0.39,-0.92,37],[0.53,-0.85,28],
+    [0.92,0.39,35],[-0.32,0.95,44],[-0.91,0.41,57]];
+
+function paintBladeImpact(ctx, ms) {
+    const age = ms - alternateCastTimings.accelerate.impact;
+    if (age < 0 || age >= 161) return;
+    const spread = easeOut(age / 161);
+    const core = 1 - smooth(windowAt(age, 20, 87));
+    ctx.save();
+    ctx.translate(bladeContactX, 0);
+    // A dark lip underneath the cutting edge keeps the contact readable over pale card art.
+    glow(ctx, 0, 0, 25, 31, '13,39,78', 0.82 * core);
+    glow(ctx, 1, 0, 38, 18, '41,220,255', 0.75 * core);
+    const lip = 1 + 32 * spread;
+    const height = 20 + 37 * spread;
+    ctx.globalAlpha = 1 - smooth(windowAt(age, 35, 158));
+    const edge = ctx.createLinearGradient(lip, -height, lip - 4, height);
+    edge.addColorStop(0, 'rgba(113,201,255,0)');
+    edge.addColorStop(0.25, 'rgba(75,192,235,0.56)');
+    edge.addColorStop(0.48, '#d8fff5');
+    edge.addColorStop(0.58, '#69e7f4');
+    edge.addColorStop(1, 'rgba(77,155,235,0)');
+    ctx.beginPath();
+    ctx.moveTo(lip - 18, -height);
+    ctx.bezierCurveTo(lip + 4, -height * 0.68, lip + 13, -height * 0.24, lip + 13, -2);
+    ctx.bezierCurveTo(lip + 14, height * 0.24, lip, height * 0.61, lip - 19, height * 0.86);
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.bezierCurveTo(lip - 1, height * 0.43, lip + 6, height * 0.18, lip + 5, -2);
+    ctx.bezierCurveTo(lip + 5, -height * 0.29, lip - 4, -height * 0.76, lip - 18, -height);
+    ctx.fillStyle = edge;
+    ctx.fill();
+    for (const [dx, dy, reach] of bladeSplashes) {
+        const outer = reach * (0.28 + 0.86 * spread);
+        const inner = outer * (0.18 + 0.76 * spread);
+        const width = (1 - spread) * 3.3 + 0.48;
+        polygon(ctx, [[dx * outer, dy * outer], [dx * inner - dy * width, dy * inner + dx * width],
+            [dx * inner, dy * inner], [dx * inner + dy * width, dy * inner - dx * width]]);
+        ctx.fillStyle = dx > 0 ? '#6feaff' : '#d9fff8';
+        ctx.fill();
+    }
+    ctx.globalAlpha = core;
+    glint(ctx, 0, 0, 21 - 7 * spread, '#f3fffc', -0.27);
     ctx.restore();
 }
 
@@ -371,6 +442,7 @@ function paintAccelerate(ctx, ms) {
     if (ms < resolve + 38) paintSparks(ctx, ms, chargingSparks);
     paintSpellBlade(ctx, ms);
     if (ms >= resolve - 27) paintSparks(ctx, ms, releaseSparks);
+    paintBladeImpact(ctx, ms);
     ctx.restore();
 }
 
@@ -539,54 +611,104 @@ function paintCrystalShell(ctx, ms, resolve) {
     ctx.restore();
 }
 
-function paintCrystalLanding(ctx, ms, x, y) {
+// Faults are drawn out from the foot of the amulet, in the plane of the board.
+const crystalFaults = [
+    [[-13,-3],[-26,1],[-41,-5],[-76,-8]], [[-10,4],[-18,10],[-31,9],[-49,18]],
+    [[7,3],[16,10],[32,9],[52,16]], [[13,-2],[26,-7],[40,-4],[76,-11]],
+    [[-5,-3],[-11,-9],[-22,-10],[-30,-16]], [[18,0],[31,4],[47,1],[63,5]]
+];
+// Landing distance, height, release delay and shard size. The heavy chips settle first.
+const landingChips = [[-63,35,0,7], [46,30,4,8], [-27,47,3,5], [67,22,10,5],
+    [21,59,12,4], [-74,17,16,3.5], [-44,28,21,3], [56,45,22,3.5], [33,20,26,3]];
+
+function paintCrystalLanding(ctx, ms, x, groundY) {
     const { impact, done } = alternateCastTimings.crystalize;
-    const t = windowAt(ms, impact, done);
-    if (!t || t === 1) return;
-    const spread = easeOut(t);
+    if (ms < impact || ms >= done) return;
+    const age = ms - impact;
+    const spread = easeOut(windowAt(age, 0, 178));
+    const fade = 1 - smooth(windowAt(ms, impact + 88, done));
+    const core = 1 - smooth(windowAt(age, 15, 90));
     ctx.save();
-    ctx.translate(x, y);
-    ctx.globalAlpha = 1 - smooth(t);
-    glow(ctx, 0, 10, 62, 45, '255,174,116', 0.44 * (1 - t));
-    ctx.save();
-    ctx.translate(0, 23 + 9 * spread);
-    ctx.scale(1, 0.34);
-    for (let i = 0; i < 2; i++) {
-        const radius = 23 + (i ? 36 : 47) * spread;
-        ctx.beginPath();
-        for (let j = 0; j < 6; j++) {
-            const angle = (j + 0.12) * TAU / 6;
-            const px = Math.cos(angle) * radius, py = Math.sin(angle) * radius;
-            if (j === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
+    ctx.translate(x, groundY);
+    ctx.globalAlpha = fade;
+    glow(ctx, 0, 2, 37 + 38 * spread, 10 + 6 * spread, '34,19,41', 0.88);
+    const reach = easeOut(windowAt(age, 0, 114)) * 4;
+    ctx.beginPath();
+    for (const fault of crystalFaults) {
+        let px = 0, py = 0;
+        ctx.moveTo(0, 0);
+        for (let i = 0; i < fault.length && i < reach; i++) {
+            const [nx, ny] = fault[i];
+            const part = Math.min(1, reach - i);
+            ctx.lineTo(mix(px, nx, part), mix(py, ny, part));
+            px = nx;
+            py = ny;
         }
-        ctx.closePath();
-        ctx.strokeStyle = i ? '#e6a2a4' : '#ffe1a3';
-        ctx.lineWidth = i ? 1.5 : 3;
-        ctx.stroke();
     }
-    ctx.restore();
-    for (let i = 0; i < 7; i++) {
-        const angle = i * 2.4;
-        const px = Math.cos(angle) * (27 + 32 * spread);
-        const py = Math.sin(angle) * 20 + 20 - Math.sin(t * Math.PI) * (12 + i * 2);
-        splinter(ctx, px, py, (3 + i % 3) * (1 - t), angle + t * 0.5);
+    ctx.strokeStyle = 'rgba(64,40,61,0.75)';
+    ctx.lineWidth = 2.7;
+    ctx.stroke();
+    const amber = ctx.createRadialGradient(0, 0, 2, 0, 0, 79);
+    amber.addColorStop(0, '#ffe2b2');
+    amber.addColorStop(0.36, '#f4bd87');
+    amber.addColorStop(0.70, 'rgba(239,158,121,0.72)');
+    amber.addColorStop(1, 'rgba(216,136,150,0)');
+    ctx.strokeStyle = amber;
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
+
+    ctx.globalAlpha = 1 - smooth(windowAt(age, 20, 175));
+    const width = 17 + 65 * spread, depth = 5 + 15 * spread;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, width, depth, 0, 0.12, Math.PI * 0.91);
+    ctx.moveTo(-width, 0);
+    ctx.ellipse(0, 0, width, depth, 0, Math.PI, Math.PI * 1.76);
+    ctx.lineWidth = 3.4 - 2.1 * spread;
+    const rim = ctx.createLinearGradient(0, -depth, 0, depth);
+    rim.addColorStop(0, 'rgba(211,147,160,0.24)');
+    rim.addColorStop(0.52, '#efb987');
+    rim.addColorStop(1, '#ffedbf');
+    ctx.strokeStyle = rim;
+    ctx.stroke();
+    if (core > 0) {
+        const crush = easeOut(age / 74);
+        ctx.globalAlpha = core;
+        glow(ctx, 0, -1, 43, 14, '255,193,111', 0.92);
+        ctx.save();
+        ctx.scale(0.89 + 0.55 * crush, 1.24 - 0.94 * crush);
+        cutGem(ctx, 0, -22, 22, 0, 1);
+        ctx.restore();
+        glint(ctx, 0, -2, 14 * core, '#fff4d1', Math.PI / 2);
+    }
+    for (const [dx, lift, delay, size] of landingChips) {
+        if (age < delay) continue;
+        const p = windowAt(age, delay, delay + 134 + lift);
+        const px = dx * p * (1.6 - 0.6 * p);
+        const py = 3 * p - 4 * lift * p * (1 - p);
+        ctx.globalAlpha = fade * (1 - smooth(windowAt(p, 0.80, 1)));
+        splinter(ctx, px, py, size * (1 - p * 0.44), Math.sign(dx) * (0.3 + 2.2 * p));
     }
     ctx.restore();
 }
 
-function paintCrystalize(ctx, ms, targetX, targetY) {
+function paintCrystalize(ctx, ms, targetX, groundY) {
     const { resolve, impact } = alternateCastTimings.crystalize;
     paintCrystalShell(ctx, ms, resolve);
     const form = smooth(windowAt(ms, resolve - 45, resolve + 78));
     if (form && ms < impact) {
-        const travel = smooth(windowAt(ms, resolve + 82, impact));
-        const lift = Math.min(42, Math.hypot(targetX, targetY) * 0.24);
-        const arcY = t => targetY * t - 4 * lift * t * (1 - t);
-        const x = targetX * travel, y = arcY(travel);
-        if (travel > 0 && lift > 0) {
-            const tail = Math.max(0, travel - 0.36);
-            const trail = ctx.createLinearGradient(targetX * tail, arcY(tail), x, y);
+        const travel = windowAt(ms, resolve + 66, impact) ** 1.42;
+        const dive = smooth(windowAt(travel, 0.48, 1));
+        const endY = groundY - 22 * 1.24;
+        const apex = Math.min(0, endY) - Math.min(64, 28 + Math.hypot(targetX, endY) * 0.15);
+        const arcX = t => targetX * t * (2 - t);
+        const arcY = t => 2 * (1 - t) * t * apex + t * t * endY;
+        const x = arcX(travel), y = arcY(travel);
+        if (dive > 0) {
+            glow(ctx, targetX, groundY, 37 - 14 * dive, 8 - 3 * dive, '43,30,56', 0.80 * dive);
+        }
+        if (travel > 0) {
+            const tail = Math.max(0, travel - 0.25 - 0.07 * dive);
+            const trail = ctx.createLinearGradient(arcX(tail), arcY(tail), x, y);
             trail.addColorStop(0, 'rgba(216,125,171,0)');
             trail.addColorStop(0.63, 'rgba(244,176,147,0.48)');
             trail.addColorStop(1, '#fff0be');
@@ -596,20 +718,24 @@ function paintCrystalize(ctx, ms, targetX, targetY) {
                 for (let i = 0; i <= 8; i++) {
                     const t = mix(tail, travel, i / 8);
                     const py = arcY(t) + offset * Math.sin(Math.PI * i / 8);
-                    if (i === 0) ctx.moveTo(targetX * t, py);
-                    else ctx.lineTo(targetX * t, py);
+                    if (i === 0) ctx.moveTo(arcX(t), py);
+                    else ctx.lineTo(arcX(t), py);
                 }
                 ctx.lineWidth = offset < 0 ? 3.2 : 1.1;
                 ctx.stroke();
             }
         }
-        const size = form * mix(32, 13, travel);
+        const size = form * mix(32, 22, travel);
         glow(ctx, x, y, 1 + size * 1.5, 1 + size * 1.65, '255,178,105', 0.58 * form);
         const lean = Math.sign(targetX) * 0.48 * Math.sin(travel * Math.PI);
-        cutGem(ctx, x, y, size, lean, windowAt(ms, resolve - 8, impact - 36));
-        glint(ctx, x - size * 0.17, y - size * 0.77, size * 0.25, '#fff6d2', 0.15);
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(1 - 0.11 * dive, 1 + 0.24 * dive);
+        cutGem(ctx, 0, 0, size, lean, windowAt(ms, resolve - 8, impact - 36));
+        glint(ctx, -size * 0.17, -size * 0.77, size * 0.25, '#fff6d2', 0.15);
+        ctx.restore();
     }
-    paintCrystalLanding(ctx, ms, targetX, targetY);
+    paintCrystalLanding(ctx, ms, targetX, groundY);
 }
 
 export function paintAlternateCastEffect(ctx, mode, ms, { hover, target = hover, width, height, opponent }) {
@@ -620,7 +746,8 @@ export function paintAlternateCastEffect(ctx, mode, ms, { hover, target = hover,
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     if (mode === 'crystalize') {
-        paintCrystalize(ctx, ms, (target.x - hover.x) * 100 / width, (target.y - hover.y) * 140 / height);
+        const foot = (target.height ?? height * 0.70) / 2;
+        paintCrystalize(ctx, ms, (target.x - hover.x) * 100 / width, (target.y + foot - hover.y) * 140 / height);
     } else {
         if (opponent) ctx.rotate(Math.PI);
         paintAccelerate(ctx, ms);

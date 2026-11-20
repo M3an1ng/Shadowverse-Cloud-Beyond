@@ -2,15 +2,47 @@
 // keep application order within each source, so keep its latest assignment per stat.
 const cardStats = new Set(['Cost', 'Attack', 'Health', 'Defense']);
 
+export function getEffectSource(summary, index) {
+    return {
+        index,
+        id: summary.SourceCardDefinitionId ?? summary.sourceCardDefinitionId,
+        ownerId: summary.SourceCardOwnerPlayerId ?? summary.sourceCardOwnerPlayerId,
+        name: summary.SourceCardName ?? summary.sourceCardName,
+        abilityName: summary.SourceAbilityName ?? summary.sourceAbilityName,
+        art: summary.SourceCardArtPreview ?? summary.sourceCardArtPreview,
+        detailArt: summary.SourceCardArtDetail ?? summary.sourceCardArtDetail,
+        description: summary.SourceCardDescription ?? summary.sourceCardDescription
+    };
+}
+
+function uniqueSources(sources) {
+    return sources.filter((source, index) => sources.findIndex(other =>
+        other.id === source.id && other.ownerId === source.ownerId && other.name === source.name &&
+        other.abilityName === source.abilityName && other.art === source.art &&
+        other.detailArt === source.detailArt && other.description === source.description) === index);
+}
+
+export function getEffectSourceDetail(definition, source) {
+    const card = { ...definition, OwnerPlayerId: source.ownerId };
+    const fields = {
+        name: source.name,
+        description: source.description,
+        artPreview: source.ownerId ? source.art : source.art || undefined,
+        artDetail: source.detailArt
+    };
+    for (const [key, value] of Object.entries(fields)) {
+        if (value == null) continue;
+        card[key] = value;
+        const upper = key[0].toUpperCase() + key.slice(1);
+        if (upper in card) card[upper] = value;
+    }
+    return card;
+}
+
 export function summarizeAttachedNumericEffects(summaries) {
     const groups = new Map();
     for (const [sourceIndex, summary] of (summaries || []).entries()) {
-        const source = {
-            id: summary.SourceCardDefinitionId ?? summary.sourceCardDefinitionId,
-            name: summary.SourceCardName ?? summary.sourceCardName,
-            abilityName: summary.SourceAbilityName ?? summary.sourceAbilityName,
-            art: summary.SourceCardArtPreview ?? summary.sourceCardArtPreview
-        };
+        const source = getEffectSource(summary, sourceIndex);
         for (const entry of summary.NumericEffects ?? summary.numericEffects ?? []) {
             if (entry.IsSuperseded ?? entry.isSuperseded) continue;
             const field = entry.Field ?? entry.field;
@@ -40,11 +72,7 @@ export function summarizeAttachedNumericEffects(summaries) {
     }
     return [...groups.values()]
         .filter(group => group.layer !== 'Additive' || group.value !== 0)
-        .map(group => ({
-            ...group,
-            sources: group.sources.filter((source, index, all) => all.findIndex(other =>
-                other.name === source.name && other.abilityName === source.abilityName && other.art === source.art) === index)
-        }));
+        .map(group => ({ ...group, sources: uniqueSources(group.sources) }));
 }
 export function numericEffectTitle(effect) {
     const labels = {Attack:'攻击',Health:'生命',Defense:'生命',Cost:'费用',Act:'启动费用',Reanimate:'亡召上限',Enhance:'爆能强化费用',Accelerate:'激奏费用',Crystalize:'结晶费用'};
@@ -60,10 +88,10 @@ export function effectSourceHtml(source) {
  const label = name + (source.abilityName && source.abilityName !== name ? `【${source.abilityName}】` : '');
  const id = Number(source.id);
  return Number.isInteger(id) && id > 0
-  ? `<button type="button" class="battle-effect-source battle-effect-source-button" data-card-id="${id}" aria-label="查看来源卡牌：${escape(name)}">${art}<span>${escape(label)}</span></button>`
+  ? `<button type="button" class="battle-effect-source battle-effect-source-button" data-card-id="${id}" data-source-index="${Number(source.index)}" aria-label="查看来源卡牌：${escape(name)}">${art}<span>${escape(label)}</span></button>`
   : `<span class="battle-effect-source">${art}<span>${escape(label)}</span></span>`;
 }
-export function renderAttachedNumericEffects(groups) {
+export function renderAttachedNumericEffects(groups, renderSource = effectSourceHtml) {
  const blocks=[];
  for (const group of groups) {
   const previous=group.layer==='Additive' ? blocks.find(block=>block.policy===group.policy&&block.oneUse===group.oneUse&&block.duration===group.duration&&block.layer==='Additive') : null;
@@ -71,8 +99,8 @@ export function renderAttachedNumericEffects(groups) {
   else blocks.push({...group,effects:[group],sources:[...group.sources]});
  }
  return blocks.map(block=>{
-  const sources=block.sources.filter((source,index,all)=>all.findIndex(other=>other.id===source.id&&other.name===source.name&&other.abilityName===source.abilityName)===index);
-  return `<section class="battle-attached-numeric"><div class="battle-attached-values">${block.effects.map(effect=>`<b>${escape(numericEffectTitle(effect))}</b>`).join('')}</div>${sources.map(effectSourceHtml).join('')}</section>`;
+  const sources = uniqueSources(block.sources);
+  return `<section class="battle-attached-numeric"><div class="battle-attached-values">${block.effects.map(effect=>`<b>${escape(numericEffectTitle(effect))}</b>`).join('')}</div>${sources.map(renderSource).join('')}</section>`;
  }).join('');
 }
 

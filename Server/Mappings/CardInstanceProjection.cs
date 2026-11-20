@@ -10,6 +10,7 @@ using ShadowverseBeyond.Server.Domain.Buffs;
 using ShadowverseBeyond.Server.Services;
 using Microsoft.Extensions.Logging;
 using ShadowverseBeyond.Server.Domain.Events;
+using ShadowverseBeyond.Server.Infrastructure.Data;
 
 
 namespace ShadowverseBeyond.Server.Mappings
@@ -19,21 +20,36 @@ namespace ShadowverseBeyond.Server.Mappings
         private const string FusionCountCounterKey = "fusion_count";
         private const string FusionCountDisplayName = "融合数";
 
+        private static (CardAppearance? Style, string? ArtPreview, string? ArtDetail) ResolveAppearance(
+            CardAppearanceReference card, CardDefinition? definition)
+        {
+            var style = CardStyleCatalog.Resolve(card.OwnerPlayerId, card.DefinitionId);
+            var artStyle = style;
+            var artDefinition = definition;
+            if (card.AlternateArtDefinitionId is int artId)
+            {
+                artStyle ??= CardStyleCatalog.Resolve(card.OwnerPlayerId, artId);
+                artDefinition = GameDataProvider.Instance?.GetCardDefinition(artId) ?? definition;
+            }
+            return (style,
+                string.IsNullOrWhiteSpace(artStyle?.ArtPreview) ? artDefinition?.ArtPreview : artStyle.ArtPreview,
+                string.IsNullOrWhiteSpace(artStyle?.ArtDetail) ? artDefinition?.ArtDetail : artStyle.ArtDetail);
+        }
+
         public static CardInstanceDto Create(CardInstance source, GameContext? context)
         {
             var definition = source.CurrentDefinition;
             var maxHealth = source.GetMaxHealth(context);
-            var appearance = ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.Resolve(source.OwnerPlayerId, source.CurrentDefinitionId);
-            var artAppearance=appearance ?? (source.AlternateArtDefinitionId is int parentId ? ShadowverseBeyond.Server.Infrastructure.Data.CardStyleCatalog.Resolve(source.OwnerPlayerId,parentId) : null);
+            var appearance = ResolveAppearance(CardAppearanceReference.From(source), definition);
             return new CardInstanceDto
             {
                 InstanceId = source.InstanceId,
                 CardId = source.CurrentDefinitionId,
-                Name = appearance?.Name ?? source.Name,
+                Name = appearance.Style?.Name ?? source.Name,
                 CardNames = source.CardNames,
-                Description = appearance?.Description ?? source.Description,
-                ArtPreview = artAppearance?.ArtPreview ?? (source.AlternateArtDefinitionId is int artId ? GameDataProvider.Instance.GetCardDefinition(artId) : definition)?.ArtPreview,
-                ArtDetail = artAppearance?.ArtDetail ?? (source.AlternateArtDefinitionId is int detailArtId ? GameDataProvider.Instance.GetCardDefinition(detailArtId) : definition)?.ArtDetail,
+                Description = appearance.Style?.Description ?? source.Description,
+                ArtPreview = appearance.ArtPreview,
+                ArtDetail = appearance.ArtDetail,
                 Rarity = source.Rarity,
                 Type = source.CardType,
                 Class = source.Class,
@@ -436,25 +452,7 @@ namespace ShadowverseBeyond.Server.Mappings
                     ? sample.SummaryRootAbilityId.Value
                     : sample.SourceAbilityId;
 
-                IAbility? ability = null;
-                AbilitySnapshot? abilitySnapshot = null;
-                if (preferredAbilityId != Guid.Empty)
-                {
-                    ability = abilityManager.GetAbilityByRuntimeId(preferredAbilityId);
-                    if (ability == null && abilityManager.TryGetAbilitySnapshot(preferredAbilityId, out var preferredSnapshot))
-                    {
-                        abilitySnapshot = preferredSnapshot;
-                    }
-                }
-
-                if (ability == null && abilitySnapshot == null && sample.SourceAbilityId != Guid.Empty && sample.SourceAbilityId != preferredAbilityId)
-                {
-                    ability = abilityManager.GetAbilityByRuntimeId(sample.SourceAbilityId);
-                    if (ability == null && abilityManager.TryGetAbilitySnapshot(sample.SourceAbilityId, out var sourceSnapshot))
-                    {
-                        abilitySnapshot = sourceSnapshot;
-                    }
-                }
+                ResolveSourceAbility(sample, abilityManager, out var ability, out var abilitySnapshot);
 
                 if (ability == null)
                 {
@@ -470,43 +468,25 @@ namespace ShadowverseBeyond.Server.Mappings
                         abilitySnapshot?.AbilityName ?? "<null>",
                         abilitySnapshot?.SourceCardName ?? "<null>");
                 }
-                var sourceCardName = ability?.SourceCard?.Name;
-                if (string.IsNullOrWhiteSpace(sourceCardName) && ability?.SourceCardId is Guid sourceCardId)
+                var sourceCard = sample.SummarySourceCard;
+                if (sourceCard == null)
                 {
-                    sourceCardName = gameState.FindCardInstance(sourceCardId)?.Name;
+                    // Older buffs may only identify the ability or source instance.
+                    var instance = ability?.SourceCard;
+                    if (instance == null && (ability?.SourceCardId ?? abilitySnapshot?.SourceCardId) is Guid abilityCardId)
+                        instance = gameState.FindCardInstance(abilityCardId);
+                    if (instance == null && sample.SourceCardInstanceId is Guid cachedId)
+                        instance = gameState.FindCardInstance(cachedId);
+                    if (instance != null)
+                        sourceCard = CardAppearanceReference.From(instance);
                 }
-                if (string.IsNullOrWhiteSpace(sourceCardName))
-                {
-                    sourceCardName = abilitySnapshot?.SourceCardName;
-                }
-                if (string.IsNullOrWhiteSpace(sourceCardName) && abilitySnapshot?.SourceCardId is Guid snapshotCardId)
-                {
-                    sourceCardName = gameState.FindCardInstance(snapshotCardId)?.Name;
-                }
-                if (string.IsNullOrWhiteSpace(sourceCardName))
-                {
-                    sourceCardName = sample.SourceCardName;
-                }
-                if (string.IsNullOrWhiteSpace(sourceCardName) && sample.SourceCardInstanceId is Guid cachedSourceCardId)
-                {
-                    sourceCardName = gameState.FindCardInstance(cachedSourceCardId)?.Name;
-                }
-
-                var sourceCardArtPreview = ability?.SourceCard?.CurrentDefinition?.ArtPreview;
-                if (string.IsNullOrWhiteSpace(sourceCardArtPreview) && ability?.SourceCardId is Guid artSourceCardId)
-                {
-                    sourceCardArtPreview = gameState.FindCardInstance(artSourceCardId)?.CurrentDefinition?.ArtPreview;
-                }
-                if (string.IsNullOrWhiteSpace(sourceCardArtPreview) && abilitySnapshot?.SourceCardId is Guid snapshotArtCardId)
-                {
-                    sourceCardArtPreview = gameState.FindCardInstance(snapshotArtCardId)?.CurrentDefinition?.ArtPreview;
-                }
-                if (string.IsNullOrWhiteSpace(sourceCardArtPreview) && sample.SourceCardInstanceId is Guid cachedArtSourceCardId)
-                {
-                    sourceCardArtPreview = gameState.FindCardInstance(cachedArtSourceCardId)?.CurrentDefinition?.ArtPreview;
-                }
-
+                var definition = sourceCard.HasValue ? GameDataProvider.Instance?.GetCardDefinition(sourceCard.Value.DefinitionId) : null;
+                var appearance = sourceCard.HasValue ? ResolveAppearance(sourceCard.Value, definition) : default;
+                var originalName = definition?.Name ?? abilitySnapshot?.SourceCardName ?? sample.SourceCardName;
+                var sourceCardName = appearance.Style?.Name ?? originalName;
                 var sourceAbilityName = abilityManager.GetAbilityByRuntimeId(sample.SourceAbilityId)?.Name ?? sample.SourceAbilityName ?? ability?.Name ?? abilitySnapshot?.AbilityName;
+                if (appearance.Style != null && sourceAbilityName == originalName)
+                    sourceAbilityName = sourceCardName;
                 if (string.IsNullOrWhiteSpace(sourceCardName)) sourceCardName = "附加效果";
                 if (string.IsNullOrWhiteSpace(sourceAbilityName)) sourceAbilityName = "附加效果";
 
@@ -528,9 +508,12 @@ namespace ShadowverseBeyond.Server.Mappings
                 summaries.Add(new BuffSummaryDto
                 {
                     EffectKey = group.Key,
-                    SourceCardDefinitionId = (ability?.SourceCard ?? gameState.FindCardInstance(sample.SourceCardInstanceId ?? Guid.Empty))?.CurrentDefinition.Id,
+                    SourceCardDefinitionId = sourceCard?.DefinitionId,
+                    SourceCardOwnerPlayerId = sourceCard?.OwnerPlayerId,
                     SourceCardName = sourceCardName,
-                    SourceCardArtPreview = sourceCardArtPreview ?? string.Empty,
+                    SourceCardArtPreview = appearance.ArtPreview ?? string.Empty,
+                    SourceCardArtDetail = sourceCard.HasValue ? appearance.ArtDetail ?? string.Empty : null,
+                    SourceCardDescription = appearance.Style?.Description == definition?.Description ? null : appearance.Style?.Description,
                     SourceAbilityName = sourceAbilityName,
                     GrantedAbilities = group.SelectMany(GetVisibleGrants).Select(config => new GrantedAbilityDetailDto { Name = config.Name ?? "", Description = config.Description ?? "" }).ToList(),
                     Description = (ability as Ability)?.Description ?? string.Empty,

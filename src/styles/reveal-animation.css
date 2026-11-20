@@ -1,4 +1,4 @@
-.mini-reveal-root { position:absolute; inset:0; z-index:9600; perspective:1200px; pointer-events:none; }
+.mini-reveal-root { position:absolute; inset:0; z-index:9600; perspective:1200px; pointer-events:auto; }
 .mini-reveal-shade {
   position: absolute;
   inset: 0;
@@ -6,17 +6,37 @@
   animation: mini-reveal-shade 1.2s ease both;
 }
 .mini-reveal-flight {
+  --reveal-slot: translate(-50%, -50%) translate(0, 0) rotate(var(--reveal-angle)) scale(var(--reveal-scale-x), var(--reveal-scale-y));
+  --reveal-center: translate(-50%, -50%) translate(var(--reveal-dx), var(--reveal-dy)) rotate(0rad) scale(1);
   position: absolute;
   transform-origin: center;
-  animation: mini-reveal-travel 1.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform: var(--reveal-slot);
+  perspective: 900px;
+  animation: mini-reveal-show 800ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.mini-reveal-flight.is-returning {
+  animation: mini-reveal-return 400ms cubic-bezier(0.42, 0, 0.22, 1) both;
+}
+.mini-reveal-flight.is-landing {
+  animation: mini-reveal-handoff 90ms ease-out both;
+}
+.mini-reveal-flight.mini-reveal-returned {
+  animation: none;
+}
+.mini-reveal-flight.is-static {
+  transform: var(--reveal-center);
+  animation: mini-reveal-static 700ms ease both;
 }
 .mini-reveal-flipper {
   position: absolute;
   inset: 0;
+  transform-style: preserve-3d;
 }
 .mini-reveal-flipper.from-hidden {
-  transform-style: preserve-3d;
-  animation: mini-reveal-flip 1.2s ease both;
+  animation: mini-reveal-flip 410ms ease both;
+}
+.turning-back .mini-reveal-returned .mini-reveal-flipper {
+  animation: mini-reveal-conceal 220ms ease-in-out both;
 }
 .mini-reveal-face {
   position: absolute;
@@ -99,27 +119,29 @@
 .mini-reveal-caption > div b + b {
   color: #ff7c83;
 }
-@keyframes mini-reveal-travel {
-  0% {
-    transform: translate(-50%, -50%) translate(0, 0) scale(var(--reveal-start-scale));
-  }
-  32%,
-  67% {
-    transform: translate(-50%, -50%) translate(var(--reveal-dx), var(--reveal-dy)) scale(1);
-  }
-  100% {
-    transform: translate(-50%, -50%) translate(0, 0) scale(var(--reveal-start-scale));
-  }
+@keyframes mini-reveal-show {
+  from { transform: var(--reveal-slot); }
+  48%, to { transform: var(--reveal-center); }
+}
+@keyframes mini-reveal-return {
+  from { transform: var(--reveal-center); }
+  to { transform: var(--reveal-slot); }
+}
+@keyframes mini-reveal-handoff {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes mini-reveal-static {
+  from, to { opacity: 0; }
+  18%, 82% { opacity: 1; }
 }
 @keyframes mini-reveal-flip {
-  0%,
-  8% {
-    transform: rotateY(180deg);
-  }
-  34%,
-  100% {
-    transform: rotateY(0);
-  }
+  0%, 23% { transform: rotateY(180deg); }
+  to { transform: rotateY(0); }
+}
+@keyframes mini-reveal-conceal {
+  from { transform: rotateY(0); }
+  to { transform: rotateY(180deg); }
 }
 @keyframes mini-reveal-shade {
   0%,
@@ -132,15 +154,8 @@
   }
 }
 
-.mini-reveal-returned { position:absolute; transform:translate(-50%,-50%); perspective:700px; }
-.mini-reveal-returned .mini-reveal-flipper { transform-style:preserve-3d; transition:transform 220ms ease-in-out; }
-.turning-back .mini-reveal-returned .mini-reveal-flipper { transform:rotateY(180deg); }
-@media (prefers-reduced-motion:reduce) {
- .mini-reveal-flight { animation:mini-reveal-reduced .7s ease both; }
- .mini-reveal-flipper.from-hidden { animation:none; }
- .mini-reveal-returned .mini-reveal-flipper { transition:none; }
+@media (prefers-reduced-motion: reduce) {
+  .mini-reveal-shade { animation: mini-reveal-static 700ms ease both; }
 }
-@keyframes mini-reveal-reduced { 0%,100%{opacity:0} 20%,80%{opacity:1;transform:translate(-50%,-50%) translate(var(--reveal-dx),var(--reveal-dy))} }
 /* Use the original site's opponent hand back instead of Mini's patterned back. */
-.mini-reveal-back.card-back { width:100%; height:100%; padding:0; background:linear-gradient(135deg,#1a1a1a 0%,#0a0a0a 100%); border:1px solid var(--color-border,#333); border-radius:var(--radius-md,6px); box-shadow:var(--shadow-md,0 4px 8px #0004); }
-.mini-reveal-root { pointer-events:auto; }
+.mini-reveal-back.card-back { position:absolute; width:100%; height:100%; padding:0; background:linear-gradient(135deg,#1a1a1a 0%,#0a0a0a 100%); border:1px solid var(--color-border,#333); border-radius:var(--radius-md,6px); box-shadow:var(--shadow-md,0 4px 8px #0004); }

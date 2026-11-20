@@ -44,6 +44,11 @@ class Router {
             cleanup: null
         });
 
+        this.routes.set('replay-board', {
+            element: document.getElementById('game-page'),
+            title: '对局回放 - 影之诗 星云'
+        });
+
         this.routes.set('singleplayer', {
             element: document.getElementById('navigation-page'),
             title: '单人模式 - 影之诗 星云',

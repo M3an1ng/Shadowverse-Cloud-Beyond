@@ -347,6 +347,57 @@
     display: block;
 }
 
+@property --leader-shield-opening {
+    syntax: "<percentage>";
+    inherits: false;
+    initial-value: -12%;
+}
+
+.leader-shield {
+    --leader-shield-opening: -12%;
+    --puncture: circle farthest-corner at 61% 41%;
+    position: absolute;
+    inset: 3px;
+    z-index: 2;
+    border-radius: 50%;
+    pointer-events: none;
+    visibility: hidden;
+    opacity: 0;
+    background:
+        radial-gradient(var(--puncture), transparent calc(var(--leader-shield-opening) - 2%),
+            #bcefffde var(--leader-shield-opening), #68c8ff80 calc(var(--leader-shield-opening) + 3%), transparent calc(var(--leader-shield-opening) + 7%)),
+        radial-gradient(ellipse at 43% 38%, #65cbff21 20%, #268ff53d 58%, #359aefa8 83%, #9be7ffde 100%);
+    box-shadow: inset 1px 1px 3px #b5eeffb3, inset -2px -3px 6px #1b80d480;
+    mask-image: radial-gradient(var(--puncture), transparent calc(var(--leader-shield-opening) - 2%), black var(--leader-shield-opening));
+}
+
+.leader-shield::before {
+    content: "";
+    position: absolute;
+    inset: 3%;
+    border-radius: inherit;
+    background: radial-gradient(ellipse at 56% 63%, transparent 51%, #b5eaff8a 67%, #e0f8ffe0 71%, transparent 76%);
+    mask-image: linear-gradient(142deg, black 4%, #000b 20%, transparent 44%);
+}
+
+.stats-avatar.has-shield + .leader-shield {
+    visibility: visible;
+    opacity: 1;
+}
+
+.is-tavern-emblem + .leader-shield {
+    display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    .stats-avatar.has-shield + .leader-shield {
+        transition: opacity 220ms ease-out;
+    }
+    .replay-seeking .stats-avatar.has-shield + .leader-shield {
+        transition: none;
+    }
+}
+
 .leader-rpg-body {
     position: relative;
     width: 408px;

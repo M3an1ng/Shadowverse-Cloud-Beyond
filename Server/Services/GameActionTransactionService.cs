@@ -3617,6 +3617,7 @@ namespace ShadowverseBeyond.Server.Services
                 var hasDto = item.Dtos.Count > 0;
                 foreach (var dto in item.Dtos)
                 {
+                    dto.ReplaySourceEventId = item.Event.EventId;
                     if (!string.IsNullOrWhiteSpace(announcement) && dto is GameEventDto gameEventDto)
                     {
                         gameEventDto.Announcement ??= announcement;

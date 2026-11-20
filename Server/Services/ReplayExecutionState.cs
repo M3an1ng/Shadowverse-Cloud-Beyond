@@ -195,6 +195,7 @@ public static class ReplayExecutionState
             Id = row.GetProperty("id").GetGuid(),SummaryRootAbilityId = row.GetProperty("summaryRootAbilityId").Deserialize<Guid?>(),
             SourceEffectIndex = row.GetProperty("sourceEffectIndex").Deserialize<int?>(),EffectKey = row.GetProperty("effectKey").GetString(),
             SourceCardInstanceId = row.GetProperty("sourceCardInstanceId").Deserialize<Guid?>(),SourceCardName = row.GetProperty("sourceCardName").GetString(),
+            SummarySourceCard = row.TryGetProperty("summarySourceCard", out var sourceCard) ? sourceCard.Deserialize<CardAppearanceReference?>(Json) : null,
             SourceAbilityName = row.GetProperty("sourceAbilityName").GetString(),IsActive = row.GetProperty("isActive").GetBoolean(),
             RemoveAfterUse = row.TryGetProperty("removeAfterUse", out var removeAfterUseProp) && removeAfterUseProp.GetBoolean(),
             IsAuraGenerated = row.TryGetProperty("isAuraGenerated", out var isAuraGeneratedProp) && isAuraGeneratedProp.GetBoolean(),

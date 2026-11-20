@@ -232,6 +232,7 @@ void Test(string name, Action action) { try { action(); results.Add(new { name, 
 Test("official Traditional Chinese card syntax and simplified transcription compile identically", TraditionalCardTextCompilerTests.Run);
 void Check(bool yes, string reason) { if(!yes) throw new Exception(reason); }
 Test("room exit preserves settlement delivery and releases pending choices", () => RoomExitTests.RunAsync().GetAwaiter().GetResult());
+Test("replay step shows the generated summon and only visual state", () => ReplayPlaybackTests.RunAsync().GetAwaiter().GetResult());
 Test("AI searches combat, evolution and Storm routes", AiPolicyTests.Search);
 Test("AI scores damage, healing and removal targets", AiPolicyTests.Targets);
 Test("AI values Act resources and Fusion materials", AiPolicyTests.Abilities);
@@ -1018,6 +1019,68 @@ Test("stacked numeric attached effects remain visible",()=>{
  activeAbilities.Clear();p1.Field.Clear();var card=factory.CreateAndRegisterNewCard(game,2,p1.PlayerId,CardZone.Field);
  for(int i=0;i<2;i++)buffs.RegisterBuffInstance(new Buff(Guid.Empty,card.InstanceId,0,new(){new AbilityKeywordBuffEffect(new(){new(AbilityKeyword.Act,-1,ModifierLayer.Additive)})}){EffectKey="stacked",SourceCardName="Source",SourceAbilityName="Discount"},game);
  var dto=ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create(card,context);Check(dto.BuffSummaries.Single().Details.Count==2,"stacked amounts lost");
+});
+
+Test("attached effects use the source owner's card style after removal, copying and replay restore", () =>
+{
+    const int nightingale = 1473441, crest = 1473442;
+    definitions[nightingale] = new() { Id = nightingale, Name = "刺血玫瑰·夜莺", ArtPreview = "/base.webp" };
+    definitions[crest] = new() { Id = crest, Name = "纹章：刺血玫瑰·夜莺" };
+    var style = new CardStyle("caged", "囚羽", new("笼中囚羽·夜莺", "风格卡文", "/caged.webp", "/detail.webp"),
+        [new(crest, new("纹章：笼中囚羽·夜莺", "纹章卡文", "/crest.webp", null))]);
+    CardStyleCatalog.Apply(new() { Id = $"style:{nightingale}",
+        Json = JsonSerializer.Serialize(new StyleConfiguration(nightingale, 1, [style]), CardStyleCatalog.JsonOptions) });
+    CardStyleCatalog.Apply(new() { Id = $"style-prefs:{p2.PlayerId}", Json = $"{{\"{nightingale}\":\"caged\"}}" });
+    var source = factory.CreateAndRegisterNewCard(game, nightingale, p2.PlayerId, CardZone.Staging);
+    var target = factory.CreateAndRegisterNewCard(game, nightingale, p1.PlayerId, CardZone.Staging);
+    var abilityId = Guid.NewGuid();
+    var ability = Proxy<IAbility>.Make((method, _) => method.Name switch {
+        "get_RuntimeId" => abilityId, "get_SourceCard" => source, "get_SourceCardId" => source.InstanceId,
+        "get_Name" => "连锁能力1", _ => null });
+    var buff = new Buff(abilityId, target.InstanceId, 1, [new StatBuffEffect([
+        new(StatType.Attack, 2, ModifierLayer.Additive), new(StatType.Health, 2, ModifierLayer.Additive)])]);
+    using var applyContext = context with { SourceAbility = ability, SourceCard = source };
+    var applied = buffService.ApplyBuffProcess(buff, applyContext).GeneratedEvents.OfType<BuffAppliedEvent>().Single();
+    Check(applied.Commit(applyContext).Success, "buff not applied");
+
+    var restore = typeof(ReplayExecutionState).GetMethod("RestoreBuff", BindingFlags.Static | BindingFlags.NonPublic)!;
+    var saved = JsonSerializer.SerializeToNode(buff, ReplayExecutionState.Json)!.AsObject();
+    Buff Restore() => (Buff)restore.Invoke(null, [JsonSerializer.SerializeToElement(saved)])!;
+    var restored = Restore();
+    Check(buff.SummarySourceCard == restored.SummarySourceCard, "replay lost the source face");
+    var copy = buffFactory.CreateBuffCopy(restored, target);
+    buffs.UnregisterBuffInstance(buff.Id);
+    buffs.RegisterBuffInstance(copy, game);
+    game.UnregisterCardInstance(source);
+    var project = ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create;
+    var targetDto = project(target, context);
+    var summary = targetDto.BuffSummaries.Single();
+    Check(targetDto.Name == "刺血玫瑰·夜莺" && targetDto.ArtPreview == "/base.webp", "source style leaked to target");
+    Check(summary.SourceCardOwnerPlayerId == p2.PlayerId && summary.SourceCardDefinitionId == nightingale &&
+        summary.SourceCardName == style.Appearance.Name && summary.SourceCardArtPreview == "/caged.webp" &&
+        summary.SourceCardDescription == "风格卡文" && summary.SourceCardArtDetail == "/detail.webp", "wrong source appearance");
+    Check(summary.SourceAbilityName == "连锁能力1" && summary.NumericEffects.Count == 2, "chain label or stats changed");
+
+    saved.Remove("summarySourceCard");
+    var legacy = Restore();
+    Check(legacy.SummarySourceCard == null, "legacy replay invented a source");
+    buffs.UnregisterBuffInstance(copy.Id);
+    buffs.RegisterBuffInstance(legacy, game);
+    var missing = project(target, context).BuffSummaries.Single();
+    Check(missing.SourceCardName == source.Name && missing.SourceCardDefinitionId == null, "lost historical label");
+    game.RegisterCardInstance(source);
+    Check(project(target, context).BuffSummaries.Single().SourceCardName == style.Appearance.Name, "legacy live lookup lost the style");
+
+    var bound = factory.CreateAndRegisterNewCard(game, crest, p2.PlayerId, CardZone.Staging);
+    var alternate = factory.CreateAndRegisterNewCard(game, 8, p2.PlayerId, CardZone.Staging);
+    alternate.AlternateArtDefinitionId = nightingale;
+    foreach (var card in new[] { bound, alternate }) {
+        legacy.SourceCardInstanceId = card.InstanceId;
+        var visible = project(card, context);
+        var fromBuff = project(target, context).BuffSummaries.Single();
+        Check(fromBuff.SourceCardName == visible.Name && fromBuff.SourceCardArtPreview == visible.ArtPreview &&
+            fromBuff.SourceCardDefinitionId == visible.CardId, "bound or alternate source disagrees with its card");
+    }
 });
 
 Test("applied permanent numeric buffs combine across source turns",()=>{
