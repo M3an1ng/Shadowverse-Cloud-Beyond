@@ -83,6 +83,7 @@ namespace ShadowverseBeyond.Server.Services
 
         // Central Game State Storage - Stores GameState domain objects
         private readonly ConcurrentDictionary<string, GameState> _gameStates = new(); // Use Domain Entity
+        private readonly System.Runtime.CompilerServices.ConditionalWeakTable<GameState, TaskCompletionSource> _openingReplays = new();
         // --- Queue and Processing Loop Management ---
         private readonly ConcurrentDictionary<string, ConcurrentQueue<PlayerActionWrapper>> _playerActionQueues = new();
         // 【架构重构】移除传统事件队列，改为立即事件广播
@@ -205,7 +206,7 @@ namespace ShadowverseBeyond.Server.Services
             if (!state.IsGameOver)
                 throw new GameLogicException(completion?.Reason ?? "The room exit action did not finish the game.");
 
-            var completed = _matchService.CompleteGame(gameId, state.WinnerId);
+            var completed = await CompleteRoomGameAsync(state);
             if (!completed.Success && completed.Error is not (MatchOperationError.NotFound or MatchOperationError.AlreadyClosed))
                 throw new GameLogicException(completed.Message);
         }
@@ -330,8 +331,9 @@ namespace ShadowverseBeyond.Server.Services
                     {
                         processedItem = true;
                         using var observedAction = MatchCommandObservation.Begin(gameId, actionWrapper);
-                        using var replayAction = _gameStates.TryGetValue(gameId, out var recordingGame)
-                            ? _replayRecorder?.Begin(recordingGame, actionWrapper) : null;
+                        _gameStates.TryGetValue(gameId, out var recordingGame);
+                        if (recordingGame != null) await WaitForReplayOpeningAsync(recordingGame);
+                        using var replayAction = recordingGame == null ? null : _replayRecorder?.Begin(recordingGame, actionWrapper);
                         try
                         {
                             cancellationToken.ThrowIfCancellationRequested();
@@ -519,7 +521,7 @@ namespace ShadowverseBeyond.Server.Services
 
                                     if (gameState.IsGameOver && !gameState.IsMirageTournamentSeat)
                                     {
-                                        _matchService.CompleteGame(gameId, gameState.WinnerId);
+                                        await CompleteRoomGameAsync(gameState);
                                     }
 
                                     // 先发布本次状态，再允许 AI 读取下一次决策所需的可用性。
@@ -593,7 +595,7 @@ namespace ShadowverseBeyond.Server.Services
                                 GameHub.ReleaseDisconnectTrackingForGame(gameId);
                                 if (!observedState.IsMirageTournamentSeat)
                                 {
-                                    _matchService.CompleteGame(gameId, observedState.WinnerId);
+                                    await CompleteRoomGameAsync(observedState);
                                 }
                             }
                             if (observedState != null && _replayRecorder != null)
@@ -1309,6 +1311,74 @@ namespace ShadowverseBeyond.Server.Services
             return existingState;
         }
 
+        public async Task<GameStateDto?> ReadSyncStateAsync(string gameId, Guid viewingPlayerId, CancellationToken cancellationToken,
+            Func<GameStateDto, Task>? sendSnapshot = null)
+        {
+            var snapshot = new TaskCompletionSource<(GameStateDto State, Task Delivery)>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var readCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var readToken = readCancellation.Token;
+            int publishing = 0;
+
+            void Publish(GameStateDto state)
+            {
+                if (readToken.IsCancellationRequested || Interlocked.Exchange(ref publishing, 1) != 0) return;
+                try
+                {
+                    // Start the write in game-loop order. A slow connection must not block the game loop.
+                    var delivery = sendSnapshot?.Invoke(state) ?? Task.CompletedTask;
+                    snapshot.TrySetResult((state, delivery));
+                }
+                catch (Exception ex)
+                {
+                    snapshot.TrySetException(ex);
+                }
+            }
+
+            void OnWaitingSnapshot(string waitingGameId, GameStateDto state)
+            {
+                if (string.Equals(waitingGameId, gameId, StringComparison.OrdinalIgnoreCase))
+                    Publish(state);
+            }
+
+            _pendingActionService.WaitingSnapshotReady += OnWaitingSnapshot;
+            try
+            {
+                if (_pendingActionService.GetWaitingSnapshot(gameId) is { } waitingState)
+                {
+                    Publish(waitingState);
+                }
+                else
+                {
+                    // A pending choice can publish its board while the game loop is paused.
+                    var read = new MatchStateRead((state, services) =>
+                    {
+                        if (Volatile.Read(ref publishing) == 0)
+                        {
+                            using var context = new GameContext(services, _mapper, services.GetRequiredService<IGameContextAccessor>(),
+                                state, viewingPlayerId, readToken);
+                            Publish(GameStateProjection.Create(state, context));
+                        }
+                        return Task.FromResult(JsonSerializer.SerializeToElement(true));
+                    }) { CancellationToken = readToken };
+
+                    if (!await EnqueuePlayerActionAsync(gameId, read) && Volatile.Read(ref publishing) == 0)
+                        return null;
+
+                    await Task.WhenAny(snapshot.Task, read.Completion).WaitAsync(cancellationToken);
+                    if (Volatile.Read(ref publishing) == 0) return null;
+                }
+
+                var (state, delivery) = await snapshot.Task.WaitAsync(cancellationToken);
+                await delivery.WaitAsync(cancellationToken);
+                return state;
+            }
+            finally
+            {
+                _pendingActionService.WaitingSnapshotReady -= OnWaitingSnapshot;
+                readCancellation.Cancel();
+            }
+        }
+
         public async Task<System.Text.Json.JsonElement> ReadSnapshotAsync(string gameId, CancellationToken cancellationToken)
         {
             var game = GetGameState(gameId) ?? throw new ArgumentException("missing_match: " + gameId);
@@ -1352,6 +1422,17 @@ namespace ShadowverseBeyond.Server.Services
             bool requireComplete,
             CancellationToken cancellationToken)
         {
+            if (selection.TournamentCardIds is { } tournamentCards)
+            {
+                if (tournamentCards.Length != GameConstants.Cards.StandardDeckSize || !selection.DeckClass.HasValue
+                    || tournamentCards.Any(id => _gameDataProvider.GetCardDefinition(id) is not { IsMirageCard: false }))
+                    return null;
+
+                return new ResolvedDeckSelection(tournamentCards.ToList(), selection.DeckClass.Value,
+                    selection.SecondaryClass, selection.Environment ?? DeckEnvironment.Rotation,
+                    selection.Rule ?? DeckRule.Standard, null);
+            }
+
             if (selection.GeneratedDraftCardIds is { Length:30 } draftIds && selection.DeckClass.HasValue)
             {
                 if (draftIds.Any(id => id <= 0 || _gameDataProvider.GetCardDefinition(id) is not { IsMirageCard: false }))
@@ -1584,6 +1665,27 @@ namespace ShadowverseBeyond.Server.Services
             }
         }
 
+        private Task WaitForReplayOpeningAsync(GameState game) =>
+            _openingReplays.TryGetValue(game, out var opening) ? opening.Task : Task.CompletedTask;
+
+        private async Task<bool> PublishGameStateAsync(GameState game, Action? prepare = null)
+        {
+            var opening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _openingReplays.Add(game, opening);
+            try
+            {
+                if (!_gameStates.TryAdd(game.GameId, game)) return false;
+                prepare?.Invoke();
+                if (_replayRecorder != null) await _replayRecorder.StartAsync(game);
+                return true;
+            }
+            finally
+            {
+                opening.TrySetResult();
+                _openingReplays.Remove(game);
+            }
+        }
+
         // --- Refactored to GetOrCreateGameStateAsync ---
         /// <summary>
         /// Gets the current game state domain entity for the given game ID, or creates a new one if it doesn't exist.
@@ -1595,6 +1697,7 @@ namespace ShadowverseBeyond.Server.Services
         {
             if (_gameStates.TryGetValue(gameId, out var existingState))
             {
+                await WaitForReplayOpeningAsync(existingState);
                 await ApplyPlayerIdentityAsync(scopeServiceProvider, existingState.Player1, existingState.Player2);
                 return existingState;
             }
@@ -1975,9 +2078,8 @@ namespace ShadowverseBeyond.Server.Services
                     player2State.Leader.Damage = Math.Max(0, maxLeaderHp - desiredHp);
                 }
 
-                if (_gameStates.TryAdd(gameId, newGameState))
+                if (await PublishGameStateAsync(newGameState))
                 {
-                    if (_replayRecorder != null) await _replayRecorder.StartAsync(newGameState);
                     // Obsolete scope management and GameServiceProvider initialization removed.
                     // Scopes are now created on-demand in the processing loops.
 
@@ -2004,7 +2106,9 @@ namespace ShadowverseBeyond.Server.Services
 
                 // If TryAdd fails, it means another thread created the game state.
                 // Return the state created by the other thread.
-                return _gameStates.TryGetValue(gameId, out var racingState) ? racingState : null;
+                if (!_gameStates.TryGetValue(gameId, out var racingState)) return null;
+                await WaitForReplayOpeningAsync(racingState);
+                return racingState;
             }
             catch (Exception ex)
             {
@@ -3129,10 +3233,17 @@ namespace ShadowverseBeyond.Server.Services
                 var state=entry.Value;
                 if(state.Player1.PlayerId!=ownerPlayerId && state.Player2.PlayerId!=ownerPlayerId) continue;
                 using var context=new GameContext(sp,sp.GetRequiredService<IMapper>(),sp.GetRequiredService<IGameContextAccessor>(),state,ownerPlayerId);
-                var field=state.AllCards.Where(c=>c.OwnerPlayerId==ownerPlayerId && c.CurrentZone==CardZone.Field).Select(c=>CardInstanceProjection.Create(c,context)).ToList();
-                if(field.Count>0) await BroadcastEventsAsync(entry.Key,new List<GameEventDto>{new CardInstanceUpdatedEventDto(Guid.Empty,field)});
-                var hand=state.AllCards.Where(c=>c.OwnerPlayerId==ownerPlayerId && c.CurrentZone==CardZone.Hand).Select(c=>CardInstanceProjection.Create(c,context)).ToList();
-                if(hand.Count>0) await BroadcastEventToPlayerAsync(entry.Key,ownerPlayerId,new CardInstanceUpdatedEventDto(Guid.Empty,hand));
+                var updated = state.AllCards
+                    .Where(card => card.CurrentZone is CardZone.Field or CardZone.Emblem or CardZone.Hand)
+                    .Select(card => CardInstanceProjection.Create(card, context))
+                    .Where(card => card.OwnerPlayerId == ownerPlayerId ||
+                        card.BuffSummaries.Any(buff => buff.SourceCardOwnerPlayerId == ownerPlayerId))
+                    .ToList();
+                var publicCards = updated.Where(card => card.Zone != CardZone.Hand).ToList();
+                if (publicCards.Count > 0)
+                    await BroadcastEventsAsync(entry.Key, [new CardInstanceUpdatedEventDto(Guid.Empty, publicCards)]);
+                foreach (var hand in updated.Where(card => card.Zone == CardZone.Hand).GroupBy(card => card.OwnerPlayerId))
+                    await BroadcastEventToPlayerAsync(entry.Key, hand.Key, new CardInstanceUpdatedEventDto(Guid.Empty, hand.ToList()));
             }
         }
 
@@ -3615,16 +3726,12 @@ namespace ShadowverseBeyond.Server.Services
         /// Handles the submission of a player's target choice, bypassing the main action queue.
         /// This is an "out-of-band" request that resumes a paused action.
         /// </summary>
-        public Task SubmitTargetChoiceAsync(string gameId, Guid playerId, SubmitTargetChoiceActionDto dto)
+        public Task<bool> SubmitTargetChoiceAsync(string gameId, Guid playerId, SubmitTargetChoiceActionDto dto)
         {
             _logger.LogInformation("[SubmitTargetChoiceAsync:{GameId}] Received target choice from Player {PlayerId} for ability {AbilityId}",
                 gameId, playerId, dto.SourceAbilityRuntimeId);
 
-            // This method now only completes the pending choice.
-            // The actual processing of the choice happens inside the game loop.
-            _pendingActionService.CompletePlayerChoice(dto.PendingChoiceId, dto);
-
-            return Task.CompletedTask;
+            return Task.FromResult(_pendingActionService.CompletePlayerChoice(gameId, playerId, dto));
         }
 
     } // Closing brace for GameService class

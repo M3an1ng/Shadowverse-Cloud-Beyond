@@ -41,6 +41,7 @@ public sealed class ReplayRecorder(IServiceScopeFactory scopes, IOptions<ReplayO
         public List<ReplayHistoryNode> Nodes { get; } = [];
         public List<ReplayHistoryCheckpoint> Checkpoints { get; } = [];
         public List<Task> Observations { get; } = [];
+        public SemaphoreSlim WriteGate { get; } = new(1, 1);
     }
     public sealed class ActionCapture : IDisposable
     {
@@ -155,7 +156,7 @@ public sealed class ReplayRecorder(IServiceScopeFactory scopes, IOptions<ReplayO
                 stateOverrides = ReplayStateChanges.Between(ReplayStateChanges.View(recording.Document),state);
                 body.Remove("gameState");
             }
-            capture.Owner.Marker(recording,capture.GameId,"presentation","message","emitted",null,null,
+            capture.Owner.Marker(recording,capture.GameId,"presentation","message","emitted",null,dto.ReplaySourceEventId,
                 new { method, audience, payload, stateAtSeq, stateOverrides });
         }
         catch (Exception ex) { capture.Owner.Fault(capture.GameId,recording,ex); }
@@ -295,19 +296,26 @@ public sealed class ReplayRecorder(IServiceScopeFactory scopes, IOptions<ReplayO
     }
     private async Task FlushAsync(GameState game,Recording recording)
     {
-        if (recording.Failure != null) { MatchCommandObservation.Persistence("recording",new { Status = "failed", Error = recording.Failure }); return; }
+        await recording.WriteGate.WaitAsync();
         try
         {
+            if (recording.Failure != null) { MatchCommandObservation.Persistence("recording",new { Status = "failed", Error = recording.Failure }); return; }
+            var nodes = recording.Nodes.ToArray();
+            var checkpoints = recording.Checkpoints.ToArray();
+            var observations = recording.Observations.ToArray();
+            recording.Nodes.Clear();
+            recording.Checkpoints.Clear();
+            recording.Observations.Clear();
             using var scope = scopes.CreateScope();
             await scope.ServiceProvider.GetRequiredService<SqliteReplayHistory>().AppendAsync(game.GameId,game.Player1.PlayerId,game.Player2.PlayerId,
-                recording.DurableSeq,recording.Nodes.ToArray(),recording.Checkpoints.ToArray(),CancellationToken.None,recording.ExecutionRules);
-            recording.DurableSeq = recording.Seq;
-            recording.Nodes.Clear(); recording.Checkpoints.Clear();
+                recording.DurableSeq,nodes,checkpoints,CancellationToken.None,recording.ExecutionRules);
+            if (nodes.Length > 0) recording.DurableSeq = nodes[^1].Seq;
             recording.ExecutionRules = null;
-            await Task.WhenAll(recording.Observations); recording.Observations.Clear();
+            await Task.WhenAll(observations);
             MatchCommandObservation.Persistence("recording",new { Status = "saved", FormatVersion = 3, HeadSeq = recording.DurableSeq });
         }
         catch (Exception ex) { Fault(game.GameId,recording,ex); }
+        finally { recording.WriteGate.Release(); }
     }
     private void Fault(string id,Recording recording,Exception error)
     {

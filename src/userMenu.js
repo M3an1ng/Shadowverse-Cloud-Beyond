@@ -13,7 +13,7 @@ export function setupUserInfoUI({ apiGetJson, apiPostJson, syncTopNavHoverLock }
     const card = document.getElementById('user-info-card');
     const aboutCard = document.getElementById('about-card');
     const dailyQuestCard = document.getElementById('daily-quest-card');
-    const devConsoleToggle = document.getElementById('dev-console-toggle');
+    const replayToggle = document.getElementById('replay-toggle');
     const nameEl = document.getElementById('user-info-name');
     const roleEl = document.getElementById('user-info-role');
     const idEl = document.getElementById('user-info-id');
@@ -561,7 +561,7 @@ export function setupUserInfoUI({ apiGetJson, apiPostJson, syncTopNavHoverLock }
         setOpen(!isOpen);
     });
 
-    devConsoleToggle?.addEventListener('click', () => {
+    replayToggle?.addEventListener('click', () => {
         setOpen(false);
     });
 
@@ -989,12 +989,20 @@ export function setupUserInfoUI({ apiGetJson, apiPostJson, syncTopNavHoverLock }
             }
         });
 
-        logoutBtn.addEventListener('click', () => {
-            clearUserSession();
-            if (passwordInput) passwordInput.value = '';
-            applySession();
-            setStatus('已退出。');
-            document.dispatchEvent(new Event('deckListUpdated'));
+        logoutBtn.addEventListener('click', async () => {
+            setAuthBusy(true);
+            try {
+                await apiPostJson('/api/auth/logout', {});
+                clearUserSession();
+                passwordInput.value = '';
+                applySession();
+                setStatus('已退出。');
+                document.dispatchEvent(new Event('deckListUpdated'));
+            } catch (error) {
+                setStatus('退出失败：' + error.message, true);
+            } finally {
+                setAuthBusy(false);
+            }
         });
     }
 }

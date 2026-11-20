@@ -34,6 +34,7 @@ namespace ShadowverseBeyond.Server.Domain.Events
         public Guid? TriggeredAbilityRuntimeId { get; }
 
         public int? AlternateCardDefinitionId { get; }
+        internal EnhanceEvent.TargetChoices? PreparedEnhanceChoices { get; set; }
 
         // Keep one event identity so evolution choices resolved before playing are reused after summoning.
         internal EvolveEvent? MirageTripleEvolution { get; }
@@ -158,7 +159,10 @@ namespace ShadowverseBeyond.Server.Domain.Events
         {
             return PlayMode switch
             {
-                PlayMode.Enhance => new EnhanceEvent(player, card, PaidCost, TriggeredAbilityRuntimeId),
+                PlayMode.Enhance => new EnhanceEvent(player, card, PaidCost, TriggeredAbilityRuntimeId)
+                {
+                    PreparedChoices = PreparedEnhanceChoices
+                },
                 PlayMode.Accelerate => new AccelerateEvent(player, card, PaidCost, TriggeredAbilityRuntimeId),
                 PlayMode.Crystalize => new CrystalizeEvent(player, card, PaidCost, TriggeredAbilityRuntimeId),
                 _ => null

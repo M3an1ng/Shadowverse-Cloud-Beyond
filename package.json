@@ -23,6 +23,7 @@
     "@microsoft/signalr": "^8.0.7"
   },
   "devDependencies": {
+    "linkedom": "0.18.12",
     "vite": "^6.3.5"
   }
 }

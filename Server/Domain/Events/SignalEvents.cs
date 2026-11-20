@@ -595,6 +595,12 @@ namespace ShadowverseBeyond.Server.Domain.Events
         EventType.Enhance)]
     public class EnhanceEvent : GameEventBase
     {
+        internal sealed record TargetChoice(IReadOnlySet<Guid> CandidateIds, IReadOnlyList<Guid> ChosenIds);
+        internal sealed record TargetChoices(Guid CardId, Guid AbilityRuntimeId, long AbilityDefinitionId,
+            Guid? SourceBuffId, IReadOnlyDictionary<string, TargetChoice> ByTargetKey);
+
+        internal TargetChoices? PreparedChoices { get; init; }
+
         [GameEventParameter("出牌玩家", "发动爆能的玩家。", DslDisplayTypeName = "事件源")]
         public PlayerState? PlayPlayer => Source?.Player;
 

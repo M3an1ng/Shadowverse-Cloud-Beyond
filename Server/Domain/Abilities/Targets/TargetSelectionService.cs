@@ -12,6 +12,7 @@ using ShadowverseBeyond.Server.Domain.Query;
 using ShadowverseBeyond.Server.Domain.Abilities.Effects;
 using ShadowverseBeyond.Server.Services.Abstractions;
 using ShadowverseBeyond.Server.Dtos;
+using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Logging;
 using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 
@@ -97,7 +98,106 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
             _pendingActionService = pendingActionService ?? throw new ArgumentNullException(nameof(pendingActionService));
         }
 
-        // TODO: Refactor or remove ResolvePlayerChoice as its logic will be integrated into the new async resolution flow.
+        internal async Task<TargetResolutionResult> PrepareEnhanceChoicesAsync(PlayCardEvent play, GameContext context)
+        {
+            var completed = new TargetResolutionResult { Status = ResolutionStatus.Completed };
+            if (play.PlayingPlayer is not { IsAI: false } player || player.PlayerId != context.RequestingPlayerId
+                || play.PlayedCard is not { CurrentZone: CardZone.Hand, IsSilenced: false } card
+                || play.TriggeredAbilityRuntimeId is not { } runtimeId
+                || play.AlternateCardDefinitionId.HasValue
+                || context.CurrentGameState.IsCombatSandbox || context.InvocationOptions.AutoRandomTargetSelection)
+            {
+                return completed;
+            }
+
+            var ability = context.AbilityManager.GetEffectiveAbilitiesForCard(card.InstanceId, context)
+                .OfType<Ability>().FirstOrDefault(candidate => candidate.RuntimeId == runtimeId);
+            if (ability == null || !ability.HasKeyword(AbilityKeyword.Enhance)
+                || ability.HasKeyword(AbilityKeyword.Intromezzo) || ability.Config.Auras.Any(aura => aura.IsEnabled)
+                || ability.TriggerConfig is not { Timing: TriggerTiming.On, RelationType: TriggerRelationType.TargetSelf }
+                || !ability.TriggerConfig.EventTypes.Contains(EventType.Enhance)
+                || ability.TriggerConfig.LimitSameNameOncePerTransaction)
+            {
+                return completed;
+            }
+
+            var targets = ability.Targets.Where(target =>
+                target.Config.IsEnabled && target.Config.PlayerChoiceOptions?.IsRequired == true).ToList();
+            var entersField = card.CardType != CardType.Spell;
+            if (targets.Count == 0
+                || targets.Any(target => !PlayTargetPreview.CanPreviewQuery(target.Config.Query, entersField))
+                || ability.Config.Conditions.Any(condition => condition.IsEnabled && !PlayTargetPreview.CanPreviewCondition(condition.Expression)))
+            {
+                return completed;
+            }
+
+            var preview = new EnhanceEvent(player, card, play.PaidCost, runtimeId);
+            var choiceContext = context with
+            {
+                SourceCard = card, SourceAbility = ability, TriggeringEvent = preview, IsCancellable = true
+            };
+            if (!ability.Trigger.CanTrigger(preview, card, entersField ? CardZone.Field : CardZone.Playing)
+                || !ability.CheckConditions(choiceContext))
+            {
+                return completed;
+            }
+
+            var requests = new List<(PlayerChoiceRequest Request, List<TargetInfo> ChoicePool)>();
+            foreach (var target in targets)
+            {
+                var queryResult = _cardQueryExecutor.ExecuteQuery(target.Config.Query, choiceContext);
+                if (!queryResult.Success) return completed;
+
+                // The card being played will no longer be present when a hand query runs in settlement.
+                var potentialTargets = queryResult.Results.OfType<CardInstance>()
+                    .Where(candidate => candidate.InstanceId != card.InstanceId)
+                    .Select(TargetInfo.ForCard)
+                    .ToList();
+                var candidateTargets = ApplyAbilityTargetKeywordRules(potentialTargets, target.Config, choiceContext, applyChoiceRestrictions: false);
+                var (choicePool, selectableTargets) = GetPlayerChoiceTargets(candidateTargets, target.Config, choiceContext);
+                var options = target.Config.PlayerChoiceOptions!;
+                var min = Math.Max(0, options.MinCount);
+                var max = Math.Max(min, Math.Max(1, options.MaxCount));
+                if (selectableTargets.Count < Math.Max(1, min))
+                {
+                    if (target.Config.ShouldBlockAbilityExecutionOnInsufficientTargets()) return completed;
+                    continue;
+                }
+
+                requests.Add((CreateTargetChoiceRequest(ability, target.Key, choiceContext, selectableTargets,
+                    min, max, BuildPlayerChoicePrompt(min, max), isCancellable: true), choicePool));
+            }
+
+            var prepared = new Dictionary<string, EnhanceEvent.TargetChoice>();
+            foreach (var (request, choicePool) in requests)
+            {
+                var result = await _pendingActionService.WaitForPlayerChoiceAsync(context.CurrentGameState.GameId, request, context.CancellationToken);
+                if (result.WasCancelled)
+                {
+                    return new TargetResolutionResult { Status = ResolutionStatus.Failed, WasCancelled = true };
+                }
+
+                var selected = choicePool.Where(candidate => result.ChosenTargetIds.Contains(candidate.InstanceId)).ToList();
+                if (!SatisfiesSpellWardSelectionRule(selected, choicePool, choiceContext))
+                {
+                    return new TargetResolutionResult
+                    {
+                        Status = ResolutionStatus.Failed,
+                        ErrorMessage = "目标选择无效：存在守护时必须优先选择守护目标。"
+                    };
+                }
+
+                prepared.Add(request.TargetKey, new EnhanceEvent.TargetChoice(
+                    request.SelectableTargetIds.ToHashSet(), result.ChosenTargetIds.ToList()));
+            }
+
+            if (prepared.Count > 0)
+            {
+                play.PreparedEnhanceChoices = new EnhanceEvent.TargetChoices(
+                    card.InstanceId, runtimeId, ability.DefinitionId, ability.SourceBuffId, prepared);
+            }
+            return completed;
+        }
 
         /// <summary>
         /// Resolves all targets for a given ability, handling dependencies and player choices.
@@ -167,21 +267,7 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                 if (target.Config.PlayerChoiceOptions?.IsRequired == true)
                 {
                     var resolutionPoolTargets = candidateTargets;
-                    var choicePoolTargets = ApplyAbilityTargetKeywordRules(
-                        candidateTargets,
-                        target.Config,
-                        context,
-                        applyChoiceRestrictions: true,
-                        enforceSpellWard: false);
-
-                    var maxConfiguredSelectionCount = Math.Max(1, target.Config.PlayerChoiceOptions.MaxCount);
-                    var enforceSpellWardOnSelectablePool = maxConfiguredSelectionCount <= 1;
-                    var selectableTargets = ApplyAbilityTargetKeywordRules(
-                        choicePoolTargets,
-                        target.Config,
-                        context,
-                        applyChoiceRestrictions: true,
-                        enforceSpellWard: enforceSpellWardOnSelectablePool);
+                    var (choicePoolTargets, selectableTargets) = GetPlayerChoiceTargets(candidateTargets, target.Config, context);
 
                     var configuredMinSelectionCount = Math.Max(0, target.Config.PlayerChoiceOptions.MinCount);
                     var requiredMinSelectionCount = Math.Max(1, configuredMinSelectionCount);
@@ -259,27 +345,30 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
                         continue;
                     }
 
-                    var choiceRequest = new PlayerChoiceRequest
+                    PlayerChoiceResult choiceResult;
+                    if (context.TriggeringEvent is EnhanceEvent { PreparedChoices: { } prepared }
+                        && ability is Ability actualAbility && prepared.CardId == actualAbility.SourceCard?.InstanceId
+                        && (prepared.AbilityRuntimeId == actualAbility.RuntimeId
+                            || (prepared.AbilityDefinitionId > 0 && prepared.AbilityDefinitionId == actualAbility.DefinitionId
+                                && prepared.SourceBuffId == actualAbility.SourceBuffId))
+                        && prepared.ByTargetKey.TryGetValue(target.Key, out var previousChoice)
+                        && previousChoice.CandidateIds.SetEquals(selectableTargets.Select(candidate => candidate.InstanceId))
+                        && previousChoice.ChosenIds.Count >= requestMinSelectionCount
+                        && previousChoice.ChosenIds.Count <= maxSelectionCount
+                        && previousChoice.ChosenIds.All(previousChoice.CandidateIds.Contains)
+                        && SatisfiesSpellWardSelectionRule(selectableTargets
+                            .Where(candidate => previousChoice.ChosenIds.Contains(candidate.InstanceId)).ToList(), choicePoolTargets, context))
                     {
-                        PendingChoiceId = Guid.NewGuid(),
-                        SourceAbilityRuntimeId = ability.RuntimeId,
-                        TargetKey = target.Key,
-                        RequestingPlayerId = context.RequestingPlayerId,
-                        SelectableTargetIds = selectableTargets.Select(t => t.InstanceId).ToList(),
-                        SelectableCardInstances = selectableTargets
-                            .Where(t => t.Type == TargetType.Card && t.Card != null)
-                            .Select(t => CardInstanceProjection.Create(t.Card!, context))
-                            .ToList(),
-                        MinSelectionCount = requestMinSelectionCount,
-                        MaxSelectionCount = maxSelectionCount,
-                        Message = message,
-                        IsCancellable = isCancellable
-                    };
-
-                    // --- CORE REFACTOR ---
-                    // Instead of returning, we now await the player's choice directly.
-                    _logger.LogInformation("Awaiting player choice for ability {AbilityKeywords}, target key '{TargetKey}'.", ability.KeywordSummary, target.Key);
-                    var choiceResult = await _pendingActionService.WaitForPlayerChoiceAsync(context.CurrentGameState.GameId, choiceRequest, context.CancellationToken);
+                        // A changed pool goes through the normal settlement choice below.
+                        choiceResult = new PlayerChoiceResult { ChosenTargetIds = previousChoice.ChosenIds.ToList() };
+                    }
+                    else
+                    {
+                        var choiceRequest = CreateTargetChoiceRequest(ability, target.Key, context, selectableTargets,
+                            requestMinSelectionCount, maxSelectionCount, message, isCancellable);
+                        _logger.LogInformation("Awaiting player choice for ability {AbilityKeywords}, target key '{TargetKey}'.", ability.KeywordSummary, target.Key);
+                        choiceResult = await _pendingActionService.WaitForPlayerChoiceAsync(context.CurrentGameState.GameId, choiceRequest, context.CancellationToken);
+                    }
 
                     if (choiceResult.WasCancelled)
                     {
@@ -576,6 +665,38 @@ namespace ShadowverseBeyond.Server.Domain.Abilities.Targets
             var selectedSpellWardCount = selectedOpponentCards.Count(card => activeSpellWardFollowerIds.Contains(card.InstanceId));
             var requiredSpellWardCount = Math.Min(selectedOpponentCards.Count, activeSpellWardFollowerIds.Count);
             return selectedSpellWardCount >= requiredSpellWardCount;
+        }
+
+        private static (List<TargetInfo> ChoicePool, List<TargetInfo> Selectable) GetPlayerChoiceTargets(
+            List<TargetInfo> candidates, TargetConfig config, GameContext context)
+        {
+            var choicePool = ApplyAbilityTargetKeywordRules(candidates, config, context,
+                applyChoiceRestrictions: true, enforceSpellWard: false);
+            var selectable = ApplyAbilityTargetKeywordRules(choicePool, config, context,
+                applyChoiceRestrictions: true, enforceSpellWard: config.PlayerChoiceOptions!.MaxCount <= 1);
+            return (choicePool, selectable);
+        }
+
+        private static PlayerChoiceRequest CreateTargetChoiceRequest(
+            IAbility ability, string targetKey, GameContext context, List<TargetInfo> selectableTargets,
+            int minCount, int maxCount, string message, bool isCancellable)
+        {
+            return new PlayerChoiceRequest
+            {
+                PendingChoiceId = Guid.NewGuid(),
+                SourceAbilityRuntimeId = ability.RuntimeId,
+                TargetKey = targetKey,
+                RequestingPlayerId = context.RequestingPlayerId,
+                SelectableTargetIds = selectableTargets.Select(t => t.InstanceId).ToList(),
+                SelectableCardInstances = selectableTargets
+                    .Where(t => t.Type == TargetType.Card && t.Card != null)
+                    .Select(t => CardInstanceProjection.Create(t.Card!, context))
+                    .ToList(),
+                MinSelectionCount = minCount,
+                MaxSelectionCount = maxCount,
+                Message = message,
+                IsCancellable = isCancellable
+            };
         }
 
         private static string BuildPlayerChoicePrompt(int minCount, int maxCount)

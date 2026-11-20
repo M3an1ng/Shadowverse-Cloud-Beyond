@@ -6,6 +6,7 @@ const BYPASS_EVENTS = new Set([
   "ChatMessage",
   "ChatHistory",
   "PlayerConnectionStatusUpdated",
+  "PlayerChoiceResolved",
   "ReceiveError",
 ]);
 
@@ -18,19 +19,35 @@ export function isPresentationFastForward() {
 export function createRevealPresentationGate(isCurrent = () => true) {
   let waiting = 0,
     pending = [],
+    generation = 0,
     flushing = false;
 
   const syncDepth = () => {
     latestPendingDepth = pending.length;
   };
 
+  const clear = () => {
+    generation++;
+    waiting = 0;
+    pending = [];
+    syncDepth();
+  };
+
   const execute = (work) => {
-    const completion = work();
+    const startedIn = generation;
+    let completion;
+    try {
+      completion = work();
+    } catch (error) {
+      console.error("处理对局事件失败", error);
+      return;
+    }
     if (completion && typeof completion.then === "function") {
       waiting++;
       Promise.resolve(completion)
         .catch((error) => console.error("演出门禁等待异常", error))
         .finally(() => {
+          if (startedIn !== generation) return;
           waiting--;
           drain();
         });
@@ -60,8 +77,7 @@ export function createRevealPresentationGate(isCurrent = () => true) {
         return;
       }
       if (eventName === "ReceiveGameState") {
-        pending = [];
-        syncDepth();
+        clear();
         execute(work);
         return;
       }
@@ -72,9 +88,6 @@ export function createRevealPresentationGate(isCurrent = () => true) {
         execute(work);
       }
     },
-    clear() {
-      pending = [];
-      syncDepth();
-    },
+    clear,
   };
 }

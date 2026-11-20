@@ -4,7 +4,7 @@
 //       全卡种无遮罩悬停展示（随从/护符/法术均先悬停再落位/生效）、接触式攻击冲撞与致死交接、
 //       同波受击震动/浮字、进化爆发与语义化退场（破坏/消失/回手）。
 
-import { alternateCastTimings, castCardPose, paintAlternateCastEffect } from './alternateCastEffect.js';
+import { alternateCastTimings, castCardPose, crystalLandingKeyframes, paintAlternateCastEffect } from './alternateCastEffect.js';
 
 const STRIP_CLONE_CLASSES = [
     'is-selected',
@@ -831,6 +831,22 @@ export function createBattleMotionController({
 
             const isHeal = Number(hit.heal) > 0;
             const amount = isHeal ? Number(hit.heal) : Number(hit.damage ?? 0);
+            const film = targetEl?.nextElementSibling;
+            if (hit.shieldBroken && !isHeal && amount === 0 && film?.matches('.leader-shield')) {
+                const frames = reduced
+                    ? { visibility: ['visible', 'visible'], opacity: [1, 0] }
+                    : {
+                        visibility: ['visible', 'visible'],
+                        '--leader-shield-opening': ['-12%', '9%', '52%', '100%'],
+                        scale: [1, 1.012, 1.035, 1.05],
+                        opacity: [1, 1, 0.96, 0],
+                        offset: [0, 0.16, 0.65, 1]
+                    };
+                trackAnimation(safeAnimate(film, frames, {
+                    id: 'leader-shield-rupture', duration: reduced ? 120 : 440, easing: 'ease-out'
+                }));
+                return;
+            }
 
             if (!isHeal && !reduced) {
                 const impactBurst = document.createElement('div');
@@ -1218,49 +1234,89 @@ export function createBattleMotionController({
 
         const timing = alternateCastTimings[mode];
         const speed = fastForward ? 0.55 : 1;
-        const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5, 1440 / width, 900 / height);
-        canvas.width = Math.max(1, Math.round(width * pixelRatio));
-        canvas.height = Math.max(1, Math.round(height * pixelRatio));
         canvas.className = 'bui-alternate-cast-effect';
         canvas.setAttribute('aria-hidden', 'true');
-        ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
 
         const label = document.createElement('div');
         label.className = `bui-alternate-cast-label is-${mode}`;
         label.textContent = timing.label;
-        carrier.append(label);
-        layer.append(canvas);
+        label.setAttribute('aria-hidden', 'true');
+        label.style.left = `${geometry.hover.x}px`;
+        label.style.top = `${geometry.hover.y + geometry.height * 0.64}px`;
+        layer.append(canvas, label);
 
         const targetEl = queryBoardEntityElement(targetUid);
         if (targetUid) hideRealElement(targetEl, targetUid);
-        const updateTarget = () => {
-            const current = queryBoardEntityElement(targetUid);
+        geometry.target = geometry.hover;
+        let bounds;
+        function fitCanvas() {
+            const { hover, target, width: w, height: h } = geometry;
+            const side = w * (mode === 'accelerate' ? 2.25 : 1.04);
+            const left = Math.max(0, Math.floor(Math.min(hover.x - side, target.x - w * 0.86)));
+            const right = Math.min(Math.ceil(width), Math.ceil(Math.max(hover.x + side, target.x + w * 0.86)));
+            const top = Math.max(0, Math.floor(Math.min(hover.y - h, target.y - h * 0.69)));
+            const bottom = Math.min(Math.ceil(height), Math.ceil(Math.max(hover.y + h,
+                target.y + Math.max(h * 0.69, (target.height || 0) / 2 + h * 0.17))));
+            if (bounds && left >= bounds.left && right <= bounds.right && top >= bounds.top && bottom <= bounds.bottom) return;
+            // Leave room for small shifts as field cards settle, without reallocating the bitmap.
+            bounds = { left: Math.max(0, left - 12), right: Math.min(Math.ceil(width), right + 12),
+                top: Math.max(0, top - 12), bottom: Math.min(Math.ceil(height), bottom + 12) };
+            const cssWidth = Math.max(1, bounds.right - bounds.left);
+            const cssHeight = Math.max(1, bounds.bottom - bounds.top);
+            const ratio = Math.min(window.devicePixelRatio || 1, 2, 1440 / cssWidth, 900 / cssHeight);
+            canvas.width = Math.max(1, Math.round(cssWidth * ratio));
+            canvas.height = Math.max(1, Math.round(cssHeight * ratio));
+            Object.assign(canvas.style, { left: `${bounds.left}px`, top: `${bounds.top}px`,
+                width: `${cssWidth}px`, height: `${cssHeight}px` });
+            const sx = canvas.width / cssWidth, sy = canvas.height / cssHeight;
+            ctx.setTransform(sx, 0, 0, sy, -bounds.left * sx, -bounds.top * sy);
+        }
+        function updateTarget(current = queryBoardEntityElement(targetUid)) {
             const rect = current && toStageRect(current.getBoundingClientRect(), stageEl.getBoundingClientRect());
-            geometry.target = rect ? { x: rect.cx, y: rect.cy } : geometry.hover;
-        };
+            if (rect?.width && rect.height && (rect.cx !== geometry.target.x || rect.cy !== geometry.target.y || rect.height !== geometry.target.height)) {
+                geometry.target = { x: rect.cx, y: rect.cy, height: rect.height };
+                fitCanvas();
+            }
+        }
         updateTarget();
+        if (!bounds) fitCanvas();
 
         let resolveSequence;
         const sequence = new Promise(resolve => { resolveSequence = resolve; });
         const startedAt = performance.now();
         let frameId;
         let impacted = false;
-        let flightStarted = false;
+        let landingElement;
+
+        function settleCrystal(ms) {
+            if (mode !== 'crystalize' || !targetUid || landingElement?.isConnected || ms >= timing.done) return;
+            // A board snapshot can replace this node mid-recoil. Resume on the new amulet
+            // at the same point in the animation instead of replaying the landing.
+            const current = queryBoardEntityElement(targetUid);
+            if (!current?.matches?.('.field-card, .bui-field-zone .card')) return;
+            updateTarget(current);
+            landingElement = current;
+            trackAnimation(safeAnimate(current, crystalLandingKeyframes, {
+                duration: (timing.done - timing.impact) * speed,
+                delay: -Math.max(0, ms - timing.impact) * speed
+            }));
+        }
 
         function resolveImpact() {
             if (impacted) return;
             impacted = true;
-            if (targetUid) restoreRealElement(targetEl, targetUid);
+            if (targetUid) {
+                updateTarget();
+                restoreRealElement(targetEl, targetUid);
+            }
             carrier.remove();
+            label.remove();
             resolveSequence();
             onResolveImpact?.();
         }
 
         function draw(ms) {
-            if (!flightStarted && ms >= timing.resolve) {
-                flightStarted = true;
-                updateTarget();
-            }
+            if (targetUid && !impacted && ms >= timing.resolve) updateTarget();
             if (!impacted) {
                 const pose = castCardPose(mode, ms, geometry);
                 carrier.style.translate = `${pose.x - geometry.hover.x}px ${pose.y - geometry.hover.y}px`;
@@ -1268,8 +1324,10 @@ export function createBattleMotionController({
                 carrier.style.rotate = `${pose.rotate}deg`;
                 carrier.style.opacity = pose.opacity;
                 label.style.opacity = pose.labelOpacity;
+            } else {
+                settleCrystal(ms);
             }
-            ctx.clearRect(0, 0, width, height);
+            ctx.clearRect(bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top);
             paintAlternateCastEffect(ctx, mode, ms, geometry);
         }
 
@@ -1286,6 +1344,7 @@ export function createBattleMotionController({
             window.clearTimeout(cleanupTimer);
             canvas.remove();
             carrier.remove();
+            label.remove();
             if (!impacted && targetUid) restoreRealElement(targetEl, targetUid);
             resolveSequence();
         }
@@ -1355,7 +1414,7 @@ export function createBattleMotionController({
                 geometry: {
                     source: { x: startCx, y: startCy, scale: startScale },
                     hover: { x: hoverCx, y: hoverCy },
-                    width: w, height: h, drag: isFromDrag
+                    width: w, height: h, drag: isFromDrag, opponent: isOpponent
                 }
             });
             if (sequence) return sequence;

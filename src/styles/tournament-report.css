@@ -1,0 +1,187 @@
+.tournament-report-dialog {
+    --report-inset: clamp(0.8rem, 2vw, 1.5rem);
+    width: min(1080px, calc(100% - 2rem));
+    max-height: 88dvh;
+    box-sizing: border-box;
+    margin: auto;
+    padding: 0;
+    border: 1px solid var(--tournament-border);
+    border-radius: var(--radius-md);
+    color: #e9f5fd;
+    background:
+        linear-gradient(var(--tournament-cyan), var(--tournament-cyan)) 0 0 / 64px 2px no-repeat,
+        linear-gradient(150deg, #142633, #0b1420 74%);
+    box-shadow: 0 18px 64px rgb(0 0 0 / 45%);
+    overscroll-behavior: contain;
+    overflow: hidden;
+}
+
+.tournament-report-dialog[open] {
+    display: flex;
+    flex-direction: column;
+}
+
+.tournament-report-dialog-header {
+    flex: none;
+    padding: var(--report-inset) var(--report-inset) 0;
+}
+
+.tournament-report-dialog-body {
+    overflow: auto;
+    min-height: 0;
+    padding: 0 var(--report-inset) var(--report-inset);
+}
+
+.tournament-report-dialog::backdrop {
+    background: rgb(3 8 15 / 76%);
+}
+
+.tournament-report-dialog [hidden] {
+    display: none;
+}
+
+.tournament-report-dialog h2 {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.tournament-report-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-block: var(--space-3);
+}
+
+.tournament-report-controls label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    font-size: var(--text-sm);
+}
+
+.tournament-report-dialog :is(input, select) {
+    color: inherit;
+    border: 1px solid var(--tournament-border);
+    border-radius: var(--radius-sm);
+    background: #101c28;
+    min-height: 2.35rem;
+    min-width: 0;
+    padding: var(--space-1) var(--space-2);
+    font: inherit;
+    color-scheme: dark;
+}
+
+.tournament-report-dialog :is(input, select):focus-visible {
+    outline: 2px solid var(--tournament-cyan);
+    outline-offset: 1px;
+}
+
+.tournament-report-controls a.tournament-button {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+}
+
+.tournament-report-totals {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-2);
+    margin-block: var(--space-3);
+}
+
+.tournament-report-totals:empty {
+    display: none;
+}
+
+.tournament-report-totals > div {
+    padding: var(--space-3);
+    border-left: 2px solid var(--tournament-border);
+    background: #142330;
+}
+
+.tournament-report-totals dt {
+    color: var(--tournament-text-muted);
+    font-size: var(--text-sm);
+}
+
+.tournament-report-totals dd {
+    margin: var(--space-1) 0 0;
+    color: var(--tournament-cyan);
+    font-weight: 650;
+    font-size: var(--text-xl);
+    font-variant-numeric: tabular-nums;
+}
+
+.tournament-report-table-wrap {
+    max-width: 100%;
+    overflow: auto;
+}
+
+.tournament-report-table {
+    width: 100%;
+    min-width: 37rem;
+    border-collapse: collapse;
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+.tournament-report-table :is(td, th) {
+    border-bottom: 1px solid var(--tournament-border);
+    padding: var(--space-2);
+    overflow-wrap: anywhere;
+    text-align: left;
+}
+
+.tournament-report-table th {
+    background: #182d3d;
+    color: var(--tournament-text-muted);
+}
+
+.tournament-report-rate {
+    background-image: linear-gradient(to right, #1b4353 var(--rate), transparent var(--rate));
+}
+
+.tournament-classification-decks {
+    display: grid;
+    gap: var(--space-2);
+}
+
+.tournament-classification-row {
+    display: grid;
+    grid-template-columns: minmax(7rem, 1fr) minmax(9rem, 1.4fr) minmax(11rem, 1.25fr) auto;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    border: 1px solid var(--tournament-border);
+    border-radius: var(--radius-sm);
+    background: #101c28;
+    overflow-wrap: anywhere;
+}
+
+.tournament-classification-deck-name {
+    display: grid;
+    gap: var(--space-1);
+}
+
+@media (max-width: 710px) {
+    .tournament-report-totals {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tournament-classification-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .tournament-classification-owner,
+    .tournament-classification-deck-name {
+        grid-column: 1 / -1;
+    }
+
+    .tournament-classification-row input {
+        width: 100%;
+        box-sizing: border-box;
+    }
+}

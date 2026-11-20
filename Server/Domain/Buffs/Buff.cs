@@ -40,6 +40,8 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
         /// <summary> The ID of the source card instance, if available. </summary>
         public Guid? SourceCardInstanceId { get; set; }
 
+        public CardAppearanceReference? SummarySourceCard { get; set; }
+
         /// <summary> Cached source card name for UI summaries when abilities are no longer available. </summary>
         public string? SourceCardName { get; set; }
 

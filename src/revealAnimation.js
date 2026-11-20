@@ -1,6 +1,6 @@
 import "./styles/reveal-animation.css";
 
-export function revealGeometry(bounds, origin) {
+export function revealGeometry(bounds, origin, angle = 0, aspect = 0) {
   const factor = bounds.width / (bounds.layoutWidth || bounds.width) || 1;
   const width = Math.min(
     240,
@@ -10,6 +10,9 @@ export function revealGeometry(bounds, origin) {
   const height = width * 1.4;
   const x = (origin.left + origin.width / 2 - bounds.left) / factor;
   const y = (origin.top + origin.height / 2 - bounds.top) / factor;
+  // The hand fans its cards. Recover the unrotated size from their screen bounds.
+  const cos = Math.abs(Math.cos(angle));
+  const sin = Math.abs(Math.sin(angle));
   return {
     x,
     y,
@@ -17,8 +20,40 @@ export function revealGeometry(bounds, origin) {
     height,
     dx: bounds.width / factor / 2 - x,
     dy: bounds.height / factor / 2 - y,
-    scale: origin.width / factor / width,
+    angle,
+    scale: origin.width / factor / width / (aspect ? cos + sin / aspect : 1),
+    scaleY: origin.height / factor / height / (aspect ? cos + sin * aspect : 1),
   };
+}
+
+function positionFlight(flight, container, { element, origin }) {
+  const bounds = container.getBoundingClientRect();
+  const transform = element && getComputedStyle(element).transform;
+  const matrix = transform && transform !== "none"
+    ? new DOMMatrixReadOnly(transform)
+    : null;
+  const angle = matrix ? Math.atan2(matrix.b, matrix.a) : 0;
+  const aspect = element?.offsetHeight ? element.offsetWidth / element.offsetHeight : 0;
+  const geometry = revealGeometry(
+    {
+      left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height,
+      layoutWidth: container.offsetWidth,
+    },
+    origin,
+    angle,
+    aspect,
+  );
+  const style = flight.style;
+  style.left = geometry.x + "px";
+  style.top = geometry.y + "px";
+  style.width = geometry.width + "px";
+  style.height = geometry.height + "px";
+  style.setProperty("--reveal-dx", geometry.dx + "px");
+  style.setProperty("--reveal-dy", geometry.dy + "px");
+  style.setProperty("--reveal-angle", geometry.angle + "rad");
+  style.setProperty("--reveal-scale-x", geometry.scale);
+  style.setProperty("--reveal-scale-y", geometry.scaleY);
+  style.setProperty("--reveal-unit", geometry.width / 120 + "px");
 }
 
 // Visual-only queue: never inserts revealed cards into the authoritative hand.
@@ -32,7 +67,7 @@ export function createRevealAnimator({
     running = false,
     generation = 0,
     root = null;
-  const timers = new Map();
+  const pendingAnimations = new Set();
   let completions = [];
   const complete = () => {
     const batch = completions;
@@ -41,14 +76,31 @@ export function createRevealAnimator({
   };
   const hiddenSources = new Map();
   const returned = new Map();
-  const wait = (ms) =>
-    new Promise((resolve) => {
-      const id = setTimeout(() => {
-        timers.delete(id);
+  function waitForAnimation(element) {
+    const animation = element.getAnimations()[0];
+    if (!animation) return;
+    return new Promise((resolve) => {
+      const finish = () => {
+        clearTimeout(timer);
+        pendingAnimations.delete(finish);
         resolve();
-      }, ms);
-      timers.set(id, resolve);
+      };
+      // Background tabs may stop advancing the document timeline.
+      const timer = setTimeout(finish, animation.effect.getComputedTiming().endTime + 160);
+      pendingAnimations.add(finish);
+      animation.finished.then(finish, finish);
     });
+  }
+  function hideSource(element) {
+    if (!element || hiddenSources.has(element)) return;
+    hiddenSources.set(element, element.style.visibility);
+    element.style.visibility = "hidden";
+  }
+  function restoreSource(element) {
+    if (!hiddenSources.has(element)) return;
+    element.style.visibility = hiddenSources.get(element);
+    hiddenSources.delete(element);
+  }
   const restore = () => {
     for (const [element, value] of hiddenSources)
       element.style.visibility = value;
@@ -61,11 +113,7 @@ export function createRevealAnimator({
     generation++;
     queue = [];
     running = false;
-    for (const [id, resolve] of timers) {
-      clearTimeout(id);
-      resolve();
-    }
-    timers.clear();
+    for (const finish of pendingAnimations) finish();
     restore();
     complete();
   }
@@ -125,15 +173,64 @@ export function createRevealAnimator({
     flipper.append(back, front);
     return flipper;
   }
+  async function showCard(card, options, source, container, token) {
+    const reduced = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const flight = document.createElement("div");
+    flight.className = reduced ? "mini-reveal-flight is-static" : "mini-reveal-flight";
+    flight.setAttribute("aria-label", "公开卡牌：" + (card.Name ?? card.name ?? "未知卡牌"));
+    const id = card.InstanceId ?? card.instanceId ?? card.uid ?? source.element ?? flight;
+    const previous = returned.get(id);
+    positionFlight(flight, container, source);
+    flight.append(face(card, source.hidden && !previous && !reduced));
+    const shade = document.createElement("div");
+    shade.className = "mini-reveal-shade";
+    root.append(shade, flight);
+    if (previous) {
+      restoreSource(previous.element);
+      previous.flight.remove();
+      returned.delete(id);
+    }
+    if (!reduced) hideSource(source.element);
+    await waitForAnimation(flight);
+    if (token !== generation) return;
+    if (reduced) {
+      flight.remove();
+      shade.remove();
+      return;
+    }
+    // A hand can reflow or replace its elements while the card is in the center.
+    const target = resolveOrigin(card, options) ?? source;
+    if (target.element !== source.element) {
+      restoreSource(source.element);
+      hideSource(target.element);
+    }
+    positionFlight(flight, container, target);
+    flight.classList.add("is-returning");
+    await waitForAnimation(flight);
+    if (token !== generation) return;
+    shade.remove();
+    if (target.hidden) {
+      flight.classList.replace("is-returning", "mini-reveal-returned");
+      returned.set(id, { flight, element: target.element });
+      return;
+    }
+    // Keep the real face visible underneath throughout the landing fade.
+    restoreSource(target.element);
+    flight.classList.replace("is-returning", "is-landing");
+    await waitForAnimation(flight);
+    flight.remove();
+  }
   async function run() {
     if (running) return;
     running = true;
     const token = generation;
     try {
       while (queue.length && token === generation && isActive()) {
-        const entry = queue.shift(),
-          container = getContainer();
+        const { card, options } = queue.shift();
+        const container = getContainer();
         if (!container) break;
+        const source = resolveOrigin(card, options);
+        if (!source) continue;
         if (!root) {
           root = document.createElement("div");
           root.id = "reveal-overlay-root";
@@ -141,67 +238,13 @@ export function createRevealAnimator({
           root.setAttribute("role", "status");
           container.append(root);
         }
-        const shade = document.createElement("div");
-        shade.className = "mini-reveal-shade";
-        root.append(shade);
-        const bounds = container.getBoundingClientRect();
-        const geometry = revealGeometry(
-          {
-            left: bounds.left,
-            top: bounds.top,
-            width: bounds.width,
-            height: bounds.height,
-            layoutWidth: container.offsetWidth,
-          },
-          entry.origin,
-        );
-        const flight = document.createElement("div");
-        flight.className = "mini-reveal-flight";
-        flight.setAttribute(
-          "aria-label",
-          "公开卡牌：" + (entry.card.Name ?? entry.card.name ?? "未知卡牌"),
-        );
-        for (const [key, value] of Object.entries({
-          left: geometry.x,
-          top: geometry.y,
-          width: geometry.width,
-          height: geometry.height,
-        }))
-          flight.style[key] = value + "px";
-        flight.style.setProperty("--reveal-dx", geometry.dx + "px");
-        flight.style.setProperty("--reveal-dy", geometry.dy + "px");
-        flight.style.setProperty("--reveal-start-scale", geometry.scale);
-        flight.style.setProperty("--reveal-unit", geometry.width / 120 + "px");
-        flight.append(face(entry.card, entry.hidden));
-        root.append(flight);
-        if (entry.element && !hiddenSources.has(entry.element)) {
-          hiddenSources.set(entry.element, entry.element.style.visibility);
-          entry.element.style.visibility = "hidden";
-        }
-        const reduced = globalThis.matchMedia?.(
-          "(prefers-reduced-motion: reduce)",
-        ).matches;
-        await wait(reduced ? 700 : 1200);
+        await showCard(card, options, source, container, token);
         if (token !== generation) return;
-        if (entry.hidden) {
-          const id =
-            entry.card.InstanceId ?? entry.card.instanceId ?? entry.card.uid;
-          returned.get(id)?.remove();
-          const slot = document.createElement("div");
-          slot.className = "mini-reveal-returned";
-          slot.style.cssText = `left:${geometry.x}px;top:${geometry.y}px;width:${geometry.width * geometry.scale}px;height:${geometry.height * geometry.scale}px;--reveal-unit:${(geometry.width * geometry.scale) / 120}px`;
-          slot.append(face(entry.card, false));
-          root.append(slot);
-          returned.set(id, slot);
-        }
-        flight.remove();
-        shade.remove();
-        if (!queue.length) {
-          await wait(32);
-          if (token !== generation) return;
-          if (queue.length) continue;
+        if (!queue.length && returned.size) {
           root.classList.add("turning-back");
-          await wait(240);
+          await Promise.all(Array.from(returned.values(), ({ flight }) =>
+            waitForAnimation(flight.firstElementChild),
+          ));
           if (token !== generation) return;
           restore();
         }
@@ -218,10 +261,8 @@ export function createRevealAnimator({
     clear,
     enqueue(card, options = {}) {
       if (!card || !isActive()) return;
-      const source = resolveOrigin(card, options);
-      if (!source) return;
       const done = new Promise((resolve) => completions.push(resolve));
-      queue.push({ card, ...source });
+      queue.push({ card, options });
       void run();
       return done;
     },

@@ -2,7 +2,7 @@ import { miniCardBadge } from './miniCardBadge.js';
 import { createCardInstance as createDiscoverPreviewCard } from './cardManager.js';
 import { createRevealAnimator } from './revealAnimation.js';
 import { playModeVisual } from './playModeVisual.js';
-import { summarizeAttachedNumericEffects, numericEffectTitle, renderAttachedNumericEffects, effectSourceHtml } from './liveEffectSummary.js';
+import { getEffectSource, getEffectSourceDetail, summarizeAttachedNumericEffects, renderAttachedNumericEffects, effectSourceHtml } from './liveEffectSummary.js';
 import { showAlert } from './siteDialog.js';
 import { createModeChoiceDialog, toggleModeSelection } from './ui/modeChoiceDialog.js';
 import './styles/mode-choice.css';
@@ -51,8 +51,7 @@ import {
     mirageSelectLeaderRequest,
     abortMirageCombatPlayback,
     switchMirageSpectateTargetRequest,
-    submitPlayerChoice,
-    cancelPlayerChoice
+    submitPlayerChoice
 } from './gameManager.js';
 
 function isMirageMode(state = gameState) {
@@ -633,6 +632,21 @@ function resolveLeaderAvatarElementByUid(targetUid) {
     }
 
     return null;
+}
+
+function hasShieldKeyword(card) {
+    const keywords = card?.keywords ?? card?.Keywords;
+    return Array.isArray(keywords) && keywords.some(keyword => equalsIgnoreCase(keyword, 'Shield'));
+}
+
+function updateLeaderShield(avatar, leaderCard) {
+    if (!avatar) return;
+    const active = hasShieldKeyword(leaderCard) && !avatar.classList.contains('is-tavern-emblem');
+    if (active && !avatar.classList.contains('has-shield')) {
+        // A new shield can be granted while the previous membrane is still breaking.
+        avatar.nextElementSibling?.getAnimations?.().forEach(animation => animation.cancel());
+    }
+    avatar.classList.toggle('has-shield', active);
 }
 
 function resolveRenderableTargetElement(targetUid) {
@@ -1293,6 +1307,7 @@ function tweenIntegerText(element, targetValue, options = {}) {
         hasPrev
         && prevRaw !== safeTarget
         && isGamePageActive()
+        && !document.body.classList.contains('replay-seeking')
         && gameState.phase !== 'Initializing'
         && gameState.phase !== 'Mulligan'
     ) {
@@ -1420,12 +1435,23 @@ function buildStandaloneMotionCardClone(cardDtoOrInstance, paidCost = null, play
 }
 
 function cancelAllBattleMotions() {
+    revealAnimator.clear();
     suppressedEnterUids.clear();
     suppressedExitUids.clear();
     pendingCardPlayHoverMap.clear();
     recentShieldBrokenUntil.clear();
     recentFusedUids.clear();
     battleMotionController?.cancelAll();
+}
+
+export function clearBattlePresentation() {
+    cancelAllBattleMotions();
+    cardAnimationSystem?.dispose();
+    clearTurnStartBanner();
+    clearAbilityTriggerToasts();
+    clearTrackedVisualTimeouts();
+    hpGhostSettleTimers.clear();
+    removeTransientVisualArtifacts();
 }
 
 function notifyShieldRemoved(unitUid) {
@@ -1449,7 +1475,7 @@ function playUnitEvolutionEffect(unitUid, isSuper = false) {
     return getBattleMotionController().playEvolveBurst(String(unitUid), Boolean(isSuper));
 }
 
-function notifyCardPlayed(playedCardDto, sourcePlayerId, paidCost, playMode) {
+function notifyCardPlayed(playedCardDto, sourcePlayerId, paidCost, playMode, reusePrepared = false) {
     if (!isGamePageActive() || !playedCardDto) return undefined;
     const stageEl = gameContainerEl ?? document.getElementById('game-container');
     if (!stageEl) return undefined;
@@ -1465,6 +1491,7 @@ function notifyCardPlayed(playedCardDto, sourcePlayerId, paidCost, playMode) {
         playedCardDto.InstanceId ?? playedCardDto.instanceId ?? playedCardDto.uid ?? ''
     ).trim();
     if (!cardUid) return undefined;
+    if (reusePrepared && pendingCardPlayHoverMap.has(normalizeMotionUidKey(cardUid))) return;
 
     const stageRect = stageEl.getBoundingClientRect();
     const isOpponent = !isSamePlayerId(sourcePlayerId, gameState.localPlayerId);
@@ -1742,6 +1769,9 @@ function animateCardLeaveOverlay(sourceElement, sourceRect) {
 }
 
 function renderAnimatedCardCollection(container, entries = [], options = {}) {
+    if (document.body.classList.contains('replay-seeking')) {
+        options = { ...options, animateEnter: false, animateExit: false, animateMove: false };
+    }
     getCardAnimationSystem().renderCollection(container, entries, options);
 }
 
@@ -1862,12 +1892,14 @@ function applyLeaderHpBarWithGhostSettle(hpContainer, hpPercent, isDanger) {
 
     const containerKey = hpContainer.id || 'hp-unknown';
     const existingTimer = hpGhostSettleTimers.get(containerKey);
+    const seeking = document.body.classList.contains('replay-seeking');
     if (existingTimer) {
+        if (!seeking && prevPctRaw === Number(safePct.toFixed(2))) return;
         window.clearTimeout(existingTimer);
         hpGhostSettleTimers.delete(containerKey);
     }
 
-    if (Number.isFinite(prevPctRaw) && safePct < prevPctRaw - 0.1 && !prefersReducedMotion()) {
+    if (!seeking && Number.isFinite(prevPctRaw) && safePct < prevPctRaw - 0.1 && !prefersReducedMotion()) {
         ghostEl.style.width = `${prevPctRaw}%`;
         const timerId = runTrackedVisualTimeout(() => {
             hpGhostSettleTimers.delete(containerKey);
@@ -2481,6 +2513,11 @@ function updateUnitDisplay(unitInstance) {
         return;
     }
 
+    if (equalsIgnoreCase(unitInstance.zone, 'Leader') || equalsIgnoreCase(unitInstance.type, 'Leader')) {
+        updateLeaderShield(resolveLeaderAvatarElementByUid(unitInstance.uid), unitInstance);
+        return;
+    }
+
     const unitElement = document.querySelector(`.field-card[data-uid="${unitInstance.uid}"]`);
 
     if (!unitElement) {
@@ -2558,6 +2595,7 @@ function refreshCardInstanceUi(cardInstance, handOwnersToRefresh = null, emblemO
     }
 
     if (cardInstance.type === 'Leader' || zone === 'leader') {
+        updateUnitDisplay(cardInstance);
         updateHealthDisplay(cardInstance);
     }
 }
@@ -2766,15 +2804,6 @@ let currentChoiceSelectedTargetIds = new Set();
 let currentChoiceSubmission = null;
 let modeChoiceDialog = null;
 
-function isCurrentChoiceRequest(pendingChoiceId, sourceAbilityRuntimeId) {
-    if (!isAwaitingPlayerChoice || !currentChoiceRequest) {
-        return false;
-    }
-
-    return String(currentChoiceRequest.PendingChoiceId) === String(pendingChoiceId)
-        && String(currentChoiceRequest.SourceAbilityRuntimeId) === String(sourceAbilityRuntimeId);
-}
-
 function startPlayerChoice(requestData) {
     evolutionDrag.cancel();
     isAwaitingPlayerChoice = true;
@@ -2791,10 +2820,10 @@ function startPlayerChoice(requestData) {
     // Potentially disable other buttons like evolve here as well if needed.
 }
 
-function endPlayerChoice(notifyBackendOfCancellation = true) {
-    if (!isAwaitingPlayerChoice) return; // Prevent multiple calls
-
-    const choiceToCancel = currentChoiceRequest; // Capture before clearing
+export function hidePlayerChoiceUI(pendingChoiceId = null, playerId = null) {
+    if (!currentChoiceRequest
+        || (pendingChoiceId && pendingChoiceId !== currentChoiceRequest.PendingChoiceId)
+        || (playerId && !equalsIgnoreCase(playerId, currentChoiceRequest.RequestingPlayerId))) return;
     isAwaitingPlayerChoice = false;
     currentChoiceRequest = null;
     currentChoiceSubmission = null;
@@ -2806,23 +2835,7 @@ function endPlayerChoice(notifyBackendOfCancellation = true) {
 
     removeChoiceOverlayUI();
 
-    // BUG-FIX: Notify the backend that the choice was cancelled, only if requested.
-    if (notifyBackendOfCancellation && choiceToCancel && choiceToCancel.PendingChoiceId && choiceToCancel.SourceAbilityRuntimeId) {
-        cancelPlayerChoice(choiceToCancel.PendingChoiceId, choiceToCancel.SourceAbilityRuntimeId);
-    } else if (notifyBackendOfCancellation) {
-        console.warn("UI: endPlayerChoice was called to notify backend, but there was no active choice request to cancel.");
-    }
-
-    if (notifyBackendOfCancellation) {
-        cancelCommittedHandPlayVisual(choiceToCancel?.SourceCardUid ?? null);
-    }
-
-    // BUG-FIX: Restore the state of the end turn button.
-    if (endTurnButtonEl) {
-        const isLocalPlayerTurn = gameState.localPlayerId === gameState.currentPlayerId;
-        // Only enable if it's the local player's turn and the game is in a phase where ending the turn is possible.
-        endTurnButtonEl.disabled = !isLocalPlayerTurn || (gameState.phase !== 'Main' && gameState.phase !== 'TurnStart');
-    }
+    renderActionButtons(gameState);
 
     // Re-apply normal highlights after exiting choice mode.
     renderHighlights(gameState);
@@ -2984,21 +2997,21 @@ function updateChoiceOverlayUI() {
     });
 }
 
-async function confirmPlayerChoice() {
-    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
-    if (currentChoiceSubmission === currentChoiceRequest) return;
+async function confirmPlayerChoice(wasCancelled = false) {
     const request = currentChoiceRequest;
-    const { PendingChoiceId, SourceAbilityRuntimeId } = currentChoiceRequest;
-
-    const chosenIds = Array.from(currentChoiceSelectedTargetIds);
-    if (!isChoiceSelectionValid(currentChoiceRequest, chosenIds.length)) return;
+    if (!isAwaitingPlayerChoice || !request || currentChoiceSubmission === request || isConnectionLocked) return;
+    const chosenIds = wasCancelled ? [] : Array.from(currentChoiceSelectedTargetIds);
+    if (wasCancelled ? request.IsCancellable !== true : !isChoiceSelectionValid(request, chosenIds.length)) return;
 
     currentChoiceSubmission = request;
     updateChoiceOverlayUI();
     try {
-        const ok = await submitPlayerChoice(PendingChoiceId, chosenIds, SourceAbilityRuntimeId, false);
-        if (ok && isCurrentChoiceRequest(PendingChoiceId, SourceAbilityRuntimeId)) {
-            endPlayerChoice(false);
+        const ok = await submitPlayerChoice(request, chosenIds, wasCancelled);
+        if (ok) {
+            if (wasCancelled && (!currentChoiceRequest || currentChoiceRequest === request)) {
+                cancelCommittedHandPlayVisual(request.SourceCardUid ?? null);
+            }
+            hidePlayerChoiceUI(request.PendingChoiceId);
         }
     } finally {
         if (currentChoiceSubmission === request) currentChoiceSubmission = null;
@@ -3007,17 +3020,11 @@ async function confirmPlayerChoice() {
 }
 
 function requestCancelPlayerChoiceUI() {
-    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
-    if (currentChoiceSubmission === currentChoiceRequest) return;
-    if (currentChoiceRequest.IsCancellable !== true) {
-        console.warn("UI: Player choice is not cancellable. Ignoring cancel request.");
-        return;
-    }
-    endPlayerChoice(true);
+    void confirmPlayerChoice(true);
 }
 
 async function handleChoiceTargetClick(targetUid) {
-    if (!isAwaitingPlayerChoice || !currentChoiceRequest) return;
+    if (!isAwaitingPlayerChoice || !currentChoiceRequest || isConnectionLocked) return;
     if (currentChoiceSubmission === currentChoiceRequest) return;
 
     const validTargetUids = new Set((currentChoiceRequest.SelectableTargetIds || []).map(x => String(x)));
@@ -3287,7 +3294,7 @@ function renderGame(currentGameState) { // Remove second parameter
 
     const activePreviewUid = battleCardPreviewEl?.dataset?.previewUid;
     if (activePreviewUid) {
-        const refreshedPreviewCard = findCardInstanceByUid(activePreviewUid);
+        const refreshedPreviewCard = document.body.classList.contains('replay-seeking') ? null : findCardInstanceByUid(activePreviewUid);
         renderBattleCardPreview(refreshedPreviewCard ?? null);
     }
 
@@ -4335,7 +4342,7 @@ function renderMirageNeutralTavernHud(currentGameState, localPlayer) {
 
     const avatarEl = statsContainer.querySelector('.stats-avatar');
     if (avatarEl) {
-        avatarEl.classList.remove('mirage-leader-avatar', 'targetable', 'targetable-spell', 'targetable-restricted', 'choice-selected', 'hand-drag-target-valid');
+        avatarEl.classList.remove('has-shield', 'mirage-leader-avatar', 'targetable', 'targetable-spell', 'targetable-restricted', 'choice-selected', 'hand-drag-target-valid');
         avatarEl.classList.add('has-image', 'is-tavern-emblem');
         avatarEl.innerHTML = buildMirageTavernAstrolabeSvg(tavernTier, maxTavernTier);
     }
@@ -4696,6 +4703,7 @@ function renderPlayerStats(playerState, prefix) { // prefix = 'player1' or 'play
 
         const avatarEl = statsContainer.querySelector('.stats-avatar');
         if (avatarEl) {
+            updateLeaderShield(avatarEl, leaderCard);
             const avatar = resolvePlayerAvatar(playerState, isLocal, displayName);
             const leaderArt = isCustomMirageLeader
                 ? String(leaderCard?.artPreview ?? leaderCard?.ArtPreview ?? '').trim()
@@ -5218,7 +5226,7 @@ function createCardElement(cardInstance, context = 'hand', displayCostOverride =
     if (context === 'field' && rawKeywordList.some(k => equalsIgnoreCase(k, 'Ward'))) {
         cardDiv.classList.add('has-ward');
     }
-    if (rawKeywordList.some(k => equalsIgnoreCase(k, 'Shield'))) {
+    if (hasShieldKeyword(cardInstance)) {
         cardDiv.classList.add('has-shield');
     }
 
@@ -5940,17 +5948,15 @@ export function getBuffSummaryHtml(cardInstance) {
         }
     }
 
-    const numericHtml = renderAttachedNumericEffects(numericGroups);
+    const renderSource = source => effectSourceHtml({ ...source, art: resolveArtUrl(source.art) });
+    const numericHtml = renderAttachedNumericEffects(numericGroups, renderSource);
     const lines = Array.isArray(summaries)
         ? summaries
-            .map(summary => {
-                const sourceCardName = summary?.sourceCardName ?? summary?.SourceCardName;
-                const sourceCardArtPreview = summary?.sourceCardArtPreview ?? summary?.SourceCardArtPreview;
-                const sourceAbilityName = summary?.sourceAbilityName ?? summary?.SourceAbilityName;
-                if (!sourceCardName) {
+            .map((summary, index) => {
+                const source = getEffectSource(summary, index);
+                if (!source.name) {
                     return '';
                 }
-                const sourceCardArtUrl = resolveArtUrl(sourceCardArtPreview);
                 const granted = summary.GrantedAbilities ?? summary.grantedAbilities ?? [];
                 const grantedTexts = granted.map(ability => ability.Description || ability.description || ability.Name || ability.name || '').filter(Boolean);
                 const description = grantedTexts.length ? '' : summary.description ?? summary.Description ?? '';
@@ -5961,7 +5967,7 @@ export function getBuffSummaryHtml(cardInstance) {
                 const detailCounts = new Map();
                 if (Array.isArray(details)) for (const detail of details) if (!numericTexts.has(detail) && !grantedTexts.includes(detail)) detailCounts.set(detail, (detailCounts.get(detail) || 0) + 1);
                 if (detailCounts.size === 0 && !grantedTexts.length && (numericTexts.size || details.length)) return '';
-                return `<section class="battle-attached-effect"><b class="battle-attached-title">${renderDescriptionHtml(grantedTexts.join('\n') || [...detailCounts.keys()].map(localize).join(' / ') || description || '附加效果')}</b>${effectSourceHtml({id:summary.SourceCardDefinitionId ?? summary.sourceCardDefinitionId,name:sourceCardName,abilityName:sourceAbilityName,art:sourceCardArtUrl})}</section>`;
+                return `<section class="battle-attached-effect"><b class="battle-attached-title">${renderDescriptionHtml(grantedTexts.join('\n') || [...detailCounts.keys()].map(localize).join(' / ') || description || '附加效果')}</b>${renderSource(source)}</section>`;
             })
             .filter(Boolean)
             .join('')
@@ -5971,7 +5977,7 @@ export function getBuffSummaryHtml(cardInstance) {
         return '';
     }
 
-    return `<div class="buff-summary-list">${summaryLine}${keywordLine}${numericHtml}${lines}</div>`;
+    return `<div class="buff-summary-list custom-scrollbar" role="region" aria-label="附加信息" tabindex="0">${summaryLine}${keywordLine}${numericHtml}${lines}</div>`;
 }
 
 function getBattlePreviewPlaceholderHtml() {
@@ -6106,6 +6112,9 @@ function renderBattleCardPreview(cardInstance) {
 
     battleCardPreviewEl.classList.remove('is-empty');
     const previewUid = cardInstance.uid ?? cardInstance.InstanceId ?? '';
+    const summaryScrollTop = previewUid && battleCardPreviewEl.dataset.previewUid === String(previewUid)
+        ? battleCardPreviewEl.querySelector('.buff-summary-list')?.scrollTop
+        : 0;
     if (previewUid) {
         battleCardPreviewEl.dataset.previewUid = previewUid;
     } else {
@@ -6128,14 +6137,21 @@ function renderBattleCardPreview(cardInstance) {
         delete battleCardPreviewEl.dataset.previewCardName;
     }
     battleCardPreviewEl.innerHTML = buildBattlePreviewHtml(cardInstance);
-    for (const button of battleCardPreviewEl.querySelectorAll('.battle-effect-source-button[data-card-id]')) {
+    const buffSummary = battleCardPreviewEl.querySelector('.buff-summary-list');
+    if (buffSummary && summaryScrollTop) buffSummary.scrollTop = summaryScrollTop;
+    const summaries = cardInstance.buffSummaries ?? cardInstance.BuffSummaries ?? [];
+    for (const button of battleCardPreviewEl.querySelectorAll('.battle-effect-source-button[data-source-index]')) {
+        const index = Number(button.dataset.sourceIndex);
+        const source = getEffectSource(summaries[index], index);
         button.addEventListener('click', async event => {
-            event.preventDefault();event.stopPropagation();
+            event.preventDefault();
+            event.stopPropagation();
             try {
-                const response=await fetch(`/api/cards/${Number(button.dataset.cardId)}`);
-                if(!response.ok) throw new Error('来源卡牌详情加载失败');
-                showCardDetailModal(await response.json());
-            } catch(error) { showAlert(error.message); }
+                const response = await fetch(`/api/cards/${source.id}`);
+                if (!response.ok) throw new Error('来源卡牌详情加载失败');
+                const detail = getEffectSourceDetail(await response.json(), source);
+                showCardDetailModal(detail, { stylePreferenceApplied: true });
+            } catch (error) { showAlert(error.message); }
         });
     }
     const fallbackPreviewPath = cardInstance.artPreview
@@ -6276,15 +6292,25 @@ let latestTurnNumber = 0;
 let latestTurnPlayerId = null;
 const TURN_START_ANIMATION_MS = 1300;
 
+function clearTurnStartBanner() {
+    clearTimeout(turnStartTimeoutId);
+    turnStartTimeoutId = null;
+    if (!turnInfoEl || !isTurnStartActive) return;
+    if (turnInfoEl._turnStartHandler) {
+        turnInfoEl.removeEventListener('animationend', turnInfoEl._turnStartHandler);
+        turnInfoEl._turnStartHandler = null;
+    }
+    isTurnStartActive = false;
+    turnInfoEl.classList.remove('turn-start-active', 'turn-start-friendly', 'turn-start-enemy');
+    renderTurnInfo(latestTurnNumber, latestTurnPlayerId);
+}
+
 export function showTurnStartBanner(currentPlayerId) {
     if (!turnInfoEl) return;
 
     const isLocal = Boolean(gameState.localPlayerId) && currentPlayerId === gameState.localPlayerId;
     const sideClass = isLocal ? 'turn-start-friendly' : 'turn-start-enemy';
-    if (turnInfoEl._turnStartHandler) {
-        turnInfoEl.removeEventListener('animationend', turnInfoEl._turnStartHandler);
-        turnInfoEl._turnStartHandler = null;
-    }
+    clearTurnStartBanner();
 
     isTurnStartActive = true;
     turnInfoEl.textContent = 'TURN START';
@@ -6296,30 +6322,12 @@ export function showTurnStartBanner(currentPlayerId) {
     void turnInfoEl.offsetWidth;
     turnInfoEl.classList.add('turn-start-active');
 
-    if (turnStartTimeoutId) {
-        clearTimeout(turnStartTimeoutId);
-    }
     const onAnimationEnd = (event) => {
-        if (event.animationName !== 'turn-start-wipe') return;
-        turnInfoEl.removeEventListener('animationend', onAnimationEnd);
-        turnInfoEl._turnStartHandler = null;
-        isTurnStartActive = false;
-        turnInfoEl.classList.remove('turn-start-active', 'turn-start-friendly', 'turn-start-enemy');
-        renderTurnInfo(latestTurnNumber, latestTurnPlayerId);
+        if (event.animationName === 'turn-start-wipe') clearTurnStartBanner();
     };
     turnInfoEl._turnStartHandler = onAnimationEnd;
     turnInfoEl.addEventListener('animationend', onAnimationEnd);
-    turnStartTimeoutId = window.setTimeout(() => {
-        if (!isTurnStartActive) return;
-        isTurnStartActive = false;
-        turnInfoEl.classList.remove('turn-start-active', 'turn-start-friendly', 'turn-start-enemy');
-        renderTurnInfo(latestTurnNumber, latestTurnPlayerId);
-        if (turnInfoEl._turnStartHandler) {
-            turnInfoEl.removeEventListener('animationend', turnInfoEl._turnStartHandler);
-            turnInfoEl._turnStartHandler = null;
-        }
-        turnStartTimeoutId = null;
-    }, TURN_START_ANIMATION_MS + 200);
+    turnStartTimeoutId = window.setTimeout(clearTurnStartBanner, TURN_START_ANIMATION_MS + 200);
 }
 
 // --- 渲染游戏日志的辅助函数 ---
@@ -6789,7 +6797,7 @@ function renderActionButtons(currentGameState) {
             const readyCnt = Number(standings?.readyCount ?? standings?.ReadyCount ?? 0);
             const countSuffix = aliveCnt > 0 ? ` (${readyCnt}/${aliveCnt})` : '';
             endTurnButtonEl.style.display = 'inline-block';
-            endTurnButtonEl.disabled = isConnectionLocked || isReady || gateClosed;
+            endTurnButtonEl.disabled = isConnectionLocked || isAwaitingPlayerChoice || isReady || gateClosed;
             const mirageStateCls = isReady ? 'is-mirage-locked' : 'is-mirage-recruit';
             endTurnButtonEl.classList.add(mirageStateCls);
             rightDockEl?.classList.add(mirageStateCls);
@@ -6837,7 +6845,7 @@ function renderActionButtons(currentGameState) {
         if (endTurnLabelEl) {
             endTurnLabelEl.textContent = isLocalPlayerTurn ? 'END TURN' : 'ENEMY TURN';
         }
-        endTurnButtonEl.disabled = isConnectionLocked || !isLocalPlayerTurn; // Disable if not local player's turn
+        endTurnButtonEl.disabled = isConnectionLocked || isAwaitingPlayerChoice || !isLocalPlayerTurn; // Disable if not local player's turn
     } else {
         // Other phases or opponent's turn: Hide both (or just hide confirm, end turn might be handled by turn manager logic implicitly)
         confirmMulliganButtonEl.style.display = 'none';
@@ -6882,6 +6890,7 @@ function updateReconnectButton() {
 function setConnectionStatus(status, message) {
     const normalized = status || 'connected';
     const isConnected = normalized === 'connected';
+    const wasLocked = isConnectionLocked;
     connectionStatus = normalized;
     connectionStatusMessage = message || '';
     isConnectionLocked = !isConnected;
@@ -6900,6 +6909,9 @@ function setConnectionStatus(status, message) {
         document.querySelectorAll('.pp-boost-button').forEach(button => {
             button.disabled = true;
         });
+    } else if (wasLocked) {
+        const player = getPlayerState(gameState.localPlayerId);
+        if (player) updatePpBoostDisplay(player.id, player.ppBoostUsesAvailable, player.ppBoostArmed === true);
     }
 }
 
@@ -6920,10 +6932,8 @@ function showDamageNumber(targetUid, damageAmount) {
 
     const safeDamage = Math.max(0, Math.trunc(Number(damageAmount) || 0));
     const targetInstance = findCardInstanceByUid(targetUid);
-    const targetHasShieldNow = Array.isArray(targetInstance?.keywords)
-        && targetInstance.keywords.some(keyword => equalsIgnoreCase(keyword, 'Shield'));
     const shieldBroken = safeDamage === 0 && (
-        targetHasShieldNow
+        hasShieldKeyword(targetInstance)
         || targetElement.classList?.contains('has-shield') === true
         || hasActiveTimedUidFlag(recentShieldBrokenUntil, targetUid)
     );
@@ -7648,7 +7658,7 @@ async function handleGameClick(event) {
     // Check if the click was on the End Turn / Lock Lineup button
     const clickedEndTurnButton = event.target.closest('#end-turn-button');
     if (clickedEndTurnButton) {
-        if (gameState.isSpectator) return;
+        if (gameState.isSpectator || isAwaitingPlayerChoice) return;
         if (clickedEndTurnButton.disabled) return;
         if (isMirageMode(gameState)) {
             if (gameState.phase === 'Recruit' && typeof mirageSetReadyRequest === 'function') {
@@ -8027,11 +8037,8 @@ async function confirmEndTurnAction() {
  * @param {string} eventData.ChoicePrompt - The prompt to show to the player
  */
 export function showPlayerChoiceUI(choiceRequest) {
-
-    if (isAwaitingPlayerChoice) {
-        console.warn("UI: Received a new player choice request while another one is active. Clearing UI state without notifying backend.");
-        endPlayerChoice(false);
-    }
+    if (currentChoiceRequest?.PendingChoiceId === choiceRequest.PendingChoiceId) return;
+    hidePlayerChoiceUI();
 
     const selectableTargetIds = Array.isArray(choiceRequest?.SelectableTargetIds) ? choiceRequest.SelectableTargetIds : [];
 
@@ -8039,7 +8046,6 @@ export function showPlayerChoiceUI(choiceRequest) {
         const canSubmitEmpty = isChoiceSelectionValid(choiceRequest, 0);
         if (choiceRequest?.IsCancellable !== true && !canSubmitEmpty) {
             console.warn("UI: No selectable targets provided for a non-cancellable choice. Ending choice UI.");
-            endPlayerChoice(false);
             return;
         }
 
@@ -8240,6 +8246,7 @@ document.addEventListener('cleanupGame', () => {
     removeChoiceOverlayUI();
     isAwaitingPlayerChoice = false;
     currentChoiceRequest = null;
+    currentChoiceSubmission = null;
     currentChoiceSelectedTargetIds = new Set();
     hoveredHandPreviewUid = null;
     gameContainerEl?.classList.remove('player-choice-active');
@@ -8255,7 +8262,6 @@ document.addEventListener('cleanupGame', () => {
     clearTrackedVisualTimeouts();
     removeTransientVisualArtifacts();
     removeStrayBattleCardArtifacts();
-    revealAnimator.clear();
 });
 
 // --- Reveal UI: Mini flight, flip, return, then conceal the whole hidden batch. ---

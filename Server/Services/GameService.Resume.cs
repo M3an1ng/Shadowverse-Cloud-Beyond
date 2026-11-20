@@ -8,7 +8,12 @@ public partial class GameService
     public async Task InstallResumedGameAsync(GameState game)
     {
         if (game.ReplayBranch is null) throw new ArgumentException("resumed_game_requires_origin");
-        if (!_gameStates.TryAdd(game.GameId,game)) throw new InvalidOperationException("resume_game_id_conflict");
+        if (!await PublishGameStateAsync(game, () => RestoreTurnTimer(game)))
+            throw new InvalidOperationException("resume_game_id_conflict");
+    }
+
+    private void RestoreTurnTimer(GameState game)
+    {
         if (game.Mode == GameMode.Mirage && game.Phase == GamePhase.Recruit && !game.IsGameOver)
         {
             if (game.Mirage != null)
@@ -28,6 +33,5 @@ public partial class GameService
         {
             StartTurnTimer(game.GameId,game.CurrentPlayerId!.Value);
         }
-        if (_replayRecorder != null) await _replayRecorder.StartAsync(game);
     }
 }

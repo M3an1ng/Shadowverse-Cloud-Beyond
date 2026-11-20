@@ -84,7 +84,8 @@ coverage/
 /data/scrape/
 /data/scrape-playwright/
 /scripts/check-docs.py
-/scripts/tests/
+/scripts/tests/*
+!/scripts/tests/mini-merge.test.mjs
 /scripts/migrate-card-detail-to-webp.ps1
 /analyze.js
 /dotnet-install.ps1
@@ -126,8 +127,12 @@ coverage/
 !/tests/
 /tests/*
 !/tests/EngineMigration/
+!/tests/tournament/
 !/tests/DiscoverInstances/
 !/tests/modeChoiceDialog.test.mjs
+!/tests/battleConnection.test.mjs
+!/tests/handPlayCancellation.test.mjs
+!/tests/liveEffectSummary.test.mjs
 
 # Small native Mini presentation assets, separate from the downloaded card library.
 !/assets/

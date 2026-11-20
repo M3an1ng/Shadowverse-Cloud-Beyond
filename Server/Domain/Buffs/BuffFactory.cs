@@ -336,6 +336,7 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
             newBuff.EffectKey = originalBuff.EffectKey;
             newBuff.SummaryRootAbilityId = originalBuff.SummaryRootAbilityId;
             newBuff.SourceCardInstanceId = originalBuff.SourceCardInstanceId;
+            newBuff.SummarySourceCard = originalBuff.SummarySourceCard;
             newBuff.SourceCardName = originalBuff.SourceCardName;
             newBuff.SourceAbilityName = originalBuff.SourceAbilityName;
 

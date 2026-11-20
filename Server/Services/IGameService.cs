@@ -42,6 +42,8 @@ namespace ShadowverseBeyond.Server.Services
         /// <returns>The GameStateDto if found, otherwise null.</returns>
         GameState? GetGameState(string gameId); // Return Domain Entity
 
+        Task<GameStateDto?> ReadSyncStateAsync(string gameId, Guid viewingPlayerId, CancellationToken cancellationToken,
+            Func<GameStateDto, Task>? sendSnapshot = null);
         Task<JsonElement> ReadSnapshotAsync(string gameId, CancellationToken cancellationToken);
         Task<JsonElement> ReadStateAsync(string gameId, Func<GameState, IServiceProvider, Task<JsonElement>> reader, CancellationToken cancellationToken);
 
@@ -73,7 +75,7 @@ namespace ShadowverseBeyond.Server.Services
         /// <summary>
         /// Handles the submission of a player's target choice, bypassing the main action queue.
         /// </summary>
-        Task SubmitTargetChoiceAsync(string gameId, Guid playerId, SubmitTargetChoiceActionDto dto);
+        Task<bool> SubmitTargetChoiceAsync(string gameId, Guid playerId, SubmitTargetChoiceActionDto dto);
 
         /// <summary>
         /// 【BUG-019修复】广播事件列表给前端，确保AI和人类玩家使用相同的事件广播机制

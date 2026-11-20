@@ -333,7 +333,8 @@ export function showCardDetailImageModal(detailUrl) {
     });
     document.addEventListener('keydown', onKeydown);
 
-    document.body.appendChild(modal);
+    const detailOverlay = document.getElementById(MODAL_ID);
+    (detailOverlay || document.body).appendChild(modal);
 }
 
 export function showCardDetailModal(card, options = {}) {
@@ -585,7 +586,7 @@ export function showCardDetailModal(card, options = {}) {
     };
 
     const onKeydown = (event) => {
-        if (event.key === 'Escape') {
+        if (event.key === 'Escape' && !document.getElementById(IMAGE_MODAL_ID)) {
             closeModal();
         }
     };

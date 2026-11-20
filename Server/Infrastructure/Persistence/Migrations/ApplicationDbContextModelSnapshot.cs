@@ -904,6 +904,231 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
                     b.ToTable("QuestProgressEvents", (string)null);
                 });
 
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.Tournament", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CardVersion")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DeckEnvironment")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DeckRule")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Format")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("NextScheduleCheckAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("PlayerLimit")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("RegistrationClosesAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("RegistrationOpensAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+                    b.HasIndex("CreatedByUserId");
+                    b.HasIndex("Status");
+                    b.HasIndex("Status", "NextScheduleCheckAtUtc");
+                    b.ToTable("Tournaments");
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TournamentEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlayerName")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("RegisteredAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("TournamentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+                    b.HasIndex("UserId");
+                    b.HasIndex("TournamentId", "UserId").IsUnique();
+                    b.ToTable("TournamentEntries");
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TournamentEntryDeck", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Archetype")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CardsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Class")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DeckCode")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("EntryId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("SecondaryClass")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Slot")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("SourceDeckId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("StageNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+                    b.HasIndex("EntryId", "StageNumber", "Slot").IsUnique();
+                    b.ToTable("TournamentEntryDecks");
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TournamentMatch", b =>
+                {
+                    b.Property<Guid>("Id").HasColumnType("TEXT");
+                    b.Property<Guid?>("BanByOne").HasColumnType("TEXT");
+                    b.Property<Guid?>("BanByTwo").HasColumnType("TEXT");
+                    b.Property<int>("Bracket").HasColumnType("INTEGER");
+                    b.Property<DateTime?>("CompletedAtUtc").HasColumnType("TEXT");
+                    b.Property<Guid>("EntryOneId").HasColumnType("TEXT");
+                    b.Property<Guid?>("EntryTwoId").HasColumnType("TEXT");
+                    b.Property<int>("PairingNumber").HasColumnType("INTEGER");
+                    b.Property<Guid?>("PickByOne").HasColumnType("TEXT");
+                    b.Property<Guid?>("PickByTwo").HasColumnType("TEXT");
+                    b.Property<long>("RoomRevision").HasColumnType("INTEGER");
+                    b.Property<int>("RoundNumber").HasColumnType("INTEGER");
+                    b.Property<int>("StageNumber").HasColumnType("INTEGER");
+                    b.Property<Guid>("TournamentId").HasColumnType("TEXT");
+                    b.Property<Guid?>("WinnerEntryId").HasColumnType("TEXT");
+                    b.HasKey("Id");
+                    b.HasIndex("EntryOneId");
+                    b.HasIndex("EntryTwoId");
+                    b.HasIndex("TournamentId", "StageNumber", "Bracket", "RoundNumber", "PairingNumber").IsUnique();
+                    b.ToTable("TournamentMatches");
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TournamentMatchGame", b =>
+                {
+                    b.Property<Guid>("Id").HasColumnType("TEXT");
+                    b.Property<DateTime?>("CompletedAtUtc").HasColumnType("TEXT");
+                    b.Property<Guid>("EntryOneDeckId").HasColumnType("TEXT");
+                    b.Property<Guid>("EntryTwoDeckId").HasColumnType("TEXT");
+                    b.Property<Guid?>("FirstPlayerEntryId").HasColumnType("TEXT");
+                    b.Property<Guid>("MatchId").HasColumnType("TEXT");
+                    b.Property<int>("Number").HasColumnType("INTEGER");
+                    b.Property<DateTime>("StartedAtUtc").HasColumnType("TEXT");
+                    b.Property<Guid?>("WinnerEntryId").HasColumnType("TEXT");
+                    b.HasKey("Id");
+                    b.HasIndex("EntryOneDeckId");
+                    b.HasIndex("EntryTwoDeckId");
+                    b.HasIndex("MatchId", "Number").IsUnique();
+                    b.ToTable("TournamentMatchGames");
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TournamentStage", b =>
+                {
+                    b.Property<Guid>("TournamentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Number")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AdvancingPlayers")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("AllowDeckResubmission")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("AllowGrandFinalReset")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("CompletedAtUtc").HasColumnType("TEXT");
+                    b.Property<DateTime?>("DeckSubmissionClosesAtUtc").HasColumnType("TEXT");
+                    b.Property<int?>("DeckSubmissionMinutes").HasColumnType("INTEGER");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MatchFormat")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Rounds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("StartedAtUtc").HasColumnType("TEXT");
+                    b.Property<Guid?>("WinnerEntryId").HasColumnType("TEXT");
+
+                    b.HasKey("TournamentId", "Number");
+                    b.ToTable("TournamentStages");
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TournamentStageEntry", b =>
+                {
+                    b.Property<Guid>("TournamentId").HasColumnType("TEXT");
+                    b.Property<int>("StageNumber").HasColumnType("INTEGER");
+                    b.Property<Guid>("EntryId").HasColumnType("TEXT");
+                    b.Property<bool>("CanPlay").HasColumnType("INTEGER");
+                    b.Property<int>("Seed").HasColumnType("INTEGER");
+                    b.HasKey("TournamentId", "StageNumber", "EntryId");
+                    b.HasIndex("EntryId");
+                    b.HasIndex("TournamentId", "StageNumber", "Seed").IsUnique();
+                    b.ToTable("TournamentStageEntries");
+                });
+
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TribeDefinition", b =>
                 {
                     b.Property<string>("Name")
@@ -1712,6 +1937,76 @@ namespace ShadowverseBeyond.Server.Infrastructure.Persistence.Migrations
                     b.Navigation("QuestDefinition");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.Tournament", b =>
+                {
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TournamentStage", b =>
+                {
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.Tournament", null)
+                        .WithMany("Stages")
+                        .HasForeignKey("TournamentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TournamentEntry", b =>
+                {
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.Tournament", null)
+                        .WithMany()
+                        .HasForeignKey("TournamentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TournamentEntryDeck", b =>
+                {
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.TournamentEntry", null)
+                        .WithMany("Decks")
+                        .HasForeignKey("EntryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TournamentMatch", b =>
+                {
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.TournamentEntry", null)
+                        .WithMany().HasForeignKey("EntryOneId").OnDelete(DeleteBehavior.Restrict).IsRequired();
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.TournamentEntry", null)
+                        .WithMany().HasForeignKey("EntryTwoId").OnDelete(DeleteBehavior.Restrict);
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.TournamentStage", null)
+                        .WithMany().HasForeignKey("TournamentId", "StageNumber").OnDelete(DeleteBehavior.Cascade).IsRequired();
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TournamentMatchGame", b =>
+                {
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.TournamentMatch", null)
+                        .WithMany("Games").HasForeignKey("MatchId").OnDelete(DeleteBehavior.Cascade).IsRequired();
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.TournamentEntryDeck", null)
+                        .WithMany().HasForeignKey("EntryOneDeckId").OnDelete(DeleteBehavior.Restrict).IsRequired();
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.TournamentEntryDeck", null)
+                        .WithMany().HasForeignKey("EntryTwoDeckId").OnDelete(DeleteBehavior.Restrict).IsRequired();
+                });
+
+            modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.TournamentStageEntry", b =>
+                {
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.TournamentStage", null)
+                        .WithMany().HasForeignKey("TournamentId", "StageNumber").OnDelete(DeleteBehavior.Cascade).IsRequired();
+                    b.HasOne("ShadowverseBeyond.Server.Domain.Entities.TournamentEntry", null)
+                        .WithMany().HasForeignKey("EntryId").OnDelete(DeleteBehavior.Restrict).IsRequired();
                 });
 
             modelBuilder.Entity("ShadowverseBeyond.Server.Domain.Entities.UserCard", b =>

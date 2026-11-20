@@ -51,7 +51,7 @@ def copy_backend(published, destination):
         "Logging": {"LogLevel": {"Default": "Warning", "Microsoft.AspNetCore": "Warning"}},
         "Serilog": {"MinimumLevel": {"Default": "Warning", "Override": {"Microsoft": "Warning"}}},
         "AllowedHosts": "*",
-        "Replay": {"EnableJournalWrites": False, "PersistClientDtos": False}
+        "Replay": {"EnableJournalWrites": True, "PersistClientDtos": False}
     }, indent=2), encoding="utf-8")
 
 

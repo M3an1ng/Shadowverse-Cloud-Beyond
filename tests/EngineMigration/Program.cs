@@ -32,6 +32,7 @@ using ShadowverseBeyond.Server.Services;
 using ShadowverseBeyond.Server.Services.Abstractions;
 
 if(args.Length==1&&args[0]=="--room-exit"){await RoomExitTests.RunAsync();return 0;}
+if (args is ["--tournament-schedule"]) { TournamentScheduleTests.Run(); return 0; }
 if(args.Length==3&&args[0]=="--planned-mode-real"){AiPlannedModeTests.RunReal(args[1],args[2]);return 0;}
 if(args.Length==2&&args[0]=="--planned-mode-native"){AiPlannedModeTests.Run(args[1]);return 0;}
 if(args.Length==1&&args[0]=="--plan-archives"){AiPlanArchiveTests.Run();return 0;}
@@ -231,6 +232,7 @@ void Test(string name, Action action) { try { action(); results.Add(new { name, 
 Test("official Traditional Chinese card syntax and simplified transcription compile identically", TraditionalCardTextCompilerTests.Run);
 void Check(bool yes, string reason) { if(!yes) throw new Exception(reason); }
 Test("room exit preserves settlement delivery and releases pending choices", () => RoomExitTests.RunAsync().GetAwaiter().GetResult());
+Test("replay step shows the generated summon and only visual state", () => ReplayPlaybackTests.RunAsync().GetAwaiter().GetResult());
 Test("AI searches combat, evolution and Storm routes", AiPolicyTests.Search);
 Test("AI scores damage, healing and removal targets", AiPolicyTests.Targets);
 Test("AI values Act resources and Fusion materials", AiPolicyTests.Abilities);
@@ -904,6 +906,24 @@ Test("mulligan can draw a returned card again",()=>{
  var card=factory.CreateAndRegisterNewCard(match,2,a.PlayerId,CardZone.Hand);
  Check(a.PerformMulligan(new(){card.InstanceId},match).Success&&a.Hand.Single()==card,"returned card was excluded");
 });
+foreach (var shuffle in new[] { false, true })
+{
+    Test(shuffle ? "shuffling into deck reports committed counts" : "adding to deck reports committed counts", () =>
+    {
+        var owner = new PlayerState(Guid.NewGuid());
+        var match = new GameState("deck-count-test", owner, new PlayerState(Guid.NewGuid()), owner.PlayerId)
+            { AbilityManager = abilityManager, BuffManager = buffs };
+        using var moveContext = new GameContext(services, context.Mapper, accessor, match, owner.PlayerId);
+        factory.CreateAndRegisterNewCard(match, 2, owner.PlayerId, CardZone.Deck);
+        var sourceZone = shuffle ? CardZone.Hand : CardZone.Staging;
+        var cards = Enumerable.Range(0, 2).Select(_ => factory.CreateAndRegisterNewCard(match, 3, owner.PlayerId, sourceZone)).ToList();
+        var planned = shuffle ? owner.ShuffleCardsIntoDeck(cards) : owner.AddCardsToDeck(cards);
+        Check(!planned.GeneratedEvents.OfType<DeckCountChangedEvent>().Any(), "queued a deck count before moving the cards");
+        var counts = planned.GeneratedEvents.OfType<CardMovedEvent>().Select(move =>
+            move.Commit(moveContext).GeneratedEvents.OfType<DeckCountChangedEvent>().Single().NewDeckCount).ToList();
+        Check(counts.SequenceEqual(new[] { 2, 3 }) && owner.Deck.Count == 3, "deck notifications differ from the committed moves");
+    });
+}
 Test("reanimate modifier applies only to selected player",()=>{p1.Graveyard.Clear();Destroyed(5);Check(buffService.GetEffectiveAbilityKeywordValue(p2.Leader,AbilityKeyword.Reanimate,3,context)==3,"opponent polluted");});
 foreach(var mode in new[]{AbilityKeyword.Accelerate,AbilityKeyword.Crystalize}) {
  Test($"zero-cost {mode} is playable",()=>{
@@ -1001,12 +1021,108 @@ Test("stacked numeric attached effects remain visible",()=>{
  var dto=ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create(card,context);Check(dto.BuffSummaries.Single().Details.Count==2,"stacked amounts lost");
 });
 
+Test("attached effects use the source owner's card style after removal, copying and replay restore", () =>
+{
+    const int nightingale = 1473441, crest = 1473442;
+    definitions[nightingale] = new() { Id = nightingale, Name = "刺血玫瑰·夜莺", ArtPreview = "/base.webp" };
+    definitions[crest] = new() { Id = crest, Name = "纹章：刺血玫瑰·夜莺" };
+    var style = new CardStyle("caged", "囚羽", new("笼中囚羽·夜莺", "风格卡文", "/caged.webp", "/detail.webp"),
+        [new(crest, new("纹章：笼中囚羽·夜莺", "纹章卡文", "/crest.webp", null))]);
+    CardStyleCatalog.Apply(new() { Id = $"style:{nightingale}",
+        Json = JsonSerializer.Serialize(new StyleConfiguration(nightingale, 1, [style]), CardStyleCatalog.JsonOptions) });
+    CardStyleCatalog.Apply(new() { Id = $"style-prefs:{p2.PlayerId}", Json = $"{{\"{nightingale}\":\"caged\"}}" });
+    var source = factory.CreateAndRegisterNewCard(game, nightingale, p2.PlayerId, CardZone.Staging);
+    var target = factory.CreateAndRegisterNewCard(game, nightingale, p1.PlayerId, CardZone.Staging);
+    var abilityId = Guid.NewGuid();
+    var ability = Proxy<IAbility>.Make((method, _) => method.Name switch {
+        "get_RuntimeId" => abilityId, "get_SourceCard" => source, "get_SourceCardId" => source.InstanceId,
+        "get_Name" => "连锁能力1", _ => null });
+    var buff = new Buff(abilityId, target.InstanceId, 1, [new StatBuffEffect([
+        new(StatType.Attack, 2, ModifierLayer.Additive), new(StatType.Health, 2, ModifierLayer.Additive)])]);
+    using var applyContext = context with { SourceAbility = ability, SourceCard = source };
+    var applied = buffService.ApplyBuffProcess(buff, applyContext).GeneratedEvents.OfType<BuffAppliedEvent>().Single();
+    Check(applied.Commit(applyContext).Success, "buff not applied");
+
+    var restore = typeof(ReplayExecutionState).GetMethod("RestoreBuff", BindingFlags.Static | BindingFlags.NonPublic)!;
+    var saved = JsonSerializer.SerializeToNode(buff, ReplayExecutionState.Json)!.AsObject();
+    Buff Restore() => (Buff)restore.Invoke(null, [JsonSerializer.SerializeToElement(saved)])!;
+    var restored = Restore();
+    Check(buff.SummarySourceCard == restored.SummarySourceCard, "replay lost the source face");
+    var copy = buffFactory.CreateBuffCopy(restored, target);
+    buffs.UnregisterBuffInstance(buff.Id);
+    buffs.RegisterBuffInstance(copy, game);
+    game.UnregisterCardInstance(source);
+    var project = ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create;
+    var targetDto = project(target, context);
+    var summary = targetDto.BuffSummaries.Single();
+    Check(targetDto.Name == "刺血玫瑰·夜莺" && targetDto.ArtPreview == "/base.webp", "source style leaked to target");
+    Check(summary.SourceCardOwnerPlayerId == p2.PlayerId && summary.SourceCardDefinitionId == nightingale &&
+        summary.SourceCardName == style.Appearance.Name && summary.SourceCardArtPreview == "/caged.webp" &&
+        summary.SourceCardDescription == "风格卡文" && summary.SourceCardArtDetail == "/detail.webp", "wrong source appearance");
+    Check(summary.SourceAbilityName == "连锁能力1" && summary.NumericEffects.Count == 2, "chain label or stats changed");
+
+    saved.Remove("summarySourceCard");
+    var legacy = Restore();
+    Check(legacy.SummarySourceCard == null, "legacy replay invented a source");
+    buffs.UnregisterBuffInstance(copy.Id);
+    buffs.RegisterBuffInstance(legacy, game);
+    var missing = project(target, context).BuffSummaries.Single();
+    Check(missing.SourceCardName == source.Name && missing.SourceCardDefinitionId == null, "lost historical label");
+    game.RegisterCardInstance(source);
+    Check(project(target, context).BuffSummaries.Single().SourceCardName == style.Appearance.Name, "legacy live lookup lost the style");
+
+    var bound = factory.CreateAndRegisterNewCard(game, crest, p2.PlayerId, CardZone.Staging);
+    var alternate = factory.CreateAndRegisterNewCard(game, 8, p2.PlayerId, CardZone.Staging);
+    alternate.AlternateArtDefinitionId = nightingale;
+    foreach (var card in new[] { bound, alternate }) {
+        legacy.SourceCardInstanceId = card.InstanceId;
+        var visible = project(card, context);
+        var fromBuff = project(target, context).BuffSummaries.Single();
+        Check(fromBuff.SourceCardName == visible.Name && fromBuff.SourceCardArtPreview == visible.ArtPreview &&
+            fromBuff.SourceCardDefinitionId == visible.CardId, "bound or alternate source disagrees with its card");
+    }
+});
+
 Test("applied permanent numeric buffs combine across source turns",()=>{
  activeAbilities.Clear();p1.Field.Clear();var card=factory.CreateAndRegisterNewCard(game,2,p1.PlayerId,CardZone.Field);
  for(int i=0;i<2;i++) buffs.RegisterBuffInstance(new Buff(Guid.Empty,card.InstanceId,i,new(){new AbilityKeywordBuffEffect(new(){new(AbilityKeyword.Act,-2,ModifierLayer.Additive)})}){EffectKey="turn"+i,SourceCardName="Source"+i,SourceAbilityName="Discount"+i},game);
  var summaries=ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create(card,context).BuffSummaries;
  Check(summaries.Count==2,"sources lost");Check(summaries.SelectMany(x=>x.NumericEffects).Select(x=>x.PolicyKey).Distinct().Count()==1,"source turn incorrectly separates permanent buffs");
 });
+Test("only the latest active set per card stat is shown across source groups", () =>
+{
+    activeAbilities.Clear();
+    p1.Field.Clear();
+    var card = factory.CreateAndRegisterNewCard(game, 2, p1.PlayerId, CardZone.Field);
+    var initial = new Buff(Guid.Empty, card.InstanceId, 1, new() { new StatBuffEffect(new() {
+        new(StatType.Cost, 3, ModifierLayer.Set),
+        new(StatType.Attack, 4, ModifierLayer.Set),
+        new(StatType.Health, 7, ModifierLayer.Set)
+    }) }) { EffectKey = "z-first", SourceCardName = "First" };
+    var latest = new Buff(Guid.Empty, card.InstanceId, 1, new() { new StatBuffEffect(new() {
+        new(StatType.Cost, 0, ModifierLayer.Set),
+        new(StatType.Attack, 5, ModifierLayer.Set),
+        new(StatType.Attack, 6, ModifierLayer.Set),
+        new(StatType.Health, 1, ModifierLayer.Additive)
+    }) }) { EffectKey = "a-latest", SourceCardName = "Latest" };
+    buffs.RegisterBuffInstance(initial, game);
+    buffs.RegisterBuffInstance(latest, game);
+
+    var summaries = ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create(card, context).BuffSummaries;
+    var effects = summaries.SelectMany(summary => summary.NumericEffects).ToList();
+    var visible = effects.Where(effect => !effect.IsSuperseded).ToList();
+    Check(effects.Count == 7, "original numeric effects were dropped");
+    Check(visible.Where(effect => effect.Field == "Cost").Single().Value == 0, "the latest cost set was lost");
+    Check(visible.Where(effect => effect.Field == "Attack").Single().Value == 6, "attack did not use the last set within a buff");
+    Check(visible.Count(effect => effect.Field == "Health") == 2, "another stat or additive modifier was hidden");
+    Check(summaries.Single(summary => summary.SourceCardName == "Latest").NumericEffects.Any(effect => effect.Field == "Cost" && !effect.IsSuperseded),
+        "the current cost set lost its source");
+
+    buffs.UnregisterBuffInstance(latest.Id);
+    var remaining = ShadowverseBeyond.Server.Mappings.CardInstanceProjection.Create(card, context).BuffSummaries.Single().NumericEffects;
+    Check(remaining.Count == 3 && remaining.All(effect => !effect.IsSuperseded), "the previous set did not reappear after removal");
+});
+
 Test("reveal transport includes hand position and log announcement",()=>{
  p2.Hand.Clear();var card=factory.CreateAndRegisterNewCard(game,4,p2.PlayerId,CardZone.Hand);var ev=new CardRevealedEvent(p2,card);
  var processor=new EventProcessor(NullLogger<EventProcessor>.Instance,services.GetRequiredService<IEventHistoryService>());
@@ -1220,6 +1336,23 @@ Test("match room isolates seat tokens, blocks unauthenticated rejoin, and enforc
  Check(validRejoin.Success&&validRejoin.Room!.GuestToken==joinRes.GuestToken,"valid token rejoin failed");
  var wrongTokenSubmit=matches.SubmitDeckSelection(createdRes.RoomId,guestId,new(){DeckId=Guid.NewGuid(),DeckClass=CardClass.Forestcraft},token:"wrong-token");
  Check(!wrongTokenSubmit.Success&&wrongTokenSubmit.Error==MatchOperationError.Forbidden,"in-lock token check bypassed");
+
+ var hostDeck=new MatchDeckSelection{DeckId=Guid.NewGuid(),DeckClass=CardClass.Dragoncraft,SecondaryClass=CardClass.Runecraft,Rule=DeckRule.DualClass};
+ var guestDeck=new MatchDeckSelection{DeckId=Guid.NewGuid(),DeckClass=CardClass.Swordcraft,SecondaryClass=CardClass.Havencraft,Rule=DeckRule.DualClass};
+ Check(matches.SubmitDeckSelection(createdRes.RoomId,hostId,hostDeck,token:createdRes.HostToken).Success,"host deck select failed");
+ Check(matches.SubmitDeckSelection(createdRes.RoomId,guestId,guestDeck,token:joinRes.GuestToken).Success,"guest deck select failed");
+
+ var hostPreparation=(ctrl.Preparation(createdRes.RoomId,hostId,createdRes.HostToken,false,null!,CancellationToken.None)
+    .GetAwaiter().GetResult().Result as Microsoft.AspNetCore.Mvc.OkObjectResult)!.Value as ShadowverseBeyond.Server.Controllers.MatchController.MatchResponse;
+ Check(hostPreparation is { HostDeckClass: "Dragoncraft", HostSecondaryClass: CardClass.Runecraft, GuestDeckSelected: true,
+    GuestDeckClass: null, GuestSecondaryClass: null },"host preparation exposed the guest deck or hid the host deck");
+ var guestPreparation=(ctrl.Preparation(createdRes.RoomId,guestId,joinRes.GuestToken,false,null!,CancellationToken.None)
+    .GetAwaiter().GetResult().Result as Microsoft.AspNetCore.Mvc.OkObjectResult)!.Value as ShadowverseBeyond.Server.Controllers.MatchController.MatchResponse;
+ Check(guestPreparation is { GuestDeckClass: "Swordcraft", GuestSecondaryClass: CardClass.Havencraft, HostDeckSelected: true,
+    HostDeckClass: null, HostSecondaryClass: null },"guest preparation exposed the host deck or hid the guest deck");
+ var unverifiedGet=(ctrl.Get(createdRes.RoomId,hostId,"wrong-token").Result as Microsoft.AspNetCore.Mvc.OkObjectResult)!.Value as ShadowverseBeyond.Server.Controllers.MatchController.MatchResponse;
+ Check(unverifiedGet is { HostDeckClass: null, GuestDeckClass: null, HostSecondaryClass: null, GuestSecondaryClass: null },
+    "ordinary room status disclosed a deck class without an authenticated seat");
 });
 Test("match room requires self deck before ready, supports cancel ready, kick guest, and join by code",()=>{
  var matches=new MatchService(NullLogger<MatchService>.Instance);

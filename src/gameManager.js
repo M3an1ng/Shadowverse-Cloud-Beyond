@@ -79,6 +79,7 @@ import { getUserSession } from "./userSession.js";
 const MAX_FIELD_SIZE = 5; // Maximum cards on a player's field
 const GAME_LOG_LIMIT = 200; // Prevent unbounded growth in UI log
 const CHAT_HISTORY_LIMIT = 200;
+let gameLogRenderFrame = null;
 
 // --- SignalR Connection ---
 let signalRConnection = null; // Holds the connection object passed from main.js
@@ -148,7 +149,6 @@ function createInitialGameState() {
         player1MulliganComplete: false, // Player 1 mulligan status
         player2MulliganComplete: false, // Player 2 mulligan status
         // 稍后可能添加: eventLog, effectQueue 等
-        lastPlayedCardInstanceId: null, // BUG-016: Temp state for card played
         playabilityCache: {}, // Cache for hand playability { [playerId]: { [cardUid]: PlayabilityResultDto } }
         actPlayabilityCache: {}, // Cache for Act playability results { [playerId]: { [cardUid]: ActPlayabilityResultDto } }
         playabilityUpdateClock: {
@@ -174,7 +174,7 @@ export const gameState = createInitialGameState();
 let turnTimerIntervalId = null;
 let turnTimerEndsAtMs = null;
 let turnTimerTotalMs = 0;
-let lastHandledChoiceRequestKey = null;
+const resolvedChoiceIds = new Set();
 const playabilityResyncTimers = new Map();
 const playabilityResyncInflight = new Set();
 const playabilityResyncLastRequestAt = new Map();
@@ -877,11 +877,16 @@ function selectDualControlMulliganSeat() {
 }
 
 function resetGameSessionState(abortReason = "new_game") {
+    if (gameLogRenderFrame !== null) {
+        cancelAnimationFrame(gameLogRenderFrame);
+        gameLogRenderFrame = null;
+    }
     abortMirageCombatPlayback(abortReason);
     stopTurnTimer();
     resetPlayabilityResyncState();
     resetPlayCardRequestLocks();
-    lastHandledChoiceRequestKey = null;
+    resolvedChoiceIds.clear();
+    rawGameView?.hidePlayerChoiceUI?.();
     pendingChatClientMessageIds.clear();
     // 保留状态对象本身，读者不会继续持有上一局的容器。
     Object.assign(gameState, createInitialGameState());
@@ -969,9 +974,14 @@ export function appendGameLog(eventName, payload) {
         gameState.gameLog.shift();
     }
 
-    // Keep console output consistent and structured
-
-    gameView.renderGameLog(gameState.gameLog);
+    if (typeof requestAnimationFrame !== 'function') {
+        gameView.renderGameLog(gameState.gameLog, { timelineOnly: true });
+    } else if (gameLogRenderFrame === null) {
+        gameLogRenderFrame = requestAnimationFrame(() => {
+            gameLogRenderFrame = null;
+            gameView.renderGameLog(gameState.gameLog, { timelineOnly: true });
+        });
+    }
 }
 // --- Mulligan Phase Logic ---
 
@@ -1376,8 +1386,6 @@ export async function playCard(cardUid, targetUid = null) {
             }
         }
         // Invoke with the single DTO object
-        // BUG-016: Store UID before invoking, so PpUpdate can remove it from hand
-        gameState.lastPlayedCardInstanceId = cardUid;
         await connection.invoke("PlayCard", actionDto); // Pass the DTO object
 
         // If invoke succeeds, DO NOT modify local state directly.
@@ -2600,15 +2608,15 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
     playerInstance.displayName = playerDto.DisplayName ?? playerDto.displayName ?? playerInstance.displayName ?? '';
     playerInstance.avatarUrl = playerDto.AvatarUrl ?? playerDto.avatarUrl ?? playerInstance.avatarUrl ?? '';
     playerInstance.deckClass = playerDto.DeckClass ?? playerDto.deckClass ?? playerInstance.deckClass ?? '';
-    playerInstance.pp = playerDto.CurrentPP ?? 0; // PascalCase
-    playerInstance.maxPP = playerDto.MaxPP ?? 0; // PascalCase
-    playerInstance.ppBoostUsesAvailable = playerDto.PpBoostUsesAvailable ?? 0;
+    playerInstance.pp = playerDto.CurrentPP ?? playerDto.currentPP ?? 0;
+    playerInstance.maxPP = playerDto.MaxPP ?? playerDto.maxPP ?? 0;
+    playerInstance.ppBoostUsesAvailable = playerDto.PpBoostUsesAvailable ?? playerDto.ppBoostUsesAvailable ?? 0;
     playerInstance.isIntromezzoActive = playerDto.IsIntromezzoActive ?? playerDto.isIntromezzoActive ?? false;
     playerInstance.ppBoostArmed = playerDto.IsPpBoostArmed ?? playerDto.isPpBoostArmed ?? false;
-    playerInstance.ep = playerDto.CurrentEP ?? 0; // PascalCase
-    playerInstance.maxEP = playerDto.MaxEP ?? 0; // PascalCase
-    playerInstance.sep = playerDto.CurrentSEP ?? 0;
-    playerInstance.maxSEP = playerDto.MaxSEP ?? 0;
+    playerInstance.ep = playerDto.CurrentEP ?? playerDto.currentEP ?? 0;
+    playerInstance.maxEP = playerDto.MaxEP ?? playerDto.maxEP ?? 0;
+    playerInstance.sep = playerDto.CurrentSEP ?? playerDto.currentSEP ?? 0;
+    playerInstance.maxSEP = playerDto.MaxSEP ?? playerDto.maxSEP ?? 0;
     const rawCounters = playerDto.Counters ?? playerDto.counters;
     playerInstance.counters = (rawCounters && typeof rawCounters === 'object') ? { ...rawCounters } : {};
     const rawCounterDisplayNames = playerDto.CounterDisplayNames ?? playerDto.counterDisplayNames;
@@ -2638,15 +2646,15 @@ function _hydratePlayerProperties(playerInstance, playerDto) {
     playerInstance.combo = readCounter('combo', playerDto.Combo ?? playerDto.combo ?? 0);
     playerInstance.rally = readCounter('rally', playerDto.Rally ?? playerDto.rally ?? 0);
     // FIXED: Backend sends CanEvolve, not CanEvolveThisTurn
-      playerInstance.canEvolve = playerDto.CanEvolve ?? false; // PascalCase - Fixed property name
-      playerInstance.canSuperEvolve = playerDto.CanSuperEvolve ?? false;
+      playerInstance.canEvolve = playerDto.CanEvolve ?? playerDto.canEvolve ?? false;
+      playerInstance.canSuperEvolve = playerDto.CanSuperEvolve ?? playerDto.canSuperEvolve ?? false;
       playerInstance.hasUnlockedEvolution =
-          playerDto.IsEvolutionUnlocked ?? playerDto.HasUnlockedEvolution ?? false;
+          playerDto.IsEvolutionUnlocked ?? playerDto.isEvolutionUnlocked ?? playerDto.HasUnlockedEvolution ?? false;
       playerInstance.hasUnlockedSuperEvolution =
-          playerDto.IsSuperEvolutionUnlocked ?? playerDto.HasUnlockedSuperEvolution ?? false;
+          playerDto.IsSuperEvolutionUnlocked ?? playerDto.isSuperEvolutionUnlocked ?? playerDto.HasUnlockedSuperEvolution ?? false;
       playerInstance.turnNumber = playerDto.TurnNumber ?? playerDto.turnNumber ?? 0; // PascalCase/camelCase
       playerInstance.deckCount = playerDto.DeckCount ?? playerDto.deckCount ?? (Array.isArray(playerDto.Deck ?? playerDto.deck) ? (playerDto.Deck ?? playerDto.deck).length : 0); // PascalCase/camelCase
-      playerInstance.graveyardCount = readCounter('graveyard', playerDto.GraveyardCount ?? playerInstance.graveyardCount ?? 0);
+      playerInstance.graveyardCount = readCounter('graveyard', playerDto.GraveyardCount ?? playerDto.graveyardCount ?? playerInstance.graveyardCount ?? 0);
       // Keep deck as simple array of IDs/DTOs from server if no methods needed client-side
       playerInstance.deck = Array.isArray(playerDto.Deck ?? playerDto.deck) ? [...(playerDto.Deck ?? playerDto.deck)] : []; // PascalCase/camelCase
       // Mulligan
@@ -2805,10 +2813,10 @@ export function updateFullGameState(serverState, options = {}) {
 
     const incomingRoomVer = Number(readStateField(serverState, 'RoomVersion', 'roomVersion'));
     if (Number.isFinite(incomingRoomVer) && incomingRoomVer > 0) {
-        if (gameState.mirageRoomVersion > 0 && incomingRoomVer < gameState.mirageRoomVersion) {
+        if (!resetViewEpoch && incomingRoomVer < gameState.mirageRoomVersion) {
             return true;
         }
-        gameState.mirageRoomVersion = incomingRoomVer;
+        gameState.mirageRoomVersion = Math.max(gameState.mirageRoomVersion, incomingRoomVer);
     }
 
     if (incomingViewingPlayerId) {
@@ -2834,6 +2842,8 @@ export function updateFullGameState(serverState, options = {}) {
         gameState.playabilityUpdateClock = { hand: {}, act: {} };
         resetPlayabilityResyncState();
         resetPlayCardRequestLocks();
+        resolvedChoiceIds.clear();
+        rawGameView?.hidePlayerChoiceUI?.();
         pendingChatClientMessageIds.clear();
         gameView.renderGameLog(gameState.gameLog);
         gameView.clearInMatchChatUiState();
@@ -3074,6 +3084,8 @@ export function updateFullGameState(serverState, options = {}) {
         return true;
     }
 
+    if (gameState.gameOver) rawGameView?.hidePlayerChoiceUI?.();
+
     // Ensure the UI is re-rendered with the fully updated state
     if (typeof rawGameView?.renderGame === "function") {
         rawGameView.renderGame(gameState); // Pass the updated complete gameState
@@ -3091,6 +3103,10 @@ export function updateFullGameState(serverState, options = {}) {
         const pendingEnd = mirageCombatPlayback.pendingGameEndDto;
         mirageCombatPlayback.pendingGameEndDto = null;
         finalizeGameOverPresentation(pendingEnd);
+    }
+
+    if (options.syncPendingChoice === true) {
+        syncPlayerChoiceFromSnapshot(serverState, gameState.selfOriginalPlayerId);
     }
 
     getPlayabilityResyncCandidatePlayerIds().forEach(playerId => {
@@ -3185,28 +3201,11 @@ export function handlePpUpdate(eventData) {
     }
     const playerToUpdate = getPlayerState(eventData.SourcePlayerId); // PascalCase
 
-    let handChanged = false; // BUG-016 Flag to track if hand was modified
-
     if (playerToUpdate) {
         playerToUpdate.pp = eventData.CurrentPp; // PascalCase
         playerToUpdate.maxPP = eventData.MaxPp; // PascalCase
 
-        // BUG-016: Remove the card that was just played (cost deducted) from hand
-        const cardToRemoveUid = gameState.lastPlayedCardInstanceId;
-        if (cardToRemoveUid) {
-            const cardIndex = playerToUpdate.hand.findIndex(c => c && c.uid === cardToRemoveUid);
-            if (cardIndex > -1) {
-                playerToUpdate.hand.splice(cardIndex, 1)[0];
-                handChanged = true;
-            }
-            // Clear the temporary state regardless of whether the card was found in hand
-            gameState.lastPlayedCardInstanceId = null;
-        }
-
-        // Render only if PP changed OR hand changed
         gameView.updatePpDisplay(playerToUpdate.id, playerToUpdate.pp, playerToUpdate.maxPP, playerToUpdate.ppBoostArmed === true); // Use specific UI update
-        // BUG-022 FIX: Update hand display if it was changed
-        // Hand update is now handled by handleCardPlayed
     } else {
         console.warn(`GM: PpUpdate event received for invalid player: ${eventData.SourcePlayerId}`); // PascalCase
     }
@@ -3695,10 +3694,12 @@ export function handleCardInstanceUpdated(eventData) {
 }
 
 export function handleCardMoved(eventData) {
-    const cardUid = eventData?.CardUid ?? eventData?.MovedCard?.InstanceId;
-    const ownerId = eventData?.PlayerId ?? eventData?.MovedCard?.OwnerPlayerId ?? eventData?.SourcePlayerId;
-    const fromZone = normalizeZoneName(eventData?.FromZone);
-    const toZone = normalizeZoneName(eventData?.ToZone);
+    const movedCard = eventData?.MovedCard ?? eventData?.movedCard;
+    const cardUid = eventData?.CardUid ?? eventData?.cardUid ?? movedCard?.InstanceId ?? movedCard?.instanceId;
+    const ownerId = eventData?.PlayerId ?? eventData?.playerId ?? movedCard?.OwnerPlayerId ?? movedCard?.ownerPlayerId
+        ?? eventData?.SourcePlayerId ?? eventData?.sourcePlayerId;
+    const fromZone = normalizeZoneName(eventData?.FromZone ?? eventData?.fromZone);
+    const toZone = normalizeZoneName(eventData?.ToZone ?? eventData?.toZone);
 
     if (!cardUid || !toZone) {
         console.error("GM Error: Invalid data in handleCardMoved:", eventData);
@@ -3716,7 +3717,7 @@ export function handleCardMoved(eventData) {
     const ownerPlayer = ownerId ? getPlayerState(ownerId) : null;
     const detached = detachCardFromAllZones(cardUid);
 
-    let movedInstance = eventData?.MovedCard ? createCardInstance(eventData.MovedCard) : null;
+    let movedInstance = movedCard ? createCardInstance(movedCard) : null;
     if (!movedInstance) {
         movedInstance = detached.card;
     }
@@ -3953,23 +3954,23 @@ export function handleEmblemUpdated(eventData) {
 // Removed handleSpellPlayed function
 
 export function handleUnitEvolved(eventData) {
-    // DTO: UnitEvolvedEventDto { string SourcePlayerId, CardInstanceDto EvolvedUnitState }
-    if (!eventData || !eventData.SourcePlayerId || !eventData.EvolvedUnitState) { // PascalCase - Fixed to match actual DTO
+    const evolvedCard = eventData?.EvolvedUnitState ?? eventData?.evolvedUnitState;
+    const unitUid = evolvedCard?.InstanceId ?? evolvedCard?.instanceId;
+    if (!unitUid || !(eventData.SourcePlayerId ?? eventData.sourcePlayerId)) {
         console.error("GM Error: Invalid data in handleUnitEvolved:", eventData);
         return;
     }
-    const unitUid = eventData.EvolvedUnitState.InstanceId; // Get UID from EvolvedUnitState
     const unit = findCardInstanceByUid(unitUid);
 
     let updated = false;
 
-    if (unit && eventData.EvolvedUnitState) {
+    if (unit) {
         const ownerPlayer = getPlayerState(unit.ownerId);
         if (ownerPlayer) {
             const unitIndex = ownerPlayer.field.findIndex(u => u && u.uid === unitUid);
             if (unitIndex !== -1) {
                 // Create a new, fully hydrated instance from the DTO
-                const evolvedUnitInstance = createCardInstance(eventData.EvolvedUnitState);
+                const evolvedUnitInstance = createCardInstance(evolvedCard);
                 evolvedUnitInstance.ownerId = ownerPlayer.id;
                 evolvedUnitInstance.zone = 'Field';
 
@@ -4001,10 +4002,10 @@ export function handleUnitEvolved(eventData) {
 
 export function handleStatChange(eventData) {
     // DTO: StatChangeEventDto { TargetEntityUid, NewAttack, NewCurrentHealth, NewMaxHealth, NewCost }
-    const targetUid = eventData?.UnitId ?? eventData?.TargetEntityUid;
-    const newAttack = eventData?.NewAttack;
-    const newCurrentHealth = eventData?.NewHealth ?? eventData?.NewCurrentHealth;
-    const newMaxHealth = eventData?.NewMaxHealth;
+    const targetUid = eventData?.UnitId ?? eventData?.unitId ?? eventData?.TargetEntityUid ?? eventData?.targetEntityUid;
+    const newAttack = eventData?.NewAttack ?? eventData?.newAttack;
+    const newCurrentHealth = eventData?.NewHealth ?? eventData?.newHealth ?? eventData?.NewCurrentHealth ?? eventData?.newCurrentHealth;
+    const newMaxHealth = eventData?.NewMaxHealth ?? eventData?.newMaxHealth;
     const newCost = eventData?.NewCost ?? eventData?.newCost;
 
     if (!targetUid) {
@@ -4258,27 +4259,18 @@ export function handleDamageDealt(eventData) {
     }
 }
 export function handleHealthChanged(eventData) {
-    // DTO: HealthChangedEventDto { string CardInstanceId, int NewHealth, int DamageTaken }
-    if (!eventData || !eventData.CardInstanceId || eventData.NewHealth === undefined) {
+    const cardUid = eventData?.CardInstanceId ?? eventData?.cardInstanceId;
+    const newHealth = eventData?.NewHealth ?? eventData?.newHealth;
+    if (!cardUid || newHealth == null) {
         console.error("GM Error: Invalid data in handleHealthChanged:", eventData);
         return;
     }
 
-    const cardUid = eventData.CardInstanceId;
     const unit = findCardInstanceByUid(cardUid);
 
     if (unit) {
-        const oldHealth = unit.currentHealth;
-        unit.currentHealth = eventData.NewHealth;
-
-
-        // 【重构】调用统一的UI更新函数
-        // 新的 updateHealthDisplay 函数能够智能处理主战者和场上单位
+        unit.currentHealth = newHealth;
         gameView.updateHealthDisplay(unit);
-
-        // Log if health drops to 0, but let the server's UnitDestroyed event handle the actual removal
-        if (unit.currentHealth <= 0) {
-        }
     } else {
         console.warn(`GM: HealthChanged event received for invalid unit UID: ${cardUid}`);
     }
@@ -4420,6 +4412,7 @@ export function handleGameOver(eventData) {
     gameState.gamePhase = "GameOver";
     gameState.phase = "GameOver";
     gameState.winner = winnerId;
+    rawGameView?.hidePlayerChoiceUI?.();
 
     if (isMiragePlaybackDomGateActive()) {
         mirageCombatPlayback.pendingGameEndDto = eventData;
@@ -4546,7 +4539,8 @@ export function handleMirageStandingsUpdated(standingsDto) {
 }
 
 export async function switchMirageSpectateTargetRequest(targetPlayerId) {
-    if (!signalRConnection || !targetPlayerId) return;
+    const connection = signalRConnection;
+    if (!connection || !targetPlayerId) return;
     const nextEpoch = (Number(gameState.viewEpoch) || 1) + 1;
     gameState.viewEpoch = nextEpoch;
     gameState.pendingSpectateTargetId = String(targetPlayerId);
@@ -4554,8 +4548,9 @@ export async function switchMirageSpectateTargetRequest(targetPlayerId) {
     gameState.miragePlacementModalDismissed = true;
     abortMirageCombatPlayback("new_game");
     try {
-        await signalRConnection.invoke("SwitchMirageSpectateTarget", String(targetPlayerId), nextEpoch);
+        await connection.invoke("SwitchMirageSpectateTarget", String(targetPlayerId), nextEpoch);
     } catch (error) {
+        if (connection !== signalRConnection || gameState.viewEpoch !== nextEpoch) return;
         gameState.pendingSpectateTargetId = null;
         console.error("GM: SwitchMirageSpectateTarget failed:", error);
         showAlert(`切换观战视角失败：${error?.message || error}`);
@@ -4818,44 +4813,35 @@ export function handleSuperEvolveStateUpdated(eventData) {
 }
 // --- END NEW Specific Event Handlers --- (Placeholder comment for structure)
 
-/**
- * Handles the PlayerChoiceRequested event from the server.
- * This event pauses the game flow and asks the client to make a selection.
- * @param {object} eventData - The PlayerChoiceRequestDto from the server.
- *                           - SourceCardUid: The card initiating the choice.
- *                           - SelectableTargets: An array of UIDs that are valid choices.
- *                           - PromptMessage: A message to display to the user.
- */
 export function handlePlayerChoiceRequested(eventData) {
+    const request = eventData?.ChoiceRequest;
+    if (!request?.PendingChoiceId || !request.SourceAbilityRuntimeId || !Array.isArray(request.SelectableTargetIds)
+        || gameState.isSpectator || gameState.gameOver
+        || normalizePlayerId(request.GameId) !== normalizePlayerId(gameState.gameId)
+        || resolvedChoiceIds.has(request.PendingChoiceId)) return;
 
-    // BUG-FIX: The actual choice data is nested inside the 'choiceRequest' property.
-    // C# PascalCase becomes camelCase in JS, so we look for 'choiceRequest'.
-    // BUG-FIX: C# DTOs use PascalCase. Access the correct property from the event data.
-    const choiceRequest = eventData.ChoiceRequest;
+    const playerId = normalizePlayerId(request.RequestingPlayerId);
+    const localSeats = gameState.dualControl
+        ? [gameState.dualControlSeatIds.hostPlayerId, gameState.dualControlSeatIds.guestPlayerId]
+        : [gameState.localPlayerId];
+    if (!playerId || !localSeats.some(id => normalizePlayerId(id) === playerId)) return;
 
-    // Further validation using PascalCase properties
-    if (!choiceRequest || !choiceRequest.SourceAbilityRuntimeId || !choiceRequest.SelectableTargetIds) {
-        console.error("GM Error: Invalid data in handlePlayerChoiceRequested. Missing nested ChoiceRequest object or its properties (SourceAbilityRuntimeId, SelectableTargetIds).", eventData);
-        return;
-    }
+    gameView?.showPlayerChoiceUI?.(request);
+}
 
-    const dedupeKey = `${choiceRequest.PendingChoiceId ?? ''}:${choiceRequest.SourceAbilityRuntimeId}`;
-    if (dedupeKey === lastHandledChoiceRequestKey) {
-        return;
-    }
-    lastHandledChoiceRequestKey = dedupeKey;
+export function syncPlayerChoiceFromSnapshot(state, playerId) {
+    if (!playerId || gameState.isSpectator
+        || normalizePlayerId(state?.GameId ?? state?.gameId) !== normalizePlayerId(gameState.gameId)) return;
 
-    // The primary role of this handler is to pass the choice request to the UI module.
-    try {
-        if (gameView.showPlayerChoiceUI) {
-            // Pass the nested choiceRequest object to the UI function.
-            gameView.showPlayerChoiceUI(choiceRequest);
-        } else {
-            console.error("GM Error: ui.js module does not have showPlayerChoiceUI function.");
-        }
-    } catch (error) {
-        console.error("GM Error: Failed to load or call ui.js for PlayerChoiceRequested:", error);
-    }
+    const request = state.PendingChoice ?? state.pendingChoice;
+    if (request) handlePlayerChoiceRequested(request);
+    else rawGameView?.hidePlayerChoiceUI?.(null, playerId);
+}
+
+export function handlePlayerChoiceResolved(pendingChoiceId) {
+    if (!pendingChoiceId) return;
+    resolvedChoiceIds.add(pendingChoiceId);
+    rawGameView?.hidePlayerChoiceUI?.(pendingChoiceId);
 }
 
 /**
@@ -5108,44 +5094,37 @@ export function handleChatMessage(eventData) {
 
 /**
  * Submits the player's choice back to the server.
- * @param {string} choiceId - The UID of the selected target.
- * @param {string} sourceCardUid - The UID of the card that initiated the choice.
+ * @param {object} request - The pending choice received from the server.
+ * @param {string[]} chosenTargetIds - The selected targets or options.
+ * @param {boolean} wasCancelled - Whether the player cancelled the choice.
  */
-export async function submitPlayerChoice(pendingChoiceId, chosenTargetIds, sourceAbilityRuntimeId, wasCancelled = false) {
-    const connection = getActiveConnection();
+export async function submitPlayerChoice(request, chosenTargetIds, wasCancelled = false) {
+    const connection = getConnectionForPlayer(request.RequestingPlayerId);
     if (!connection || connection.state !== "Connected") {
         console.error("GM: SubmitPlayerChoice failed - SignalR connection not available.");
         showAlert("与服务器连接丢失，无法提交选择！");
         return false;
     }
 
-    // Ensure chosenTargetIds is always an array
-    const targetIds = Array.isArray(chosenTargetIds) ? chosenTargetIds : (chosenTargetIds ? [chosenTargetIds] : []);
-
-    const choiceDto = {
-        PendingChoiceId: pendingChoiceId,
-        SourceAbilityRuntimeId: sourceAbilityRuntimeId,
-        ChosenTargetIds: targetIds,
-        WasCancelled: wasCancelled // Add the new property
-    };
-
-    // --- DIAGNOSTIC LOGGING ---
+    const cancelledCardKey = wasCancelled ? normalizeCardUid(request.PendingPlayCardUid) : null;
+    const cancelledLock = playCardRequestLocks.get(cancelledCardKey);
     try {
-        await connection.invoke("SubmitTargetChoice", choiceDto);
-        return true;
+        const accepted = await connection.invoke("SubmitTargetChoice", {
+            PendingChoiceId: request.PendingChoiceId,
+            SourceAbilityRuntimeId: request.SourceAbilityRuntimeId,
+            TargetKey: request.TargetKey,
+            ChosenTargetIds: chosenTargetIds,
+            WasCancelled: wasCancelled
+        });
+        if (accepted === true && cancelledLock !== undefined && playCardRequestLocks.get(cancelledCardKey) === cancelledLock) {
+            unlockPlayCardRequest(cancelledCardKey);
+        }
+        // The server either accepted this choice or reports that it has already ended.
+        if (typeof accepted === 'boolean') handlePlayerChoiceResolved(request.PendingChoiceId);
+        return accepted !== false;
     } catch (err) {
-        console.error("[CHOICE_DEBUG] GameManager: 'SubmitTargetChoice' invocation FAILED.", err);
+        console.error("GameManager: SubmitTargetChoice failed.", err);
         showAlert(`提交选择失败：${err.message}`);
         return false;
     }
-    // --- END DIAGNOSTIC LOGGING ---
-}
-
-/**
- * Sends a cancellation for the current player choice request to the server.
- * @param {string} sourceAbilityRuntimeId - The runtime ID of the ability that initiated the choice.
- */
-export async function cancelPlayerChoice(pendingChoiceId, sourceAbilityRuntimeId) {
-    // To cancel, we submit a choice with the correct PendingChoiceId, an empty target array, and the WasCancelled flag set to true.
-    return await submitPlayerChoice(pendingChoiceId, [], sourceAbilityRuntimeId, true);
 }

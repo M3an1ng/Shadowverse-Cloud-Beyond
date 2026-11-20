@@ -10,7 +10,6 @@ import {
     notifyDeckValidationRulesUpdated
 } from "./dataChangeEvents.js";
 
-const USERS_ENDPOINT = "/api/users";
 const CARD_SET_ENV_ENDPOINT = "/api/cardsets/environment-membership";
 export const CARD_SETS_UPDATED_EVENT = "cardsets:updated";
 
@@ -65,6 +64,7 @@ class DevToolsCardSetEnvironmentMembership {
         this.requestOwner = {};
         this.membershipRequest = null;
         this.isAdmin = false;
+        this.canEditMembership = false;
         this.busy = false;
         this.highlightSetName = "";
         this.uploadSetId = null;
@@ -191,7 +191,7 @@ class DevToolsCardSetEnvironmentMembership {
                 const checkbox = target instanceof HTMLInputElement && target.matches("input[data-card-set-id]")
                     ? target
                     : null;
-                if (!checkbox || !this.isAdmin || this.busy) return;
+                if (!checkbox || !this.canEditMembership || this.busy) return;
                 const id = Number(checkbox.getAttribute("data-card-set-id"));
                 // Included flags are the editable selection, also for rows hidden by filtering.
                 this.items.find(item => item.cardSetDefinitionId === id).included = checkbox.checked;
@@ -250,7 +250,7 @@ class DevToolsCardSetEnvironmentMembership {
 
     clearItems() {
         this.items = [];
-        this.setAdminPermission(false);
+        this.setPermissions(false, false);
         this.renderRows([]);
     }
 
@@ -261,18 +261,22 @@ class DevToolsCardSetEnvironmentMembership {
         if (this.searchInput) this.searchInput.disabled = disabled;
         if (this.refreshBtn) this.refreshBtn.disabled = disabled;
         if (this.logoFilter) this.logoFilter.disabled = disabled;
-        if (this.saveBtn) this.saveBtn.disabled = disabled || !this.isAdmin;
+        if (this.saveBtn) this.saveBtn.disabled = disabled || !this.canEditMembership;
         if (this.newNameInput) this.newNameInput.disabled = disabled || !this.isAdmin;
         if (this.newAbbreviationInput) this.newAbbreviationInput.disabled = disabled || !this.isAdmin;
         if (this.createBtn) this.createBtn.disabled = disabled || !this.isAdmin;
-        this.tableBody?.querySelectorAll("input[data-card-set-id], button[data-upload-logo-id]").forEach(control => {
+        this.tableBody?.querySelectorAll("input[data-card-set-id]").forEach(control => {
+            control.disabled = disabled || !this.canEditMembership;
+        });
+        this.tableBody?.querySelectorAll("button[data-upload-logo-id]").forEach(control => {
             control.disabled = disabled || !this.isAdmin;
         });
     }
 
-    setAdminPermission(isAdmin) {
+    setPermissions(isAdmin, canEditMembership) {
         this.isAdmin = isAdmin;
-        this.saveBtn.hidden = !isAdmin;
+        this.canEditMembership = canEditMembership;
+        this.saveBtn.hidden = !canEditMembership;
         this.createRow.hidden = !isAdmin;
         this.setBusy(this.busy);
     }
@@ -293,19 +297,6 @@ class DevToolsCardSetEnvironmentMembership {
 
     isLoggedInSession(session) {
         return Boolean(session && session.mode === "user" && session.userId);
-    }
-
-    async canManage(actorUserId, signal) {
-        const params = new URLSearchParams();
-        params.set("actorUserId", actorUserId);
-        params.set("limit", "1");
-        const response = await fetch(`${USERS_ENDPOINT}?${params.toString()}`, { method: "GET", signal });
-        if (response.status === 403) return false;
-        const payload = await readJsonResponse(response);
-        if (!Array.isArray(pickValue(payload, "items", "Items"))) {
-            throw new Error("管理员查询响应中的 items 必须为数组。");
-        }
-        return true;
     }
 
     normalizeItems(payload, environment) {
@@ -337,11 +328,16 @@ class DevToolsCardSetEnvironmentMembership {
         }).sort((a, b) => a.cardSetDefinitionId - b.cardSetDefinitionId);
     }
 
-    async fetchMembership(environment, signal) {
-        const params = new URLSearchParams();
-        params.set("environment", environment);
+    async fetchMembership(environment, actorUserId, signal) {
+        const params = new URLSearchParams({ environment });
+        if (actorUserId) params.set("actorUserId", actorUserId);
         const response = await fetch(`${CARD_SET_ENV_ENDPOINT}?${params.toString()}`, { method: "GET", signal });
-        return this.normalizeItems(await readJsonResponse(response), environment);
+        const payload = await readJsonResponse(response);
+        return {
+            items: this.normalizeItems(payload, environment),
+            isAdmin: pickValue(payload, "canManageCardSets", "CanManageCardSets") === true,
+            canEditMembership: pickValue(payload, "canEditMembership", "CanEditMembership") === true
+        };
     }
 
     renderRows(items) {
@@ -372,7 +368,7 @@ class DevToolsCardSetEnvironmentMembership {
         const html = filtered.map((item) => `
             <tr class="${item.name.trim().toLowerCase() === this.highlightSetName ? 'pack-manager-highlighted' : ''}">
                 <td>
-                    <input type="checkbox" data-card-set-id="${item.cardSetDefinitionId}" ${item.included ? "checked" : ""} ${this.isAdmin && !this.busy ? '' : 'disabled'} aria-label="${escapeHtml(item.name)}：当前环境包含">
+                    <input type="checkbox" data-card-set-id="${item.cardSetDefinitionId}" ${item.included ? "checked" : ""} ${this.canEditMembership && !this.busy ? '' : 'disabled'} aria-label="${escapeHtml(item.name)}：当前环境包含">
                 </td>
                 <td>${item.cardSetDefinitionId}</td>
                 <td>${escapeHtml(item.setCode)}</td>
@@ -402,18 +398,19 @@ class DevToolsCardSetEnvironmentMembership {
         this.setBusy(true);
         this.setMessage("正在加载卡包...");
         try {
-            const [isAdmin, items] = await Promise.all([
-                this.isLoggedInSession(session) ? this.canManage(session.userId, request.signal) : false,
-                this.fetchMembership(environment, request.signal)
-            ]);
+            const { isAdmin, canEditMembership, items } = await this.fetchMembership(environment, session.userId, request.signal);
             if (!ownsLoad()) return;
-            this.setAdminPermission(isAdmin);
+            this.setPermissions(isAdmin, canEditMembership);
             this.items = items;
             this.renderRows(this.items);
             this.tableBody.querySelector('.pack-manager-highlighted')?.scrollIntoView({ block: "nearest" });
-            this.setMessage(this.isAdmin
-                ? `管理员模式：已加载 ${this.items.length} 个卡包，可勾选环境配置、上传卡包 Logo 或新建卡包。`
-                : `检视模式：已加载 ${this.items.length} 个卡包（修改环境卡包配置与上传 Logo 需管理员权限）。`);
+            if (this.isAdmin) {
+                this.setMessage(`管理员模式：已加载 ${this.items.length} 个卡包，可勾选环境配置、上传卡包 Logo 或新建卡包。`);
+            } else if (this.canEditMembership) {
+                this.setMessage(`已加载 ${this.items.length} 个卡包，可勾选要加入「编选」环境的卡包并保存。`);
+            } else {
+                this.setMessage(`已加载 ${this.items.length} 个卡包，当前环境仅可检视。`);
+            }
         } catch (error) {
             if (!ownsLoad()) return;
             this.clearItems();
@@ -424,7 +421,7 @@ class DevToolsCardSetEnvironmentMembership {
     }
 
     async saveMembership() {
-        if (!this.isModalOpen || !this.isAdmin || this.busy) return;
+        if (!this.isModalOpen || !this.canEditMembership || this.busy) return;
         const owner = this.requestOwner;
         const request = this.membershipRequest;
         const ownsSave = () => this.ownsRequest(owner) && this.membershipRequest === request;
@@ -522,8 +519,9 @@ class DevToolsCardSetEnvironmentMembership {
             if (!ownsCreate()) return;
             this.newNameInput.value = "";
             this.newAbbreviationInput.value = "";
-            const items = await this.fetchMembership(environment, request.signal);
+            const { items, isAdmin, canEditMembership } = await this.fetchMembership(environment, session.userId, request.signal);
             if (!ownsCreate()) return;
+            this.setPermissions(isAdmin, canEditMembership);
             // Adding a set must preserve unsaved membership choices for existing sets.
             for (const item of items) {
                 const previous = this.items.find(entry => entry.cardSetDefinitionId === item.cardSetDefinitionId);

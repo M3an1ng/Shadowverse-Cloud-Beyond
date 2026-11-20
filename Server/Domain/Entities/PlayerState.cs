@@ -1094,7 +1094,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
                 return result;
             }
 
-            var generatedExpectedMoveEvent = false;
             var projectedDeckCount = Deck.Count;
             foreach (var cardInstance in cardInstancesToAdd)
             {
@@ -1105,19 +1104,13 @@ namespace ShadowverseBeyond.Server.Domain.Entities
 
                 var insertIndex = ResolveDeckInsertIndex(insertMode, projectedDeckCount, random);
                 var addResult = MoveCard(cardInstance, CardZone.Deck, insertIndex, CardMoveReason.AddedToDeck);
-                var movedToDeck = HasMoveToZone(addResult, CardZone.Deck);
-                generatedExpectedMoveEvent = generatedExpectedMoveEvent || movedToDeck;
-                if (movedToDeck)
+                if (HasMoveToZone(addResult, CardZone.Deck))
                 {
                     projectedDeckCount++;
                 }
                 result.GeneratedEvents.AddRange(addResult.GeneratedEvents);
             }
 
-            if (generatedExpectedMoveEvent)
-            {
-                result.GeneratedEvents.Add(new DeckCountChangedEvent(this, Deck.Count));
-            }
             result.Success = true;
             return result;
         }
@@ -1167,7 +1160,6 @@ namespace ShadowverseBeyond.Server.Domain.Entities
             if (generatedExpectedMoveEvent)
             {
                 ShuffleDeck(random);
-                result.GeneratedEvents.Add(new DeckCountChangedEvent(this, Deck.Count));
             }
 
             result.Success = true;

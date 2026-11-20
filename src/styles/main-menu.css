@@ -2140,6 +2140,12 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
 .hud-line.top { top: 12%; left: 0; width: 100%; height: 1px; }
 .hud-line.bottom { bottom: 12%; left: 0; width: 100%; height: 1px; } */
 
+#navigation-page .title-container,
+#navigation-page .nav-menu {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
 /* --- Main Title --- */
 .title-container {
     position: absolute;
@@ -2746,7 +2752,8 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
 }
 
 .deck-picker-modal .deck-picker-selection-view {
-    width: min(94vw);
+    width: min(94vw, 100%);
+    min-width: 0;
     max-height: calc(100vh - 40px);
     height: auto;
     overflow-y: auto;
@@ -2757,8 +2764,12 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
     padding: 28px 30px;
 }
 
+.deck-picker-modal .deck-picker-preview-switcher {
+    width: min(13rem, 48vw);
+}
+
 .deck-picker-modal .deck-picker-grid {
-    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr));
     gap: 18px;
     padding-bottom: 0;
 }
@@ -3438,6 +3449,59 @@ body.topnav-hover-locked .about-widget:hover .about-card-popup:not(.active) {
         opacity: 1;
         padding: 0;
         gap: 8px;
+    }
+}
+
+@media (max-width: 540px) and (orientation: portrait) {
+    .deck-picker-modal {
+        padding: 12px;
+    }
+
+    .deck-picker-modal .deck-picker-selection-view {
+        padding: 14px;
+    }
+
+    .deck-picker-modal .view-header {
+        gap: 12px;
+        margin-bottom: 14px;
+    }
+
+    .deck-picker-modal .view-header h2 {
+        font-size: 1.35rem;
+        letter-spacing: 0.04em;
+    }
+
+    .deck-picker-modal .deck-picker-card {
+        height: auto;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .deck-picker-modal .deck-content {
+        padding: 12px;
+        height: auto;
+        overflow-wrap: anywhere;
+    }
+
+    .deck-picker-modal .deck-emblem {
+        display: none;
+    }
+
+    .deck-picker-modal .deck-picker-card .deck-name {
+        font-size: 1.15rem;
+    }
+
+    .deck-picker-modal .deck-picker-card .deck-picker-actions-overlay {
+        position: static;
+        padding: 0 12px 12px;
+        background: transparent;
+        backdrop-filter: none;
+        justify-content: flex-start;
+    }
+
+    .deck-picker-modal .deck-picker-actions-overlay .deck-action-btn {
+        min-width: 0;
+        padding-inline: 12px;
     }
 }
 

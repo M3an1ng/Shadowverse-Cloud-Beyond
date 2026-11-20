@@ -8,6 +8,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json.Serialization;
+using ShadowverseBeyond.Server.Dtos.SignalR.Events;
 using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos.Enums;
 namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
@@ -39,7 +41,12 @@ namespace ShadowverseBeyond.Server.Dtos // Assuming a base DTO namespace
         public int? ViewEpoch { get; set; }
         public long? RoomVersion { get; set; }
 
-        // Consider adding other global state if needed, e.g., pending actions, history log snippet
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReplayTicket { get; init; }
+
+        // Set only on a full sync sent directly to the authenticated player who can answer.
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public PlayerChoiceRequestedEventDto? PendingChoice { get; set; }
 
         /// <summary>
         /// Finds a card instance by its instance ID across all zones and players.

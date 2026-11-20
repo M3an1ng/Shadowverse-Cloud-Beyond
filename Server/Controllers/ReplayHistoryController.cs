@@ -10,10 +10,10 @@ namespace ShadowverseBeyond.Server.Controllers;
 [Route("api/replay/{gameId}")]
 public sealed class ReplayHistoryController(SqliteReplayHistory history,ReplayContinuation continuation) : ControllerBase
 {
-    [HttpGet("history/resume-points")]
+    [ClosedReplayHistory, HttpGet("history/resume-points")]
     public Task<IActionResult> ResumePoints(string gameId) => Read(() => continuation.PointsAsync(gameId,HttpContext.RequestAborted));
 
-    [HttpPost("history/resume")]
+    [ClosedReplayHistory, HttpPost("history/resume")]
     public Task<IActionResult> Resume(string gameId,[FromBody] ReplayResumeRequest request)
         => Read(() => continuation.ResumeAsync(gameId,request,HttpContext.RequestAborted));
 
@@ -23,7 +23,7 @@ public sealed class ReplayHistoryController(SqliteReplayHistory history,ReplayCo
     [HttpGet("history/manifest")]
     public Task<IActionResult> Manifest(string gameId) => Read(async () => await history.ManifestAsync(gameId,HttpContext.RequestAborted));
 
-    [HttpGet("history/events")]
+    [ClosedReplayHistory, HttpGet("history/events")]
     public Task<IActionResult> Events(string gameId,[FromQuery] long fromSeq = 1,[FromQuery] long? throughSeq = null,[FromQuery] int limit = 100)
         => Read(async () => {
             var manifest = await history.ManifestAsync(gameId,HttpContext.RequestAborted);
@@ -32,11 +32,11 @@ public sealed class ReplayHistoryController(SqliteReplayHistory history,ReplayCo
             return new { manifest, Events = fromSeq > through ? [] : await history.EventsAsync(gameId,fromSeq,through,limit,HttpContext.RequestAborted) };
         });
 
-    [HttpGet("history/restore")]
+    [ClosedReplayHistory, HttpGet("history/restore")]
     public Task<IActionResult> Restore(string gameId,[FromQuery] long atSeq = 0)
         => Read(async () => await history.RestoreAsync(gameId,atSeq,HttpContext.RequestAborted));
 
-    [HttpGet("history/actions")]
+    [ClosedReplayHistory, HttpGet("history/actions")]
     public Task<IActionResult> Actions(string gameId,[FromQuery] Guid? playerId = null,[FromQuery] int fromStep = 1)
         => Read(async () => {
             if (fromStep < 1) throw new ArgumentException("invalid_replay_operation_step");
@@ -48,7 +48,7 @@ public sealed class ReplayHistoryController(SqliteReplayHistory history,ReplayCo
                 EndSeq = completed.SingleOrDefault(c => c.ActionId == n.ActionId)?.Seq,Request = n.Data }).ToArray() };
         });
 
-    [HttpGet("history/turns")]
+    [ClosedReplayHistory, HttpGet("history/turns")]
     public Task<IActionResult> Turns(string gameId) => Read(async () => {
         var manifest = await history.ManifestAsync(gameId,HttpContext.RequestAborted);
         var turns = (await history.IndexAsync(gameId,"TurnStart",null,manifest.HeadSeq,HttpContext.RequestAborted)).Where(n => n.Stage == "committed").ToArray();
@@ -58,10 +58,10 @@ public sealed class ReplayHistoryController(SqliteReplayHistory history,ReplayCo
             Turns = turns.Select((n,i) => new { n.TurnNo,n.TurnOwnerId,StartSeq = n.Seq,EndSeq = i+1 < turns.Length ? turns[i+1].Seq-1 : manifest.HeadSeq }).ToArray() };
     });
 
-    [HttpGet("history/archive")]
+    [ClosedReplayHistory, HttpGet("history/archive")]
     public Task<IActionResult> Archive(string gameId) => Read(async () => await history.ArchiveAsync(gameId,HttpContext.RequestAborted));
 
-    [HttpGet("history/export")]
+    [ClosedReplayHistory, HttpGet("history/export")]
     public async Task<IActionResult> Export(string gameId)
     {
         try

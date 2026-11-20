@@ -44,6 +44,11 @@ class Router {
             cleanup: null
         });
 
+        this.routes.set('replay-board', {
+            element: document.getElementById('game-page'),
+            title: '对局回放 - 影之诗 星云'
+        });
+
         this.routes.set('singleplayer', {
             element: document.getElementById('navigation-page'),
             title: '单人模式 - 影之诗 星云',
@@ -86,6 +91,13 @@ class Router {
             cleanup: null
         });
 
+        this.routes.set('match-room', {
+            element: document.getElementById('match-room-page'),
+            title: '对战房间 - 影之诗 星云',
+            init: null,
+            cleanup: null
+        });
+
         this.routes.set('dev-tools', {
             element: document.getElementById('dev-tools-page'),
             title: '系统设置 - 影之诗 星云',
@@ -98,6 +110,33 @@ class Router {
             title: '对战实验室 - 影之诗 星云',
             init: this.initDevToolsMatchLabPage.bind(this),
             cleanup: this.cleanupDevToolsMatchLabPage.bind(this)
+        });
+
+        this.routes.set('dev-tools/tournaments', {
+            element: document.getElementById('tournament-admin-page'),
+            title: '赛事管理 - 影之诗 星云',
+            init: async () => (await import('./tournamentAdmin.js')).initializeTournamentAdmin(),
+            cleanup: async () => (await import('./tournamentAdmin.js')).cleanupTournamentAdmin()
+        });
+
+        this.routes.set('tournaments', {
+            element: document.getElementById('tournament-lobby-page'),
+            title: '大赛 - 影之诗 星云',
+            init: async () => (await import('./tournamentLobby.js')).initializeTournamentLobby((matchId, tournamentId) => {
+                const url = new URL(window.location.href);
+                url.searchParams.set('tournamentMatch', matchId);
+                url.searchParams.set('tournament', tournamentId);
+                window.history.replaceState(window.history.state, '', url);
+                return this.navigateTo('tournament-match');
+            }),
+            cleanup: async () => (await import('./tournamentLobby.js')).cleanupTournamentLobby()
+        });
+
+        this.routes.set('tournament-match', {
+            element: document.getElementById('tournament-match-page'),
+            title: '赛事房间 - 影之诗 星云',
+            init: null,
+            cleanup: null
         });
 
         this.routes.set('dsl-editor-v2', {
@@ -413,17 +452,19 @@ class Router {
     async initDevToolsPage() {
 
         try {
-            const [logModule, userModule, winrateModule, copyLimitModule] = await Promise.all([
+            const [logModule, userModule, winrateModule, copyLimitModule, tournamentModule] = await Promise.all([
                 import('./devToolsLogViewer.js'),
                 import('./devToolsUserManagement.js'),
                 import('./devToolsWinrateStats.js'),
-                import('./devToolsCopyLimitPolicies.js')
+                import('./devToolsCopyLimitPolicies.js'),
+                import('./tournamentAdmin.js')
             ]);
             const outcomes = await Promise.allSettled([
                 logModule.initializeDevToolsLogViewer(),
                 userModule.initializeDevToolsUserManagement(),
                 winrateModule.initializeDevToolsWinrateStats(),
-                copyLimitModule.initializeDevToolsCopyLimitPolicies()
+                copyLimitModule.initializeDevToolsCopyLimitPolicies(),
+                tournamentModule.initializeTournamentAdminEntry()
             ]);
             const failures = outcomes.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
             if (failures.length) throw new AggregateError(failures, '开发工具生命周期未完成。');
@@ -435,17 +476,19 @@ class Router {
 
     async cleanupDevToolsPage() {
         try {
-            const [logModule, userModule, winrateModule, copyLimitModule] = await Promise.all([
+            const [logModule, userModule, winrateModule, copyLimitModule, tournamentModule] = await Promise.all([
                 import('./devToolsLogViewer.js'),
                 import('./devToolsUserManagement.js'),
                 import('./devToolsWinrateStats.js'),
-                import('./devToolsCopyLimitPolicies.js')
+                import('./devToolsCopyLimitPolicies.js'),
+                import('./tournamentAdmin.js')
             ]);
             const outcomes = await Promise.allSettled([
                 logModule.cleanupDevToolsLogViewer(),
                 userModule.cleanupDevToolsUserManagement(),
                 winrateModule.cleanupDevToolsWinrateStats(),
-                copyLimitModule.cleanupDevToolsCopyLimitPolicies()
+                copyLimitModule.cleanupDevToolsCopyLimitPolicies(),
+                tournamentModule.cleanupTournamentAdminEntry()
             ]);
             const failures = outcomes.filter(outcome => outcome.status === 'rejected').map(outcome => outcome.reason);
             if (failures.length) throw new AggregateError(failures, '开发工具生命周期未完成。');

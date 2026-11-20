@@ -254,6 +254,7 @@ namespace ShadowverseBeyond.Server.Hubs.ClientInterfaces
         /// </summary>
         /// <param name="eventDto">The DTO containing details about the choice required.</param>
         Task PlayerChoiceRequested(PlayerChoiceRequestedEventDto eventDto);
+        Task PlayerChoiceResolved(Guid pendingChoiceId);
 
         /// <summary>
         /// Sends a generic log/announcement entry for events without a dedicated UI DTO.

@@ -181,6 +181,8 @@ public partial class ApplicationDbContext : DbContext
   public DbSet<ReplayGameRecord> ReplayGames { get; set; } = null!;
   public DbSet<ReplayBundleRecord> ReplayBundles { get; set; } = null!;
   public DbSet<ReplaySnapshotRecord> ReplaySnapshots { get; set; } = null!;
+  public DbSet<Tournament> Tournaments { get; set; } = null!;
+  public DbSet<TournamentStage> TournamentStages { get; set; } = null!;
 
   /// <summary>
   /// Configures the model that was discovered by convention from the entity types
@@ -217,6 +219,33 @@ public partial class ApplicationDbContext : DbContext
     ConfigureCardCommunityEntities(modelBuilder);
 
     ConfigureReplayEntities(modelBuilder);
+    ConfigureTournaments(modelBuilder);
+    ConfigureTournamentEntries(modelBuilder);
+    ConfigureTournamentMatches(modelBuilder);
+  }
+
+  private static void ConfigureTournaments(ModelBuilder modelBuilder)
+  {
+    modelBuilder.Entity<Tournament>(entity =>
+    {
+      entity.Property(tournament => tournament.Id).ValueGeneratedNever();
+      entity.Property(tournament => tournament.Name).HasMaxLength(120);
+      entity.Property(tournament => tournament.CardVersion).HasMaxLength(40);
+      entity.Property(tournament => tournament.Revision).IsConcurrencyToken();
+      entity.HasIndex(tournament => tournament.Status);
+      entity.HasIndex(tournament => new { tournament.Status, tournament.NextScheduleCheckAtUtc });
+      entity.HasOne<User>()
+        .WithMany()
+        .HasForeignKey(tournament => tournament.CreatedByUserId)
+        .OnDelete(DeleteBehavior.Restrict);
+      entity.HasMany(tournament => tournament.Stages)
+        .WithOne()
+        .HasForeignKey(stage => stage.TournamentId);
+    });
+    modelBuilder.Entity<TournamentStage>(entity =>
+    {
+      entity.HasKey(stage => new { stage.TournamentId, stage.Number });
+    });
   }
 
   /// <summary>

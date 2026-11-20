@@ -817,41 +817,15 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 return new DomainOperationResult { Success = false, ErrorMessage = "Buff cannot be null." };
             }
 
-            var currentAbility = context.CurrentEffect?.SourceAbility ?? context.GetCurrentAbility();
-            if (currentAbility != null)
-            {
-                if (!buff.SourceCardInstanceId.HasValue && currentAbility.SourceCardId.HasValue)
-                {
-                    buff.SourceCardInstanceId = currentAbility.SourceCardId.Value;
-                }
-
-                if (string.IsNullOrWhiteSpace(buff.SourceCardName))
-                {
-                    var sourceCardName = currentAbility.SourceCard?.Name;
-                    if (string.IsNullOrWhiteSpace(sourceCardName) && buff.SourceCardInstanceId.HasValue)
-                    {
-                        sourceCardName = context.CurrentGameState.FindCardInstance(buff.SourceCardInstanceId.Value)?.Name;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(sourceCardName))
-                    {
-                        buff.SourceCardName = sourceCardName;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(buff.SourceAbilityName))
-                {
-                    buff.SourceAbilityName = currentAbility.Name;
-                }
-            }
-            else if (context.SourceCard != null)
-            {
-                buff.SourceCardInstanceId ??= context.SourceCard.InstanceId;
-                if (string.IsNullOrWhiteSpace(buff.SourceCardName))
-                {
-                    buff.SourceCardName = context.SourceCard.Name;
-                }
-            }
+            var currentAbility = context.GetCurrentAbility();
+            var sourceCard = currentAbility == null ? context.SourceCard : currentAbility.SourceCard;
+            buff.SourceCardInstanceId ??= currentAbility?.SourceCardId ?? sourceCard?.InstanceId;
+            if (sourceCard == null && buff.SourceCardInstanceId is Guid sourceId)
+                sourceCard = context.CurrentGameState.FindCardInstance(sourceId);
+            if (string.IsNullOrWhiteSpace(buff.SourceCardName))
+                buff.SourceCardName = sourceCard?.Name;
+            if (string.IsNullOrWhiteSpace(buff.SourceAbilityName))
+                buff.SourceAbilityName = currentAbility?.Name;
 
             if (!buff.SourceEffectIndex.HasValue && context.CurrentEffect != null)
             {
@@ -873,6 +847,15 @@ namespace ShadowverseBeyond.Server.Domain.Buffs
                 {
                     buff.SummaryRootAbilityId = currentAbility.RuntimeId;
                 }
+            }
+
+            if (buff.SummarySourceCard == null)
+            {
+                var summaryCard = buff.SummaryRootAbilityId is Guid rootId && rootId != currentAbility?.RuntimeId
+                    ? ResolveSourceCard(context, rootId) ?? sourceCard
+                    : sourceCard;
+                if (summaryCard != null)
+                    buff.SummarySourceCard = CardAppearanceReference.From(summaryCard);
             }
 
             if (string.IsNullOrWhiteSpace(buff.EffectKey) && buff.SourceAbilityId != Guid.Empty)

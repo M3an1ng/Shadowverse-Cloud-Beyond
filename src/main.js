@@ -20,6 +20,10 @@ import { installOperationSettingsButton } from './operationSettings.js';
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', installOperationSettingsButton, { once: true });
 else installOperationSettingsButton();
 import * as signalR from "@microsoft/signalr";
+import {
+    BattleConnectionRejected, INITIAL_BATTLE_CONNECT_MS, BATTLE_RECOVERY_MS,
+    retryBattleConnection, waitForBattleConnection
+} from './battleConnection.js';
 import { router, initializeRouter } from './router.js';
 import { BATTLE_EXIT_CONFIRM_MESSAGE, battleExitConfirmMessage, isSpectatorBattle, shouldConfirmBattleExit } from './battleExitConfirmPolicy.js';
 import { getDeckOwnerPayload, getDeckOwnerQuery, getUserSession, USER_SESSION_CHANGED_EVENT } from './userSession.js';
@@ -31,7 +35,7 @@ import {
     handleCardSummoned, handleCardPlayed, handleHealthChanged, handleCardVanished,
     handleStatChange, handleUnitEvolved, handleGameOver, handlePlayerMulliganCompleted, handleAttackStateUpdated,
     handleActStateUpdated, handleFusionStateUpdated, handleEvolveStateUpdated, handleSuperEvolveStateUpdated, handleHandPlayabilityUpdate, handleActPlayabilityUpdate,
-    handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested,
+    handlePpMaxUpdate, handleEpMaxUpdate, handleSepMaxUpdate, handlePpBoostStateUpdated, handlePlayerChoiceRequested, handlePlayerChoiceResolved, syncPlayerChoiceFromSnapshot,
     handleCardRevealed, handleFusion, handleAbilityTriggered, handleKeywordAdded, handleKeywordRemoved, handleCardInstanceUpdated,
     handleChatHistory, handleChatMessage, handleMatchHistorySync, surrenderGame,
     handleCardMoved, handleEmblemUpdated, handleCounterChanged, handleCardReturned, handleTuck, appendGameLog,
@@ -46,15 +50,15 @@ import {
     refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets,
     showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState,
     updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi,
-    refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast,
+    refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, hidePlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast,
     replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard,
-    appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual,
+    appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual, clearSelfReturnVisuals,
     prepareCardMoveVisual, commitCardMoveVisual, notifyCardPlayed, playAttackLunge, playUnitEvolutionEffect, notifyShieldRemoved, cancelAllBattleMotions,
     startMirageCombatPlaybackUi, renderMirageCombatStep, renderMirageCombatOutcome, hideMirageCombatPlaybackOverlay, showMirageReconnectLockOverlay
 } from './ui.js'; // Removed non-existent displayError/Info/initializeUI, Added UI function imports - functions to be implemented in ui
 import { initDevConsole } from './devConsole.js'; // 开发者控制台
 import { ensureEnumLocalizations } from './enumLocalizationCache.js';
-import { getRouteNameFromHash, shouldReuseCachedHandshake } from './handshakePolicy.js';
+import { getRouteNameFromHash, isClassicRoomHandshake, shouldReuseCachedHandshake } from './handshakePolicy.js';
 import {
     canShowRematchRoomButton,
     isNonAiMultiplayerHandshake,
@@ -64,7 +68,7 @@ import {
 } from './roomExitDecisionPolicy.js';
 import { getStoredValue, removeStoredValue, setStoredValue } from './storageFallback.js';
 import { buildDebugLogLine, getConnectionDebugId } from './debugDiagnostics.js';
-import { createDeckSelectionPickerModal } from './components/deckSelectionPickerModal.js';
+import { closeDeckSelectionPicker, openDeckSelectionPicker } from './components/deckSelectionPickerModal.js';
 import { registerPwaServiceWorker, setupPwaInstallUI } from './pwaInstall.js';
 import { setupMobileViewport } from './mobileViewport.js';
 import {
@@ -88,6 +92,9 @@ import { createLobbyNotificationSoundPlayer } from './lobbyNotificationSound.js'
 import { createGuestJoinSoundTracker } from './multiplayerRoomSoundPolicy.js';
 import { setupDailyQuestUI } from './dailyQuestMenu.js';
 import { setupUserInfoUI } from './userMenu.js';
+import { rememberReplaySeat } from './replayTickets.js';
+import { installReplayLibrary } from './replayLibrary.js';
+import { mountReplayBoard } from './replayBoard.js';
 import menuBg1Url from './background/background_1.jpg';
 import menuBg2Url from './background/background_2.jpg';
 import menuBg3Url from './background/background_3.jpg';
@@ -95,8 +102,8 @@ import menuBg4Url from './background/background_4.jpg';
 import menuBg5Url from './background/background_5.jpg';
 // 在页面初始化前接入真实 console；面板首次打开时才创建 DOM。
 bindGameView({
-    renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual,
-    prepareCardMoveVisual, commitCardMoveVisual, notifyCardPlayed, playAttackLunge, playUnitEvolutionEffect, notifyShieldRemoved, cancelAllBattleMotions,
+    renderGame, renderGameLog, showDamageNumber, showHealNumber, updatePpDisplay, updateEpDisplay, updateSepDisplay, updatePpBoostDisplay, updateDeckCountDisplay, updateGraveyardCountDisplay, updateBloodPoolDisplay, updateComboDisplay, updateRallyDisplay, updateHealthDisplay, updateUnitCombatStats, clearSelectionHighlights, resetMulliganSelection, updateHandDisplay, refreshHandPlayabilityVisuals, updateUnitDisplay, updateFieldDisplay, highlightAttacker, highlightTargets, showMulliganInterface, updateMulliganStatus, refreshBattleCardPreviewIfCurrent, renderHighlights, updateActButtonState, updateCardActionButtons, updateEmblemZone, showTurnStartBanner, updateTurnTimerDisplay, refreshCardInstanceUi, refreshCardActionControls, replaceBattleCardPreviewIdentity, showPlayerChoiceUI, hidePlayerChoiceUI, showRevealOverlay, showFusionAnimation, showAbilityTriggerToast, replaceInMatchChatHistory, replaceInMatchCardHistory, appendInMatchChatMessage, clearInMatchChatUiState, appendInMatchUsedCard, appendInMatchDestroyedCard, clearInMatchUsedCardUiState, cancelCommittedHandPlayVisual,
+    clearSelfReturnVisuals, prepareCardMoveVisual, commitCardMoveVisual, notifyCardPlayed, playAttackLunge, playUnitEvolutionEffect, notifyShieldRemoved, cancelAllBattleMotions,
     startMirageCombatPlaybackUi, renderMirageCombatStep, renderMirageCombatOutcome, hideMirageCombatPlaybackOverlay, showMirageReconnectLockOverlay
 });
 initDevConsole();
@@ -219,32 +226,28 @@ function stopConnectionHeartbeat(conn) {
 }
 
 function startConnectionHeartbeat(conn, label) {
-    if (!conn || connectionHeartbeatTimers.has(conn)) return;
-
-    const timerId = window.setInterval(() => {
-        if (conn.state !== signalR.HubConnectionState.Connected) {
-            return;
+    let sending = false;
+    const renewRoom = async () => {
+        if (sending || conn.state !== signalR.HubConnectionState.Connected) return;
+        sending = true;
+        try {
+            await conn.send("Heartbeat");
+        } catch (error) {
+            console.warn(`MAIN: ${label} heartbeat failed.`, error);
+        } finally {
+            sending = false;
         }
-
-        conn.invoke("Heartbeat").catch(err => {
-            console.warn(`MAIN: ${label} heartbeat failed.`, err);
-        });
-    }, HEARTBEAT_INTERVAL_MS);
-
-    connectionHeartbeatTimers.set(conn, timerId);
+    };
+    connectionHeartbeatTimers.set(conn, window.setInterval(renewRoom, HEARTBEAT_INTERVAL_MS));
+    void renewRoom();
 }
 
 let isInitializing = false;
 let gameInitialized = false;
 let gamePageSession = 0;
-const HUB_URL = "/gamehub"; // Use relative URL, assumes same origin or proxy configured
-let connection = null; // Module-level variable for SignalR connection - Moved here
-let guestConnection = null;
-let initialStateReceived = false; // Flag to track if initial state has been handled
-let forceFullStateOnNextReceive = false;
-let reconnectEpochResetPending = false;
-let reconnectDesiredSpectateTarget = null;
-let reconnectInProgress = false;
+const HUB_URL = "/gamehub";
+let connection = null;
+let battleConnectionSession = null;
 let lobbyHandshake = null; // { gameId, playerId, token, joinCode?, role, useAiFallback?, dualControl?, hostPlayerId?, hostToken?, guestPlayerId?, guestToken? }
 let pendingHandshake = null; // Set by multiplayer UI before initialization
 let pendingRouteTransition = null; // { fromRoute, toRoute }
@@ -257,7 +260,7 @@ let roomExitDecisionModalEl = null;
 let roomExitDecisionPromise = null;
 let roomExitDecisionResolve = null;
 const LOBBY_HANDSHAKE_STORAGE_KEY = 'svb.lobby.handshake';
-const HEARTBEAT_INTERVAL_MS = 30000;
+const HEARTBEAT_INTERVAL_MS = 30_000;
 const connectionHeartbeatTimers = new WeakMap();
 
 async function apiPostJson(url, body) {
@@ -332,7 +335,6 @@ const DEFAULT_MULTIPLAYER_DECK_FORMAT = Object.freeze({
     rule: 'standard'
 });
 
-let deckSelectionPickerModal = null;
 
 function normalizeDeckId(value) {
     const text = String(value ?? '').trim();
@@ -558,19 +560,13 @@ function ensureSelectedDeckId(key, decks = getDecksForKey(key)) {
     return resolved;
 }
 
-function ensureDeckPickerModal() {
-    if (!deckSelectionPickerModal) {
-        deckSelectionPickerModal = createDeckSelectionPickerModal();
-    }
-    return deckSelectionPickerModal;
-}
-
-async function pickDeckFromModal({ key, title, skipRefresh = false }) {
+async function pickDeckFromModal({ key, title, skipRefresh = false, acceptsDeck = null }) {
     if (!skipRefresh) {
         await refreshSelectableDecks();
     }
-    const decks = getDecksForKey(key);
-    const selectedDeckId = ensureSelectedDeckId(key, decks);
+    const available = getDecksForKey(key);
+    const selectedDeckId = ensureSelectedDeckId(key, available);
+    const decks = acceptsDeck ? available.filter(acceptsDeck) : available;
     const pickerDecks = decks.map(deck => {
         const presentation = buildDeckPresentation(deck);
         return ({
@@ -589,7 +585,7 @@ async function pickDeckFromModal({ key, title, skipRefresh = false }) {
         goingSecondWins: Number(deck?.goingSecondWins ?? deck?.GoingSecondWins ?? 0)
     });
     });
-    const pickedDeckId = await ensureDeckPickerModal().open({
+    const pickedDeckId = await openDeckSelectionPicker({
         title,
         decks: pickerDecks,
         selectedDeckId
@@ -757,7 +753,7 @@ function loadCachedHandshake() {
                 lobbyHandshake = parsed;
                 return parsed;
             }
-            if (parsed.gameId && parsed.playerId && parsed.token) {
+            if (parsed.gameId && (parsed.role === 'spectator' || (parsed.playerId && parsed.token))) {
                 lobbyHandshake = parsed;
                 return parsed;
             }
@@ -814,7 +810,6 @@ function clearTransientMatchQueryParams() {
 }
 
 function resetTransientConnectionUiState() {
-    reconnectInProgress = false;
     setConnectionStatus('connected');
     setOpponentConnectionStatus(true);
 }
@@ -984,26 +979,27 @@ function registerRoomExitDecisionRouteHooks() {
 }
 
 async function disconnectGameConnections() {
-    const previousConnections = [connection, guestConnection];
-    // 先撤销所有权；stop 的回调及已排队事件不能再改动当前页面。
+    const previous = battleConnectionSession;
+    battleConnectionSession = null;
     connection = null;
-    guestConnection = null;
     setSignalRConnection(null);
     setGuestSignalRConnection(null);
-    const stopped = await Promise.allSettled(previousConnections.map(async conn => {
-        stopConnectionHeartbeat(conn);
-        if (conn && conn.state !== signalR.HubConnectionState.Disconnected) {
-            await conn.stop();
+    if (!previous) return;
+
+    previous.controller.abort();
+    const stopped = await Promise.allSettled(previous.seats.map(seat => {
+        seat.clearEvents?.();
+        stopConnectionHeartbeat(seat.connection);
+        const stopping = seat.connection?.stop();
+        // A transport handshake can still be waiting on the network after cancellation.
+        if (!seat.ready) {
+            void stopping?.catch(error => console.warn('MAIN: 取消对战连接失败。', error));
+            return;
         }
+        return stopping;
     }));
     const failures = stopped.filter(item => item.status === 'rejected').map(item => item.reason);
     if (failures.length) throw new AggregateError(failures, '对战连接未能完整关闭');
-}
-
-async function handleStateHydrationFailure(statusMessage = '重连失败') {
-    reconnectInProgress = false;
-    setConnectionStatus('disconnected', statusMessage);
-    await disconnectGameConnections();
 }
 
 function shouldWarnBeforeUnload() {
@@ -1157,7 +1153,7 @@ async function leaveMatch(gameId, playerId, token) {
 
 async function leaveCurrentPvpRoom(reasonForLog) {
     const handshake = pendingHandshake || lobbyHandshake || loadCachedHandshake();
-    if (!handshake || handshake.useAiFallback === true || isSpectatorBattle(gameState, handshake)) {
+    if (!handshake || handshake.kind === 'tournament-match' || handshake.useAiFallback === true || isSpectatorBattle(gameState, handshake)) {
         clearCachedHandshake();
         return;
     }
@@ -1182,269 +1178,214 @@ async function leaveCurrentPvpRoom(reasonForLog) {
 
 // --- SignalR Connection Logic ---
 
-/**
- * Sets up and starts the SignalR connection.
- * @param {string} gameId - The ID of the game.
- * @param {string} playerId - The ID of the player.
- * @param {string} token - Lobby token for hub validation.
- * @param {{resolve?: Function, reject?: Function}|null} initialStateGate - Initial-state gate for resolve/reject.
- * @returns {Promise<signalR.HubConnection>} A promise that resolves with the connection object, or rejects on failure.
- */
-async function setupSignalRConnection(gameId, playerId, token, initialStateGate, options = {}) { // ADDED token parameter
-    const pageSession = gamePageSession;
-    await disconnectGameConnections();
-    if (pageSession !== gamePageSession) throw new Error('页面已退出，对战连接已取消');
-
-    // Reset initial-state gate for every new connection/session
-    if (!options.skipInitialReset) {
-        initialStateReceived = false;
+function buildBattleHubUrl(handshake, guest) {
+    const query = new URLSearchParams({ gameId: handshake.gameId });
+    if (handshake.role === 'spectator') {
+        query.set('spectate', '1');
+        if (handshake.joinCode) query.set('joinCode', handshake.joinCode);
+        const user = getUserSession();
+        if (user?.displayName) query.set('spectatorName', user.displayName);
+        if (user?.userId || user?.guestId) query.set('spectatorUserId', user.userId || user.guestId);
+        const avatar = String(user?.avatar || '').trim();
+        if (/^(\/|https?:\/\/|data:image\/)/.test(avatar)) query.set('spectatorAvatar', avatar);
+    } else {
+        query.set('playerId', guest ? handshake.guestPlayerId : handshake.playerId);
+        query.set('token', guest ? handshake.guestToken : handshake.token);
     }
-
-    const activeHs = getReconnectHandshake();
-    const query = new URLSearchParams();
-    query.set('gameId', gameId);
-    query.set('playerId', playerId);
-    query.set('token', token);
-    if (activeHs?.kind === 'mirage-8p' && activeHs.roomId) {
-        query.set('mirageRoomId', activeHs.roomId);
-        if (activeHs.viewingPlayerId && activeHs.viewingPlayerId !== playerId) {
-            query.set('targetPlayerId', activeHs.viewingPlayerId);
-        }
+    if (handshake.kind === 'mirage-8p') {
+        query.set('mirageRoomId', handshake.roomId);
+        const target = gameState.pendingSpectateTargetId || gameState.viewingPlayerId || handshake.viewingPlayerId;
+        if (gameState.isSpectator && target) query.set('targetPlayerId', target);
     }
-    const hubUrlWithParams = `${HUB_URL}?${query.toString()}`;
+    return `${HUB_URL}?${query}`;
+}
 
-    const conn = new signalR.HubConnectionBuilder()
-        .withUrl(hubUrlWithParams)
-        .withAutomaticReconnect()
-        .configureLogging(signalR.LogLevel.Trace) // Changed level to Trace
-        .build();
-    connection = conn;
-
-    const connectionId = getConnectionDebugId(conn, 'game');
-    logPerfDebug('signalr-game', 'connection created', {
-        connectionId,
-        gameId,
-        playerId,
-        skipInitialReset: options.skipInitialReset === true
-    });
-
-    registerSignalREventHandlers(conn, initialStateGate); // Pass resolver down
-
-    try {
-        logPerfDebug('signalr-game', 'starting connection', {
-            connectionId,
-            state: conn.state
-        });
-        await conn.start();
-        if (connection !== conn) throw new Error('对战连接已被替换或关闭');
-        startConnectionHeartbeat(conn, 'game');
-        conn.invoke("Heartbeat").catch(err => {
-            console.warn("MAIN: game heartbeat refresh failed after connect.", err);
-        });
-        logPerfDebug('signalr-game', 'connection started', {
-            connectionId,
-            state: conn.state
-        });
-        return conn;
-    } catch (err) {
-        console.error("MAIN: SignalR Connection Failed: ", err);
-        showAlert(`连接游戏服务器失败: ${err.message || 'Unknown error'}`); // Use alert instead of displayError
-        if (connection === conn) {
-            connection = null;
-            setSignalRConnection(null);
-        }
-        throw err;
+function updateBattleConnectionStatus(session) {
+    if (battleConnectionSession !== session || session.controller.signal.aborted) return;
+    if (session.seats.every(seat => seat.ready)) {
+        setConnectionStatus('connected');
+    } else if (session.seats.some(seat => seat.recovery)) {
+        setConnectionStatus('reconnecting', session.boardHydrated ? '正在恢复对局连接…' : '正在连接对局…');
+    } else {
+        setConnectionStatus('disconnected', '连接中断，点击重连');
     }
 }
 
-async function setupActionSignalRConnection(gameId, playerId, token) {
-    const pageSession = gamePageSession;
-    if (!playerId || !token) return null;
+function recoverBattleSeat(session, seat, budgetMs) {
+    if (seat.ready || seat.recovery || session.controller.signal.aborted) return;
+    seat.error = null;
+    seat.recovery = retryBattleConnection(
+        timeoutMs => openBattleSeat(session, seat, timeoutMs),
+        { signal: session.controller.signal, budgetMs }
+    ).catch(error => {
+        if (session.controller.signal.aborted) return;
+        seat.error = error;
+        console.warn('MAIN: 对局连接未恢复。', error);
+        if (error instanceof BattleConnectionRejected) showAlert(error.message);
+    }).finally(() => {
+        seat.recovery = null;
+        updateBattleConnectionStatus(session);
+    });
+    updateBattleConnectionStatus(session);
+}
 
-    const previous = guestConnection;
-    guestConnection = null;
-    setGuestSignalRConnection(null);
-    stopConnectionHeartbeat(previous);
-    if (previous && previous.state !== signalR.HubConnectionState.Disconnected) await previous.stop();
-    if (pageSession !== gamePageSession) throw new Error('页面已退出，副席位连接已取消');
+function resetBattleSeat(seat) {
+    stopConnectionHeartbeat(seat.connection);
+    seat.clearEvents?.();
+    seat.clearEvents = null;
+    seat.connection = null;
+    seat.ready = false;
+    seat.hasSnapshot = false;
+    if (seat.guest) {
+        setGuestSignalRConnection(null);
+    } else {
+        connection = null;
+        setSignalRConnection(null);
+    }
+}
 
-    const hubUrlWithParams = `${HUB_URL}?gameId=${encodeURIComponent(gameId)}&playerId=${encodeURIComponent(playerId)}&token=${encodeURIComponent(token)}`;
-
-    const trackedGuestConnection = new signalR.HubConnectionBuilder()
-        .withUrl(hubUrlWithParams)
-        .withAutomaticReconnect()
+async function openBattleSeat(session, seat, timeoutMs) {
+    const { handshake, controller } = session;
+    const conn = new signalR.HubConnectionBuilder()
+        .withUrl(buildBattleHubUrl(handshake, seat.guest), { timeout: 8_000 })
+        .withServerTimeout(60_000)
+        .withKeepAliveInterval(15_000)
         .configureLogging(signalR.LogLevel.Warning)
         .build();
+    seat.connection = conn;
+    const isCurrent = () => battleConnectionSession === session
+        && !controller.signal.aborted && seat.connection === conn;
 
-    guestConnection = trackedGuestConnection;
-    registerActionSignalREventHandlers(trackedGuestConnection);
-    trackedGuestConnection.onclose(() => {
-        stopConnectionHeartbeat(trackedGuestConnection);
-        if (guestConnection === trackedGuestConnection) {
-            guestConnection = null;
-            setGuestSignalRConnection(null);
-        }
+    let acceptSnapshot;
+    let rejectSnapshot;
+    const snapshot = new Promise((resolve, reject) => {
+        acceptSnapshot = resolve;
+        rejectSnapshot = reject;
     });
 
-    try {
-        await trackedGuestConnection.start();
-        if (guestConnection !== trackedGuestConnection) throw new Error('副席位连接已被替换或关闭');
-        startConnectionHeartbeat(trackedGuestConnection, 'guest');
-        trackedGuestConnection.invoke("Heartbeat").catch(err => {
-            console.warn("MAIN: guest heartbeat refresh failed after connect.", err);
-        });
-        return trackedGuestConnection;
-    } catch (err) {
-        console.error("MAIN: Guest SignalR Connection Failed: ", err);
-        if (guestConnection === trackedGuestConnection) {
-            guestConnection = null;
-            setGuestSignalRConnection(null);
+    const onSnapshot = (state) => {
+        const resuming = session.boardHydrated && !seat.hasSnapshot;
+        try {
+            if (seat.guest) {
+                if (state == null) throw new Error('副席位状态为空');
+                deliverGuestEvent(session, isCurrent, syncPlayerChoiceFromSnapshot, state, handshake.guestPlayerId);
+            } else {
+                const applied = updateFullGameState(state, {
+                    isReconnectFullSync: resuming,
+                    resetViewEpoch: resuming,
+                    syncPendingChoice: true
+                });
+                if (applied === false) throw new Error('对局状态不完整');
+                rememberReplaySeat(state);
+                session.boardHydrated = true;
+                syncRematchRoomButtonVisibility();
+            }
+            seat.hasSnapshot = true;
+            if (!seat.guest) {
+                session.deferredGuestEvents.splice(0).forEach(deliver => deliver());
+            }
+            acceptSnapshot();
+        } catch (error) {
+            rejectSnapshot(error);
+            if (seat.ready) void conn.stop().catch(err => console.warn('MAIN: 状态同步失败后断开连接失败。', err));
         }
-        throw err;
-    }
-}
+    };
 
-function registerActionSignalREventHandlers(conn) {
-    const onCurrentEvent = (eventName, handler) => conn.on(eventName, (...args) => {
-        if (guestConnection === conn) handler(...args);
-    });
-    let lastChoiceRequestKey = null;
-    // Keep this list aligned with gameplay interaction handlers in registerSignalREventHandlers.
-    onCurrentEvent("ReceiveHandPlayabilityUpdate", handleHandPlayabilityUpdate);
-    onCurrentEvent("ReceiveActPlayabilityUpdate", handleActPlayabilityUpdate);
-    onCurrentEvent("AttackStateUpdated", handleAttackStateUpdated);
-    onCurrentEvent("ActStateUpdated", handleActStateUpdated);
-    onCurrentEvent("FusionStateUpdated", handleFusionStateUpdated);
-    onCurrentEvent("EvolveStateUpdated", handleEvolveStateUpdated);
-    onCurrentEvent("SuperEvolveStateUpdated", handleSuperEvolveStateUpdated);
-    onCurrentEvent("PpBoostStateUpdated", handlePpBoostStateUpdated);
-
-    // Dual-control guest connection must receive player-scoped choice events,
-    // otherwise the selected seat cannot submit a decision and the game stalls.
-    onCurrentEvent("PlayerChoiceRequested", (eventData) => {
-        const choiceRequest = eventData?.ChoiceRequest;
-        const pendingChoiceId = choiceRequest?.PendingChoiceId;
-        const sourceAbilityRuntimeId = choiceRequest?.SourceAbilityRuntimeId;
-        const requestKey = pendingChoiceId && sourceAbilityRuntimeId
-            ? `${pendingChoiceId}:${sourceAbilityRuntimeId}`
-            : null;
-
-        if (requestKey && requestKey === lastChoiceRequestKey) {
-            return;
-        }
-        lastChoiceRequestKey = requestKey;
-
-        handlePlayerChoiceRequested(eventData);
-    });
-
-    onCurrentEvent("ReceiveError", (errorMessage) => {
-        const message = typeof errorMessage === 'string' ? errorMessage : String(errorMessage ?? '');
-        console.error("MAIN: Received Error from Server (action connection):", message);
-
-        if (message.startsWith("ROOM_CLOSED:")) {
-            const reason = message.slice("ROOM_CLOSED:".length).trim() || "房间已关闭。";
-            showAlert(reason);
+    const onError = (errorMessage) => {
+        const message = String(errorMessage ?? '');
+        const terminalPrefix = ['ROOM_CLOSED:', 'ROOM_KICKED:'].find(prefix => message.startsWith(prefix));
+        if (terminalPrefix) {
+            const reason = message.slice(terminalPrefix.length).trim() || '房间已关闭。';
+            controller.abort();
             clearCachedHandshake();
-            void router.navigateTo('navigation').catch(error => {
-                console.error('MAIN: 退出已关闭房间失败。', error);
-            });
+            showAlert(reason);
+            void router.navigateTo('navigation').catch(error => console.error('MAIN: 退出已关闭房间失败。', error));
+        } else if (!seat.hasSnapshot) {
+            rejectSnapshot(new BattleConnectionRejected(message || '服务器未能同步对局状态'));
+        } else {
+            showAlert(`操作失败: ${message}`);
+        }
+    };
+
+    const callbacks = { isCurrent, hasSnapshot: () => seat.hasSnapshot, onSnapshot, onError };
+    if (seat.guest) {
+        registerActionSignalREventHandlers(conn, session, callbacks);
+    } else {
+        seat.clearEvents = registerSignalREventHandlers(conn, callbacks);
+    }
+
+    conn.onclose(error => {
+        if (!isCurrent()) return;
+        const wasReady = seat.ready;
+        resetBattleSeat(seat);
+        if (!wasReady) {
+            rejectSnapshot(error ?? new Error('连接在对局同步完成前断开'));
             return;
         }
-
-        showAlert(`操作失败: ${message}`);
-    });
-}
-
-async function setupSpectatorSignalRConnection(gameId, initialStateGate, options = {}) {
-    const pageSession = gamePageSession;
-    await disconnectGameConnections();
-    if (pageSession !== gamePageSession) throw new Error('页面已退出，对战连接已取消');
-
-    if (!options.skipInitialReset) {
-        initialStateReceived = false;
-    }
-
-    const session = getUserSession();
-    const activeHs = getReconnectHandshake();
-    const query = new URLSearchParams();
-    query.set('gameId', gameId);
-    query.set('spectate', '1');
-    if (activeHs?.kind === 'mirage-8p' && activeHs.roomId) {
-        query.set('mirageRoomId', activeHs.roomId);
-        if (activeHs.viewingPlayerId) {
-            query.set('targetPlayerId', activeHs.viewingPlayerId);
+        if (!seat.guest) {
+            cancelAllBattleMotions();
+            if (gameState.mirage) abortMirageCombatPlayback('reconnecting');
         }
-    }
-
-    const spectatorName = String(session?.displayName || '').trim();
-    if (spectatorName) {
-        query.set('spectatorName', spectatorName);
-    }
-
-    const spectatorUserId = String(session?.userId || session?.guestId || '').trim();
-    if (spectatorUserId) {
-        query.set('spectatorUserId', spectatorUserId);
-    }
-
-    const spectatorAvatar = String(session?.avatar || '').trim();
-    if (spectatorAvatar && (
-        spectatorAvatar.startsWith('/')
-        || spectatorAvatar.startsWith('http://')
-        || spectatorAvatar.startsWith('https://')
-        || spectatorAvatar.startsWith('data:image/')
-    )) {
-        query.set('spectatorAvatar', spectatorAvatar);
-    }
-
-    const hubUrlWithParams = `${HUB_URL}?${query.toString()}`;
-
-    const conn = new signalR.HubConnectionBuilder()
-        .withUrl(hubUrlWithParams)
-        .withAutomaticReconnect()
-        .configureLogging(signalR.LogLevel.Trace)
-        .build();
-    connection = conn;
-
-    const connectionId = getConnectionDebugId(conn, 'spectator');
-    logPerfDebug('signalr-game', 'spectator connection created', {
-        connectionId,
-        gameId,
-        skipInitialReset: options.skipInitialReset === true
+        recoverBattleSeat(session, seat, BATTLE_RECOVERY_MS);
     });
-
-    registerSignalREventHandlers(conn, initialStateGate);
 
     try {
-        logPerfDebug('signalr-game', 'starting spectator connection', {
-            connectionId,
-            state: conn.state
-        });
-        await conn.start();
-        if (connection !== conn) throw new Error('对战连接已被替换或关闭');
-        logPerfDebug('signalr-game', 'spectator connection started', {
-            connectionId,
-            state: conn.state
-        });
-        return conn;
-    } catch (err) {
-        console.error("MAIN: SignalR Connection Failed (spectate): ", err);
-        showAlert(`连接游戏服务器失败: ${err.message || 'Unknown error'}`);
-        if (connection === conn) {
-            connection = null;
-            setSignalRConnection(null);
+        await waitForBattleConnection(conn, snapshot, { signal: controller.signal, timeoutMs });
+        if (!isCurrent() || conn.state !== signalR.HubConnectionState.Connected) {
+            throw new Error('对局连接已关闭');
         }
-        throw err;
+        seat.ready = true;
+        if (seat.guest) {
+            setGuestSignalRConnection(conn);
+        } else {
+            connection = conn;
+            setSignalRConnection(conn);
+        }
+        if (handshake.role !== 'spectator') startConnectionHeartbeat(conn, seat.guest ? 'guest' : 'game');
+    } catch (error) {
+        if (isCurrent()) resetBattleSeat(seat);
+        void conn.stop().catch(err => console.warn('MAIN: 清理失败的对战连接时出错。', err));
+        throw error;
     }
 }
 
-/**
- * Registers handlers for events received from the SignalR Hub.
- * @param {signalR.HubConnection} conn - The SignalR connection instance.
- */
-function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolver as parameter
-    const presentationGate=createRevealPresentationGate(()=>connection===conn);
+// The guest board is already represented by the primary snapshot. Its private choice and
+// playability updates must wait until that board is available.
+function deliverGuestEvent(session, isCurrent, handler, ...args) {
+    if (session.seats[0].hasSnapshot) {
+        handler(...args);
+    } else {
+        session.deferredGuestEvents.push(() => {
+            if (isCurrent()) handler(...args);
+        });
+    }
+}
+
+function registerActionSignalREventHandlers(conn, session, { isCurrent, hasSnapshot, onSnapshot, onError }) {
     const onCurrentEvent = (eventName, handler) => conn.on(eventName, (...args) => {
-        presentationGate.dispatch(eventName,()=>handler(...args));
+        if (isCurrent()) handler(...args);
+    });
+    const onLiveEvent = (eventName, handler) => onCurrentEvent(eventName, (...args) => {
+        if (hasSnapshot()) deliverGuestEvent(session, isCurrent, handler, ...args);
+    });
+    onCurrentEvent("ReceiveGameState", onSnapshot);
+    onCurrentEvent("ReceiveError", onError);
+    onLiveEvent("ReceiveHandPlayabilityUpdate", handleHandPlayabilityUpdate);
+    onLiveEvent("ReceiveActPlayabilityUpdate", handleActPlayabilityUpdate);
+    onLiveEvent("AttackStateUpdated", handleAttackStateUpdated);
+    onLiveEvent("ActStateUpdated", handleActStateUpdated);
+    onLiveEvent("FusionStateUpdated", handleFusionStateUpdated);
+    onLiveEvent("EvolveStateUpdated", handleEvolveStateUpdated);
+    onLiveEvent("SuperEvolveStateUpdated", handleSuperEvolveStateUpdated);
+    onLiveEvent("PpBoostStateUpdated", handlePpBoostStateUpdated);
+    onLiveEvent("PlayerChoiceRequested", handlePlayerChoiceRequested);
+    onCurrentEvent("PlayerChoiceResolved", id => deliverGuestEvent(session, isCurrent, handlePlayerChoiceResolved, id));
+}
+
+function registerSignalREventHandlers(conn, { isCurrent, hasSnapshot, onSnapshot, onError }) {
+    const presentationGate = createRevealPresentationGate(isCurrent);
+    const onCurrentEvent = (eventName, handler) => conn.on(eventName, (...args) => {
+        if (hasSnapshot()) presentationGate.dispatch(eventName, () => handler(...args));
     });
     const connectionId = getConnectionDebugId(conn, 'game');
     const EVENT_STREAM_NAMES = [
@@ -1533,64 +1474,12 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
         });
     };
 
-    // Handler for full game state updates (e.g., on connect/reconnect)
-    // --- MODIFIED FOR M6 ---
-    onCurrentEvent("ReceiveGameState", (receivedGameState) => {
-        const timestamp = new Date().toISOString();
-        logEventReceipt('ReceiveGameState', receivedGameState, {
-            initialStateReceived,
-            hasInitialStateGate: typeof initialStateGate?.resolve === 'function',
-            timestamp
+    conn.on("ReceiveGameState", state => {
+        presentationGate.dispatch("ReceiveGameState", () => {
+            logEventReceipt("ReceiveGameState", state);
+            onSnapshot(state);
         });
-        if (!initialStateReceived && typeof initialStateGate?.resolve === 'function') {
-            if (!receivedGameState) {
-                initialStateReceived = true;
-                initialStateGate.reject?.(new Error('初始对局状态为空'));
-                return;
-            }
-            // Initial state handling during initializeApp
-            setConnectionStatus('connected');
-            initialStateGate.resolve(receivedGameState); // Resolve the promise in initializeApp
-            initialStateReceived = true; // Mark initial state as received
-            // NOTE: updateFullGameState is called in initializeApp after Promise.all resolves based on this promise.
-        } else if (initialStateReceived) {
-            // Optimization:
-            // During Mulligan, the server may broadcast full GameState snapshots on opponent actions.
-            // Applying the full snapshot forces a full UI re-render and can disrupt local interaction state.
-            // We rely on incremental events (HandUpdated / PlayerMulliganCompleted) during Mulligan instead.
-            if (!forceFullStateOnNextReceive && !reconnectEpochResetPending && gameState.phase === 'Mulligan' && receivedGameState?.Phase === 'Mulligan') {
-                return;
-            }
-            const shouldResetViewEpoch = reconnectEpochResetPending;
-            forceFullStateOnNextReceive = false;
-            reconnectEpochResetPending = false;
-
-            // Subsequent state handling after initialization
-            // Directly call gameManager's update function to handle the state and re-render
-            // Ensure gameManager and updateFullGameState are imported correctly
-            try {
-                setConnectionStatus('connected');
-                const hydrationSucceeded = updateFullGameState(receivedGameState, {
-                    isReconnectFullSync: true,
-                    resetViewEpoch: shouldResetViewEpoch
-                }); // Directly update the game state and UI
-                if (hydrationSucceeded === false) {
-                    void handleStateHydrationFailure('重连失败').catch(error => console.error('MAIN: 状态同步失败后的连接清理失败。', error));
-                    return;
-                }
-                syncRematchRoomButtonVisibility();
-            } catch (error) { // Catch for outer try (Line 98)
-                console.error("MAIN: Error calling updateFullGameState for subsequent update:", error);
-                void handleStateHydrationFailure('重连失败').catch(error => console.error('MAIN: 状态同步失败后的连接清理失败。', error));
-                showAlert("处理游戏状态更新时出错！");
-            } // Closes outer catch
-        } else {
-            // This case should ideally not happen if setupSignalRConnection is always called with a resolver during init
-            console.error("MAIN Error: Received game state but initialization seems incomplete or resolver missing!");
-            showAlert("内部错误：无法正确处理游戏状态！");
-        }
     });
-    // --- END M6 MODIFICATION ---
 
     // Handler for incremental game events
     // Register specific handlers for different event types from IGameClient.cs
@@ -1644,6 +1533,9 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
     wireEvent("SuperEvolveStateUpdated", handleSuperEvolveStateUpdated);
     // NEW: Handler for when the server requests the player to make a choice
     wireEvent("PlayerChoiceRequested", handlePlayerChoiceRequested);
+    conn.on("PlayerChoiceResolved", id => {
+        if (isCurrent()) handlePlayerChoiceResolved(id);
+    });
     wireEvent("CardRevealed", handleCardRevealed);
     wireEvent("Fusion", handleFusion);
     wireEvent("AbilityTriggered", handleAbilityTriggered);
@@ -1671,147 +1563,21 @@ function registerSignalREventHandlers(conn, initialStateGate) { // Accept resolv
 
     // The generic ReceiveGameEvent handler is implicitly removed by replacing this whole block.
 
-    // Handler for server-side errors
-    onCurrentEvent("ReceiveError", (errorMessage) => {
-        const message = typeof errorMessage === 'string' ? errorMessage : String(errorMessage ?? '');
-        console.error("MAIN: Received Error from Server:", message);
+    conn.on("ReceiveError", error => {
+        if (isCurrent()) onError(error);
+    });
 
-        if (message.startsWith("ROOM_CLOSED:") || message.startsWith("ROOM_KICKED:")) {
-            abortMirageCombatPlayback("leave_room");
-            const prefix = message.startsWith("ROOM_KICKED:") ? "ROOM_KICKED:" : "ROOM_CLOSED:";
-            const reason = message.slice(prefix.length).trim() || "房间已关闭。";
-            showAlert(reason);
-            clearCachedHandshake();
-            void router.navigateTo('navigation').catch(error => {
-                console.error('MAIN: 退出已关闭房间失败。', error);
-            });
-            return;
+    conn.on("PlayerConnectionStatusUpdated", eventData => {
+        if (!isCurrent() || gameState.isSpectator || gameState.dualControl) return;
+        const playerId = eventData?.PlayerId ?? eventData?.playerId;
+        const connected = eventData?.IsConnected ?? eventData?.isConnected;
+        if (playerId && typeof connected === 'boolean'
+            && String(playerId).toLowerCase() !== String(gameState.selfOriginalPlayerId).toLowerCase()) {
+            setOpponentConnectionStatus(connected);
         }
-
-        if (!initialStateReceived && typeof initialStateGate?.reject === 'function') {
-            initialStateReceived = true;
-            initialStateGate.reject(new Error(message || '初始化阶段收到服务器错误'));
-            setConnectionStatus('disconnected', '连接失败，请点击重连');
-        }
-
-        showAlert(`操作失败: ${message}`); // Use alert instead of displayError
     });
 
-    onCurrentEvent("PlayerConnectionStatusUpdated", (eventData) => {
-        logEventReceipt('PlayerConnectionStatusUpdated', eventData);
-        const playerId = eventData?.PlayerId || eventData?.playerId;
-        const isConnected = eventData?.IsConnected ?? eventData?.isConnected;
-        if (!playerId || typeof isConnected !== 'boolean') {
-            return;
-        }
-        if (!gameState.localPlayerId || playerId === gameState.localPlayerId) {
-            return;
-        }
-        setOpponentConnectionStatus(isConnected);
-    });
-
-    // Handler for when the server requests the client to select target(s)
-    onCurrentEvent("RequestTargetSelection", (request) => {
-        // Removed call to showTargetSelection, which is not exported/used.
-    });
-
-    // --- Connection Lifecycle Handlers ---
-    conn.onclose((error) => {
-        stopConnectionHeartbeat(conn);
-        if (connection !== conn) return;
-        abortMirageCombatPlayback("reconnecting");
-        logPerfDebug('signalr-game', 'connection closed', {
-            connectionId,
-            state: conn.state,
-            error: error ? { message: error.message, name: error.name } : null
-        });
-        console.error(`MAIN: SignalR Connection Closed. Error: "${error}". State: ${conn.state}.`);
-        showAlert("与服务器连接已断开。" + (error ? ` 原因: ${error.message}` : "")); // Use alert instead of displayError
-        // Automatic reconnect is enabled, but we might want to disable UI elements here.
-        connection = null; // Clear the connection variable
-        reconnectInProgress = false;
-        reconnectEpochResetPending = false;
-        reconnectDesiredSpectateTarget = null;
-        setSignalRConnection(null);
-        setConnectionStatus('disconnected', '连接已断开');
-    });
-
-    conn.onreconnecting((error) => {
-        if (connection !== conn) return;
-        reconnectDesiredSpectateTarget = gameState.isSpectator
-            ? (gameState.pendingSpectateTargetId || gameState.viewingPlayerId || null)
-            : null;
-        reconnectEpochResetPending = true;
-        abortMirageCombatPlayback("reconnecting");
-        setSignalRConnection(null);
-        logPerfDebug('signalr-game', 'connection reconnecting', {
-            connectionId,
-            state: conn.state,
-            error: error ? { message: error.message, name: error.name } : null
-        });
-        console.warn("MAIN: SignalR Connection Reconnecting...", error);
-        showAlert("连接中断，正在尝试重新连接服务器..."); // Use alert instead of displayInfo
-        // Disable UI interactions while reconnecting?
-        reconnectInProgress = true;
-        setConnectionStatus('reconnecting', '连接中断，正在重连...');
-    });
-
-    conn.onreconnected((connectionId) => {
-        if (connection !== conn) return;
-        logPerfDebug('signalr-game', 'connection reconnected', {
-            connectionId: getConnectionDebugId(conn, 'game'),
-            transportConnectionId: connectionId,
-            state: conn.state
-        });
-        showAlert("已重新连接到服务器。"); // Use alert instead of displayInfo
-        const targetToRestore = reconnectDesiredSpectateTarget;
-        reconnectDesiredSpectateTarget = null;
-        gameState.viewEpoch = 0;
-        gameState.pendingSpectateTargetId = null;
-        forceFullStateOnNextReceive = true;
-        reconnectInProgress = false;
-        setSignalRConnection(conn);
-        setConnectionStatus('reconnecting', '连接已恢复，正在同步...');
-        void (async () => {
-            try {
-                const synced = await requestFullStateSync("auto-reconnect");
-                if (!synced || connection !== conn) return;
-                const activeMirageRoom = gameState.mirageRoomId
-                    || gameState.mirage?.tournamentRoomId
-                    || gameState.mirage?.TournamentRoomId
-                    || null;
-                if (gameState.isSpectator
-                    && activeMirageRoom
-                    && targetToRestore
-                    && String(gameState.viewingPlayerId || '').toLowerCase() !== String(targetToRestore).toLowerCase()) {
-                    await switchMirageSpectateTargetRequest(targetToRestore);
-                }
-            } catch (error) {
-                console.error("MAIN: 自动重连同步失败。", error);
-            }
-        })();
-        // Request latest state after reconnection if server doesn't push automatically
-        // connection.invoke("RequestInitialGameState").catch(err => console.error("Request state after reconnect failed:", err));
-    });
-
-}
-
-async function requestFullStateSync(reason) {
-    const requestedConnection = connection;
-    if (!requestedConnection || requestedConnection.state !== signalR.HubConnectionState.Connected) {
-        console.warn("MAIN: Skip full state sync (connection not ready).", reason || "");
-        await handleStateHydrationFailure('重连失败');
-        return false;
-    }
-    try {
-        await requestedConnection.invoke("RequestInitialGameState");
-        return true;
-    } catch (err) {
-        console.error("MAIN: RequestInitialGameState failed:", err);
-        if (connection !== requestedConnection) return false;
-        await handleStateHydrationFailure('重连失败');
-        return false;
-    }
+    return presentationGate.clear;
 }
 
 /**
@@ -1875,10 +1641,13 @@ async function ensureLobbyHandshake() {
         return specHs;
     }
     if (urlGameId && (urlSpectate === "1" || urlSpectate === "true")) {
-        return {
+        const specHs = {
             gameId: urlGameId,
+            joinCode: urlParams.get("joinCode") || undefined,
             role: "spectator"
         };
+        cacheHandshake(specHs);
+        return specHs;
     }
     if (urlGameId && urlPlayerId && urlToken) {
         const result = {
@@ -1930,217 +1699,58 @@ function getReconnectHandshake() {
 }
 
 async function performManualReconnect() {
-    if (reconnectInProgress) {
+    const session = battleConnectionSession;
+    if (!session) {
+        gameInitialized = await initializeApp();
         return;
     }
-
-    const handshake = getReconnectHandshake();
-    if (!handshake || !handshake.gameId) {
-        showAlert("没有可用的对战信息，无法重连。");
-        setConnectionStatus('disconnected', '连接已断开');
-        return;
+    for (const seat of session.seats) {
+        recoverBattleSeat(session, seat, BATTLE_RECOVERY_MS);
     }
+}
 
+async function initializeApp() {
+    if (isInitializing) return false;
+    isInitializing = true;
     const pageSession = gamePageSession;
-    reconnectInProgress = true;
-    setConnectionStatus('reconnecting', '正在重连...');
-
     try {
-        if (handshake.role === "spectator") {
-            initializeSpectator(handshake.gameId);
+        const handshake = await ensureLobbyHandshake();
+        if (pageSession !== gamePageSession) return false;
+
+        const isSpectator = handshake.role === 'spectator' || handshake.role === 'eliminated-spectator';
+        const mirageRoomId = handshake.kind === 'mirage-8p' ? handshake.roomId : handshake.mirageRoomId;
+        if (isSpectator) {
+            initializeSpectator(handshake.gameId, { viewingPlayerId: handshake.viewingPlayerId, mirageRoomId });
+            if (handshake.playerId) gameState.selfOriginalPlayerId = handshake.playerId;
         } else {
             initializeGame(handshake.gameId, handshake.playerId, {
                 dualControl: handshake.dualControl === true,
                 hostPlayerId: handshake.hostPlayerId || handshake.playerId,
-                guestPlayerId: handshake.guestPlayerId || null
+                guestPlayerId: handshake.guestPlayerId,
+                mirageRoomId
             });
         }
 
-        initialStateReceived = true;
-        forceFullStateOnNextReceive = true;
-
-        const connPromise = handshake.role === "spectator"
-            ? setupSpectatorSignalRConnection(handshake.gameId, null, { skipInitialReset: true })
-            : setupSignalRConnection(handshake.gameId, handshake.playerId, handshake.token, null, { skipInitialReset: true });
-
-        const newConnection = await connPromise;
-        if (pageSession !== gamePageSession) return false;
-        setSignalRConnection(newConnection);
-
-        if (handshake.role !== "spectator" && handshake.dualControl && handshake.guestPlayerId && handshake.guestToken) {
-            const newGuestConnection = await setupActionSignalRConnection(
-                handshake.gameId,
-                handshake.guestPlayerId,
-                handshake.guestToken
-            );
-            setGuestSignalRConnection(newGuestConnection);
+        const seats = [{ guest: false }];
+        if (!isSpectator && handshake.dualControl && handshake.guestPlayerId && handshake.guestToken) {
+            seats.push({ guest: true });
         }
-
-        const syncSucceeded = await requestFullStateSync("manual-reconnect");
-        if (!syncSucceeded) {
-            throw new Error("请求完整状态失败");
-        }
-    } catch (err) {
-        if (pageSession !== gamePageSession) {
-            console.info('MAIN: 页面已退出，重连操作已取消。');
-            return false;
-        }
-        console.error("MAIN: Manual reconnect failed:", err);
-        setConnectionStatus('disconnected', '重连失败，请重试');
-        showAlert(`重连失败：${err?.message || '未知错误'}`);
-    } finally {
-        if (pageSession === gamePageSession) reconnectInProgress = false;
-    }
-}
-
-/**
- * Initializes the application, loads data, connects to SignalR, and sets up the UI.
- */
-async function initializeApp() {
-    if (isInitializing) {
-        console.warn("MAIN: Initialization already in progress.");
-        return false;
-    }
-    isInitializing = true;
-
-    try {
-        // 0. Initialize basic UI elements (maybe show loading indicator)
-        // initializeUI(); // REMOVED: ui.js does not export this. UI setup might need review later.
-
-        // --- M6 Coordination Logic Start ---
-
-        // 2. Get Game and Player IDs via lobby handshake (BEFORE starting async ops)
-        const handshake = await ensureLobbyHandshake();
-        const gameId = handshake.gameId;
-        const playerId = handshake.playerId;
-        const token = handshake.token;
-
-        // 3. Render initial empty/loading state (optional)
-        // renderGame(createEmptyGameState());
-
-        // Create an initial-state gate that supports resolve/reject + timeout.
-        let initialStateResolve;
-        let initialStateReject;
-        let initialStateGateSettled = false;
-        let initialStateTimeoutId = null;
-        const initialStatePromise = new Promise((resolve, reject) => {
-            initialStateResolve = resolve;
-            initialStateReject = reject;
-        });
-        const settleInitialStateResolve = (value) => {
-            if (initialStateGateSettled) return;
-            initialStateGateSettled = true;
-            if (initialStateTimeoutId) {
-                clearTimeout(initialStateTimeoutId);
-                initialStateTimeoutId = null;
-            }
-            initialStateResolve(value);
+        const session = {
+            handshake,
+            seats,
+            controller: new AbortController(),
+            boardHydrated: false,
+            deferredGuestEvents: []
         };
-        const settleInitialStateReject = (reason) => {
-            if (initialStateGateSettled) return;
-            initialStateGateSettled = true;
-            if (initialStateTimeoutId) {
-                clearTimeout(initialStateTimeoutId);
-                initialStateTimeoutId = null;
-            }
-            const error = reason instanceof Error ? reason : new Error(String(reason || '初始化失败'));
-            initialStateReject(error);
-        };
-        const initialStateGate = {
-            resolve: settleInitialStateResolve,
-            reject: settleInitialStateReject
-        };
-        initialStateTimeoutId = setTimeout(() => {
-            settleInitialStateReject(new Error('等待初始对局状态超时'));
-        }, 15000);
-
-        // 4. Start SignalR connection setup (PASSING the resolver)
-        const connectionPromise = handshake.role === "spectator"
-            ? setupSpectatorSignalRConnection(gameId, initialStateGate)
-            : setupSignalRConnection(gameId, playerId, token, initialStateGate); // Pass resolver + token
-
-        const guestConnectionPromise = (handshake.role === "spectator" || !handshake.dualControl)
-            ? Promise.resolve(null)
-            : setupActionSignalRConnection(gameId, handshake.guestPlayerId, handshake.guestToken);
-
-        // 1. Start loading card data concurrently
-        try {
-            // Wait for SignalR connection and the initial state reception
-            // connectionPromise ensures we handle setup errors even if initialStatePromise never resolves/rejects
-            // We need the connection object resolved from connectionPromise to pass to gameManager
-            const [serverState, currentConnection, currentGuestConnection] = await Promise.all([
-                initialStatePromise,
-                connectionPromise,
-                guestConnectionPromise
-            ]);
-            // serverState is from initialStatePromise resolver, currentConnection from connectionPromise resolver
-
-
-            // 5. Pass connection to gameManager (AFTER connection is confirmed ready)
-            setSignalRConnection(currentConnection);
-            if (currentGuestConnection) {
-                setGuestSignalRConnection(currentGuestConnection);
-            }
-
-            // 6. Initialize gameManager with context (AFTER connection and IDs are ready)
-            if (handshake.role === "spectator" || handshake.role === "eliminated-spectator") {
-                initializeSpectator(gameId, {
-                    viewingPlayerId: handshake.viewingPlayerId || null,
-                    mirageRoomId: handshake.mirageRoomId || null
-                });
-                if (handshake.playerId) {
-                    gameState.selfOriginalPlayerId = handshake.playerId;
-                }
-            } else {
-                initializeGame(gameId, playerId, {
-                    dualControl: handshake.dualControl === true,
-                    hostPlayerId: handshake.hostPlayerId || playerId,
-                    guestPlayerId: handshake.guestPlayerId || null,
-                    mirageRoomId: handshake.mirageRoomId || null
-                }); // Still needed to set IDs in gameManager
-            }
-
-            // CRITICAL: Restore the call to updateFullGameState here.
-            // This ensures the *initial* state (received via the promise)
-            // is processed and rendered correctly (e.g., showing the Mulligan phase).
-            // The ReceiveGameState handler handles *subsequent* updates directly.
-            const hydrationSucceeded = updateFullGameState(serverState); // <-- RESTORED
-            if (hydrationSucceeded === false) {
-                await handleStateHydrationFailure('重连失败');
-                return false;
-            }
-
-            // 7. Setup core event listeners (AFTER connection and UI are ready)
-            setupEventListeners();
-
-
-
-        } catch (error) {
-            if (initialStateTimeoutId) {
-                clearTimeout(initialStateTimeoutId);
-                initialStateTimeoutId = null;
-            }
-            console.error("MAIN: Error during M6 coordination (Promise.all failed):", error);
-            // Handle errors from loadCards, setupSignalRConnection, or state reception issues
-            showAlert(`游戏初始化失败：${error.message || '未知错误'} 请刷新页面重试。`);
-            // Optionally disable UI or show persistent error
-            await handleStateHydrationFailure('连接失败，请点击重连');
-            return false; // Stop initialization on error
+        battleConnectionSession = session;
+        for (const seat of seats) {
+            recoverBattleSeat(session, seat, INITIAL_BATTLE_CONNECT_MS);
         }
-        // --- M6 Coordination Logic End ---
         return true;
-
     } catch (error) {
-        console.error("MAIN: Application initialization failed:", error);
-        const cached = getReconnectHandshake();
-        if (cached?.gameId) {
-            setConnectionStatus('disconnected', '连接失败，请点击重连');
-        }
-        // Display error via ui.js, check if connection error already shown
-        if (connection === null || connection.state === signalR.HubConnectionState.Disconnected) {
-            // alert might have already been called in setupSignalRConnection
-        } else {
-            showAlert(`游戏初始化失败: ${error.message || '未知错误'}`); // Use alert instead of displayError
+        if (pageSession === gamePageSession) {
+            setConnectionStatus('disconnected', '连接失败，点击重连');
+            showAlert(error.message || '无法进入对局');
         }
         return false;
     } finally {
@@ -2148,23 +1758,14 @@ async function initializeApp() {
     }
 }
 
-// 绑定核心事件监听器
-// --- Core Event Listeners ---
-
-/**
- * Sets up global event listeners (like End Turn button).
- */
-function setupEventListeners() {
-    const endTurnButton = document.getElementById('end-turn-button');
-    if (endTurnButton) {
-        // Removed redundant event listener for end-turn-button.
-        // Event delegation in ui.js handles this now.
-    } else {
-        console.error("MAIN: Element with ID 'end-turn-button' not found!");
+function resumeBattleWhenOnline() {
+    const session = battleConnectionSession;
+    if (!session || document.hidden || navigator.onLine === false) return;
+    for (const seat of session.seats) {
+        if (!(seat.error instanceof BattleConnectionRejected)) {
+            recoverBattleSeat(session, seat, BATTLE_RECOVERY_MS);
+        }
     }
-
-    // UI event delegation (e.g., clicks on field, hand) is handled within ui.js
-    // We assume ui.js's initializeUI or specific handlers are called elsewhere appropriately.
 }
 
 // 导出 connection 供其他模块使用
@@ -2224,6 +1825,12 @@ function probeHandshakeRematchCapability(handshake) {
 function syncRematchRoomButtonVisibility() {
     const rematchBtn = document.getElementById('rematch-room-button');
     if (!rematchBtn) return;
+    if (getReconnectHandshake()?.kind === 'tournament-match') {
+        rematchBtn.textContent = '返回赛事房间';
+        rematchBtn.style.display = gameState.gameOver ? 'inline-flex' : 'none';
+        return;
+    }
+    rematchBtn.textContent = '返回房间再战';
     const handshake = getActiveNonAiRoomHandshake();
     if (
         gameState.gameOver === true &&
@@ -2246,6 +1853,88 @@ function formatHandshakeOutput(handshake) {
 function setPendingHandshake(handshake) {
     pendingHandshake = handshake;
     cacheHandshake(handshake);
+}
+
+async function openClassicPreparation(handshake) {
+    setPendingHandshake(handshake);
+    suppressMultiplayerLeaveOnce = true;
+    try {
+        return await router.navigateTo('match-room');
+    } finally {
+        if (router.getCurrentRoute() === 'multiplayer') suppressMultiplayerLeaveOnce = false;
+    }
+}
+
+async function initializeClassicRoomPage() {
+    const { initializeMatchRoom } = await import('./matchRoom.js');
+    const cached = getReconnectHandshake();
+    const handshake = isClassicRoomHandshake(cached) ? cached : null;
+    const ownsHandshake = () => getReconnectHandshake() === handshake;
+    const acceptsRoomDeck = (room, deck) => handshake.role !== 'guest' || !room.requiredEnvironment
+        || matchesDeckFormat(deck, { environment: room.requiredEnvironment, rule: room.requiredRule });
+    initializeMatchRoom({
+        handshake,
+        getRoom: async ({ includeProfiles, signal }) => readApiJsonResponse(await fetch(
+            '/api/match/' + encodeURIComponent(handshake.gameId) + '/preparation?includeProfiles=' + includeProfiles,
+            {
+                cache: 'no-store', signal,
+                headers: { 'X-Room-PlayerId': handshake.playerId, 'X-Room-Token': handshake.token }
+            })),
+        preferredDeck: room => {
+            const selected = getDeckById(deckSelectionState.selected.multiplayer);
+            return selected?.isBattleReady && acceptsRoomDeck(room, selected) ? resolveDeckId(selected) : null;
+        },
+        pickDeck: async room => {
+            await ensureDecksLoaded();
+            await refreshSelectableDecks();
+            if (router.getCurrentRoute() !== 'match-room' || !ownsHandshake()) return null;
+            return pickDeckFromModal({
+                key: 'multiplayer', title: '选择房间卡组', skipRefresh: true,
+                acceptsDeck: deck => acceptsRoomDeck(room, deck)
+            });
+        },
+        closeDeckPicker: closeDeckSelectionPicker,
+        setDeck: async deckId => {
+            const result = await submitDeckSelection(handshake, { deckId });
+            if (!result.ok) throw new Error(result.message);
+            if (ownsHandshake()) deckSelectionState.selected.multiplayer = deckId;
+        },
+        setReady: ready => markReady(handshake.gameId, handshake.playerId, handshake.token, ready),
+        start: () => startMatch(handshake.gameId, handshake.playerId, handshake.token),
+        kick: playerId => kickGuestFromMatch(handshake.gameId, handshake.playerId, handshake.token, playerId),
+        getStartDecision: room => resolveRematchPollStartedAction(room, rematchExitedActiveGameId),
+        enterGame: room => {
+            if (!ownsHandshake() || router.getCurrentRoute() !== 'match-room') return false;
+            syncHandshakeRematchCapabilityFromRoom(handshake, room);
+            rematchExitedActiveGameId = null;
+            return router.navigateTo('game');
+        },
+        guestJoined: () => mpNotificationSoundPlayer.playGuestJoined(),
+        releaseHandshake: () => { if (ownsHandshake()) clearCachedHandshake(); }
+    });
+}
+
+async function cleanupClassicRoomPage() {
+    const { cleanupMatchRoom } = await import('./matchRoom.js');
+    cleanupMatchRoom();
+    const handshake = getReconnectHandshake();
+    if (pendingRouteTransition?.fromRoute === 'match-room' && pendingRouteTransition.toRoute !== 'game'
+        && isClassicRoomHandshake(handshake)) {
+        await leaveCurrentPvpRoom('leave-match-room-page');
+    }
+}
+
+async function initializeTournamentMatchPage() {
+    const { initializeTournamentMatchRoom } = await import('./tournamentMatchRoom.js');
+    initializeTournamentMatchRoom(seat => {
+        setPendingHandshake({ ...seat, kind: 'tournament-match', canRematch: false });
+        return router.navigateTo('game');
+    });
+}
+
+async function cleanupTournamentMatchPage() {
+    const { cleanupTournamentMatchRoom } = await import('./tournamentMatchRoom.js');
+    cleanupTournamentMatchRoom();
 }
 
 function bindButton(button, handler) {
@@ -2704,8 +2393,9 @@ function setupMultiplayerUI() {
 
         let seatsHtml = '';
         if (room) {
-            const hostClass = !isMirage && room.hostDeckClass ? ` [${getDeckClassLabel(room.hostDeckClass)}]` : '';
-            const guestClass = !isMirage && room.guestDeckClass ? ` [${getDeckClassLabel(room.guestDeckClass)}]` : '';
+            const showAiDecks = room.useAiFallback || handshake.useAiFallback;
+            const hostClass = !isMirage && (isHost || showAiDecks) && room.hostDeckClass ? ` [${getDeckClassLabel(room.hostDeckClass)}]` : '';
+            const guestClass = !isMirage && (!isHost || showAiDecks) && room.guestDeckClass ? ` [${getDeckClassLabel(room.guestDeckClass)}]` : '';
             const hostStatus = room.hostReady ? '已准备' : '未准备';
             const guestStatus = room.guestPlayerId
                 ? (room.guestReady ? '已准备' : '未准备')
@@ -2832,6 +2522,10 @@ function setupMultiplayerUI() {
         const handshake = getActiveNonAiRoomHandshake();
         if (!handshake || handshake.dualControl) return;
         const targetOutput = handshake.role === 'guest' ? outJoin : outCreate;
+        if (isClassicRoomHandshake(handshake)) {
+            setOutput(targetOutput, '房间已保留，可返回房间。');
+            return;
+        }
         if (targetOutput) {
             startRoomLobbyPolling(handshake, targetOutput, handshake.role === 'guest' ? 1200 : 1500);
         }
@@ -2939,26 +2633,11 @@ function setupMultiplayerUI() {
                 return;
             }
 
-            const deckId = await getSelectedMultiplayerDeckId();
-            if (!deckId) {
-                setDeckOutput('请先选择卡组。', true);
-                return;
-            }
             setOutput(outCreate, '创建房间中...');
             await prepareRoomEntry();
             const handshake = await createMatch(false, { isPublic, mode: roomMode });
-            // Save handshake immediately so user can still retry or leave if deck submission fails
-            setPendingHandshake(handshake);
-
-            const selection = await submitDeckSelection(handshake, { deckId });
-            if (!selection.ok) {
-                setOutput(outCreate, buildLobbyStatusHtml(handshake, null, `房间已创建，但卡组选择失败：${selection.message}`), true);
-                return;
-            }
-            markRoomDeckSynced(handshake, deckId);
-            const readyRoom = await markReady(handshake.gameId, handshake.playerId, handshake.token, true);
-            setOutput(outCreate, buildLobbyStatusHtml(handshake, readyRoom, '房间已创建，等待对手加入。'));
-            startRoomLobbyPolling(handshake, outCreate, 1500);
+            setOutput(outCreate, '');
+            await openClassicPreparation(handshake);
         } catch (err) {
             setOutput(outCreate, `创建失败：${err.message}`, true);
         }
@@ -3027,31 +2706,6 @@ function setupMultiplayerUI() {
                 if (environment && rule) requiredFormat = { environment, rule };
             }
 
-            let selectedDeckId = null;
-            if (!knownIsMirage) {
-                await ensureDecksLoaded();
-                selectedDeckId = await getSelectedMultiplayerDeckId();
-                if (!selectedDeckId) {
-                    setDeckOutput('请先在多人对战中选择卡组。', true);
-                    return;
-                }
-                const selectedDeck = getDeckById(selectedDeckId, deckSelectionState.decks);
-                if (!selectedDeck) {
-                    setDeckOutput('当前已选卡组不存在，请重新选择后再加入。', true);
-                    return;
-                }
-                if (!await validateDeckForSelection(selectedDeck)) {
-                    setDeckOutput('当前选择卡组未通过校验，无法加入房间。', true);
-                    return;
-                }
-                if (requiredFormat && !matchesDeckFormat(selectedDeck, requiredFormat)) {
-                    setDeckOutput(`当前选择卡组与房主卡组不匹配（需要 ${getDeckEnvironmentLabel(requiredFormat.environment)} | ${getDeckRuleLabel(requiredFormat.rule)}），无法加入。`, true);
-                    return;
-                }
-                await refreshSelectableDecks();
-                setDeckOutput('');
-            }
-
             setOutput(outJoin, '加入房间中...');
             const existingHandshake = await prepareRoomEntry(targetRoomId, joinCode);
             if (requiredFormat) setMultiplayerDeckFormat(requiredFormat, 'multiplayer');
@@ -3059,17 +2713,12 @@ function setupMultiplayerUI() {
             const handshake = existingHandshake || await joinMatch(targetRoomId, joinCode);
             handshake.isMirage = knownIsMirage;
 
-            // Save handshake immediately so user keeps seat ownership even if deck sync fails
-            setPendingHandshake(handshake);
-
             if (!handshake.isMirage) {
-                const selection = await submitDeckSelection(handshake, { deckId: selectedDeckId });
-                if (!selection.ok) {
-                    setOutput(outJoin, buildLobbyStatusHtml(handshake, null, `已进入房间，但卡组同步失败：${selection.message}`), true);
-                    return;
-                }
-                markRoomDeckSynced(handshake, selectedDeckId);
+                setOutput(outJoin, '');
+                await openClassicPreparation(handshake);
+                return;
             }
+            setPendingHandshake(handshake);
             const readyRoom = await markReady(handshake.gameId, handshake.playerId, handshake.token, true);
             try {
                 await startMatch(handshake.gameId, handshake.playerId, handshake.token);
@@ -3097,6 +2746,10 @@ function setupMultiplayerUI() {
         }
         if (handshake.useAiFallback) {
             router.navigateTo('game');
+            return;
+        }
+        if (isClassicRoomHandshake(handshake)) {
+            await openClassicPreparation(handshake);
             return;
         }
 
@@ -3464,7 +3117,7 @@ function setupAboutUI() {
     const card = document.getElementById('about-card');
     const userCard = document.getElementById('user-info-card');
     const dailyQuestCard = document.getElementById('daily-quest-card');
-    const devConsoleToggle = document.getElementById('dev-console-toggle');
+    const replayToggle = document.getElementById('replay-toggle');
     if (!toggle || !card) return;
 
     const setOpen = (open) => {
@@ -3489,7 +3142,7 @@ function setupAboutUI() {
         setOpen(!isOpen);
     });
 
-    devConsoleToggle?.addEventListener('click', () => {
+    replayToggle?.addEventListener('click', () => {
         setOpen(false);
     });
 
@@ -3939,7 +3592,6 @@ async function initializeGamePage() {
 async function cleanupGamePage() {
     abortMirageCombatPlayback("leave_room");
     gamePageSession++;
-    reconnectInProgress = false;
     const rematchBtn = document.getElementById('rematch-room-button');
     if (rematchBtn) rematchBtn.style.display = 'none';
 
@@ -3973,10 +3625,6 @@ async function cleanupGamePage() {
         throw error;
     } finally {
         clearGameSession();
-        initialStateReceived = false;
-        forceFullStateOnNextReceive = false;
-        reconnectEpochResetPending = false;
-        reconnectDesiredSpectateTarget = null;
         confirmedBattleExitSurrender = false;
         gameInitialized = false;
         clearTransientMatchQueryParams();
@@ -3999,19 +3647,22 @@ async function cleanupMultiplayerPage() {
     } else {
         await leaveCurrentPvpRoom('cleanupMultiplayer');
     }
-    stopConnectionHeartbeat(connection);
-    stopConnectionHeartbeat(guestConnection);
 }
 
 // 入口拥有连接与页面业务；路由等待这些生命周期，DOM 事件仅通知视图清理。
 router.setRouteLifecycle('game', { init: initializeGamePage, cleanup: cleanupGamePage });
+router.setRouteLifecycle('replay-board', { init: mountReplayBoard });
 router.setRouteLifecycle('multiplayer', { cleanup: cleanupMultiplayerPage });
+router.setRouteLifecycle('match-room', { init: initializeClassicRoomPage, cleanup: cleanupClassicRoomPage });
+router.setRouteLifecycle('tournament-match', { init: initializeTournamentMatchPage, cleanup: cleanupTournamentMatchPage });
 registerRoomExitDecisionRouteHooks();
 registerBeforeUnloadGuard();
 
 document.addEventListener('requestReconnect', () => {
     performManualReconnect().catch(error => console.error('MAIN: 重连处理失败。', error));
 });
+window.addEventListener('online', resumeBattleWhenOnline);
+document.addEventListener('visibilitychange', resumeBattleWhenOnline);
 
 window.__svMirageLobbyHost = {
     navigateTo: (route) => {
@@ -4057,6 +3708,7 @@ document.addEventListener('svb:mirage-return-lobby', () => {
 // 初始化开发者控制台（如果需要）
 document.addEventListener('DOMContentLoaded', async () => {
 
+    installReplayLibrary(() => gameState.gameOver && !gameState.isSpectator ? gameState.gameId : null);
     ensureEnumLocalizations(['CardRarity', 'CardClass', 'CardType', 'DeckEnvironment'])
         .catch(error => {
             console.warn('MAIN: Failed to prefetch card enum labels.', error);
@@ -4079,9 +3731,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const rematchBtn = document.getElementById('rematch-room-button');
     rematchBtn?.addEventListener('click', () => {
+        if (getReconnectHandshake()?.kind === 'tournament-match') {
+            void router.navigateTo('tournament-match');
+            return;
+        }
         rematchExitedActiveGameId = gameState.gameId || null;
         returningToLobbyForRematch = true;
-        void router.navigateTo('multiplayer');
+        void router.navigateTo(isClassicRoomHandshake(getReconnectHandshake()) ? 'match-room' : 'multiplayer');
     });
 
     try {

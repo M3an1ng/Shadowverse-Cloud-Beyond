@@ -107,6 +107,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
             options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
         });
     Log.Information("Registered API Controllers.");
+    builder.Services.AddAccountSession();
 
     builder.Services.AddRateLimiter(options =>
     {
@@ -237,7 +238,12 @@ try // Wrap application startup in try-finally to ensure logs are flushed
         // Explicitly set CamelCase naming policy for SignalR JSON protocol
         options.PayloadSerializerOptions.PropertyNamingPolicy = null; // FIX: Preserve PascalCase from C# DTOs // Restore CamelCase naming policy
         // Note: hubOptions configuration is separate from AddJsonProtocol options
-    }); // End AddJsonProtocol lambda body and add semicolon at the end of the statement
+    })
+    .AddHubOptions<GameHub>(options =>
+    {
+        // Mobile browsers can throttle their keepalive timers when the tab is backgrounded.
+        options.ClientTimeoutInterval = TimeSpan.FromSeconds(75);
+    });
     Log.Information("Successfully configured SignalR."); // Added Log
 
     // Register services dependent on SignalR (IHubContext)
@@ -260,7 +266,12 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     builder.Services.AddScoped<ShadowverseBeyond.Server.Services.Abstractions.IDebugCommandParser, ShadowverseBeyond.Server.Services.DebugCommandParser>();
     Log.Information("Registered IDebugCommandParser."); // Added Log
     builder.Services.AddSingleton<IRoomJoinCodeRegistry, RoomJoinCodeRegistry>();
-    builder.Services.AddSingleton<IMatchService, MatchService>(); // Register in-memory match service for lobby
+    builder.Services.AddSingleton<MatchService>();
+    builder.Services.AddSingleton<IMatchService>(services => services.GetRequiredService<MatchService>());
+    builder.Services.AddScoped<TournamentMatchResults>();
+    builder.Services.AddScoped<TournamentScheduling>();
+    builder.Services.AddScoped<TournamentReportReader>();
+    builder.Services.AddHostedService<TournamentSchedulingHostedService>();
     Log.Information("Registered IRoomJoinCodeRegistry and IMatchService (in-memory lobby)."); // Added Log
     builder.Services.AddSingleton<IMirageShopService, MirageShopService>();
     builder.Services.AddSingleton<IMirageTripleService, MirageTripleService>();
@@ -488,6 +499,7 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     builder.Services.AddScoped<SqliteReplayHistory>();
     builder.Services.AddScoped<ReplayContinuation>();
     builder.Services.AddSingleton<ReplayRecorder>();
+    builder.Services.AddSingleton<ReplaySeatTicket>();
     Log.Information("Configured ReplayOptions (Replay section).");
 
     builder.Services.AddScoped<ICommittedEventJournal, SqliteReplayJournal>();
@@ -690,6 +702,8 @@ try // Wrap application startup in try-finally to ensure logs are flushed
     });
 
     app.UseRateLimiter();
+    app.UseAuthentication();
+    app.UseAuthorization();
 
     // app.UseHttpsRedirection(); // Temporarily disabled for testing static files
 

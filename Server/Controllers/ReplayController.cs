@@ -63,7 +63,7 @@ namespace ShadowverseBeyond.Server.Controllers
             return Ok(events);
         }
 
-        [HttpGet("{gameId}/export")]
+        [ClosedReplayHistory, HttpGet("{gameId}/export")]
         public async Task<IActionResult> Export(
             string gameId,
             CancellationToken cancellationToken = default)
@@ -155,7 +155,7 @@ namespace ShadowverseBeyond.Server.Controllers
             return Ok(snapshot);
         }
 
-        [HttpGet("{gameId}/enter")]
+        [ClosedReplayHistory, HttpGet("{gameId}/enter")]
         public async Task<ActionResult<object>> Enter(
             string gameId,
             [FromQuery] long atSeq = long.MaxValue,

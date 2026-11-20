@@ -6,6 +6,7 @@ using ShadowverseBeyond.Server.Domain.Entities;
 using ShadowverseBeyond.Server.Dtos;
 using ShadowverseBeyond.Server.Dtos.Enums;
 using ShadowverseBeyond.Server.Infrastructure.Data;
+using ShadowverseBeyond.Server.Infrastructure.Services;
 using ShadowverseBeyond.Server.Services;
 
 namespace ShadowverseBeyond.Server.Controllers;
@@ -29,7 +30,7 @@ public class CardSetsController : ControllerBase
     public async Task<ActionResult<CardSetDefinitionDto>> UploadLogo(int id, [FromForm] IFormFile file, CancellationToken ct, [FromForm] Guid? actorUserId = null)
     {
         var effectiveActorUserId = actorUserId ?? Guid.Empty;
-        if (effectiveActorUserId == Guid.Empty || !await CanManageEnvironmentMembershipAsync(effectiveActorUserId, ct))
+        if (effectiveActorUserId == Guid.Empty || await GetActiveRoleAsync(effectiveActorUserId, ct) != UserRole.Admin)
             return StatusCode(StatusCodes.Status403Forbidden, "仅管理员可上传或修改卡包 Logo。");
 
         var setDefinition = await _db.CardSetDefinitions.FindAsync(new object[] { id }, ct);
@@ -71,7 +72,7 @@ public class CardSetsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<CardSetDefinitionDto>> CreateCardSet([FromBody] CreateCardSetRequest request, CancellationToken ct)
     {
-        if (request.ActorUserId == Guid.Empty || !await CanManageEnvironmentMembershipAsync(request.ActorUserId, ct))
+        if (request.ActorUserId == Guid.Empty || await GetActiveRoleAsync(request.ActorUserId, ct) != UserRole.Admin)
             return StatusCode(StatusCodes.Status403Forbidden, "仅管理员可新建卡包。");
         if (string.IsNullOrWhiteSpace(request.Name)) return BadRequest("请填写卡包名称。");
 
@@ -131,15 +132,18 @@ public class CardSetsController : ControllerBase
     }
 
     [HttpGet("environment-membership")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [ProducesResponseType(typeof(CardSetEnvironmentMembershipResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<ActionResult<CardSetEnvironmentMembershipResponse>> GetEnvironmentMembership(
         [FromQuery] DeckEnvironment? environment = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] Guid? actorUserId = null)
     {
         try
         {
             var targetEnvironment = environment ?? DeckEnvironment.Rotation;
+            var role = actorUserId is Guid id ? await GetActiveRoleAsync(id, cancellationToken) : null;
             var rows = await _db.CardSetDefinitions
                 .AsNoTracking()
                 .Where(set => set.Name != GameConstants.Cards.MirageCardSetName)
@@ -159,6 +163,8 @@ public class CardSetsController : ControllerBase
             return Ok(new CardSetEnvironmentMembershipResponse
             {
                 Environment = targetEnvironment,
+                CanEditMembership = CanEditMembership(role, actorUserId, targetEnvironment),
+                CanManageCardSets = role == UserRole.Admin,
                 IncludedCardSetDefinitionIds = rows.Where(item => item.Included).Select(item => item.CardSetDefinitionId).ToList(),
                 Items = rows
             });
@@ -189,12 +195,13 @@ public class CardSetsController : ControllerBase
             return BadRequest("actorUserId is required.");
         }
 
-        if (!await CanManageEnvironmentMembershipAsync(request.ActorUserId, cancellationToken))
+        var targetEnvironment = request.Environment ?? DeckEnvironment.Rotation;
+        var role = await GetActiveRoleAsync(request.ActorUserId, cancellationToken);
+        if (!CanEditMembership(role, request.ActorUserId, targetEnvironment))
         {
-            return StatusCode(StatusCodes.Status403Forbidden, "Only admin can update card set environment membership.");
+            return StatusCode(StatusCodes.Status403Forbidden, "当前账号无权修改此环境的卡包配置。");
         }
 
-        var targetEnvironment = request.Environment ?? DeckEnvironment.Rotation;
         var includedIds = (request.IncludedCardSetDefinitionIds ?? new List<int>())
             .Distinct()
             .OrderBy(id => id)
@@ -219,6 +226,8 @@ public class CardSetsController : ControllerBase
         try
         {
             var includedSet = includedIds.ToHashSet();
+            // Each set stores all environments together; serialize concurrent membership edits.
+            await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
             var cardSets = await _db.CardSetDefinitions
                 .Where(set => set.Name != GameConstants.Cards.MirageCardSetName)
                 .OrderBy(set => set.Region)
@@ -241,6 +250,7 @@ public class CardSetsController : ControllerBase
             }
 
             await _db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
 
             _logger.LogInformation(
                 "Card set environment membership updated by {ActorUserId}. Environment={Environment} IncludedCount={IncludedCount}",
@@ -261,6 +271,8 @@ public class CardSetsController : ControllerBase
             return Ok(new CardSetEnvironmentMembershipResponse
             {
                 Environment = targetEnvironment,
+                CanEditMembership = true,
+                CanManageCardSets = role == UserRole.Admin,
                 IncludedCardSetDefinitionIds = rows.Where(item => item.Included).Select(item => item.CardSetDefinitionId).ToList(),
                 Items = rows
             });
@@ -272,12 +284,20 @@ public class CardSetsController : ControllerBase
         }
     }
 
-    private async Task<bool> CanManageEnvironmentMembershipAsync(Guid actorUserId, CancellationToken cancellationToken)
+    private Task<UserRole?> GetActiveRoleAsync(Guid actorUserId, CancellationToken cancellationToken) =>
+        _db.Users
+            .Where(user => user.Id == actorUserId && user.IsActive)
+            .Select(user => (UserRole?)user.Role)
+            .SingleOrDefaultAsync(cancellationToken);
+
+    private bool CanEditMembership(UserRole? role, Guid? actorUserId, DeckEnvironment environment)
     {
-        var actor = await _db.Users
-            .AsNoTracking()
-            .FirstOrDefaultAsync(item => item.Id == actorUserId, cancellationToken);
-        return actor != null && actor.IsActive && actor.Role == UserRole.Admin;
+        var signedInUserId = AccountSession.GetUserId(User);
+        if (signedInUserId.HasValue && signedInUserId != actorUserId) return false;
+
+        // Keep existing administrator access. The additional Editor grant belongs to the signed-in account.
+        return role == UserRole.Admin
+            || (role == UserRole.Editor && environment == DeckEnvironment.Compile && signedInUserId == actorUserId);
     }
 
     public sealed class CreateCardSetRequest
@@ -299,6 +319,8 @@ public class CardSetsController : ControllerBase
     public sealed class CardSetEnvironmentMembershipResponse
     {
         public DeckEnvironment Environment { get; set; } = DeckEnvironment.Rotation;
+        public bool CanEditMembership { get; set; }
+        public bool CanManageCardSets { get; set; }
         public List<int> IncludedCardSetDefinitionIds { get; set; } = new();
         public List<CardSetEnvironmentMembershipItem> Items { get; set; } = new();
     }
